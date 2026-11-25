@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[alias]
+xtask = "run --quiet --package xtask --"
+
+# The kernel is a static, position-independent ELF (ADR 0035, rule 2).
+[target.aarch64-unknown-none]
+rustflags = ["-C", "relocation-model=pie"]

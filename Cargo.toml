@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[workspace]
+resolver = "3"
+members = [
+    "boot/stub",
+    "kernel",
+    "crates/bootinfo",
+    "crates/kargs",
+    "crates/initfs",
+    "crates/glyph-atlas",
+    "tools/atlas",
+    "xtask",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+authors = ["Nicole Roy"]
+publish = false
+rust-version = "1.100"
+
+[workspace.dependencies]
+bootinfo = { path = "crates/bootinfo" }
+kargs = { path = "crates/kargs" }
+initfs = { path = "crates/initfs" }
+glyph-atlas = { path = "crates/glyph-atlas" }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(aspis_test_build)"] }
+
+# One codegen unit per crate, for reproducible images (ADR 0038, rule 1).
+[profile.dev]
+panic = "abort"
+codegen-units = 1
+opt-level = 1
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+opt-level = "s"
+debug = 1

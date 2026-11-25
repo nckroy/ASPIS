@@ -5,12 +5,18 @@
 
 This file tells Claude Code how to work in this repository.
 
-ASPIS is an open-source microkernel operating system, written in Rust for ARM64 and modeled on Apollo AEGIS / Domain/OS. It is in its design phase. The repository holds research, design notes and architecture decision records (ADRs), and no code yet.
+ASPIS is an open-source microkernel operating system, written in Rust for ARM64 and modeled on Apollo AEGIS / Domain/OS. It is in its design phase. The repository holds research, design notes and architecture decision records (ADRs), and the first code: milestone M1, "First light".
 
 ## Repository layout
 
 - `docs/research/`: background research. [aegis-domain-os.md](docs/research/aegis-domain-os.md) covers AEGIS and Domain/OS, with a source tag on every fact. Third-party source PDFs kept beside it are for local research only: `.gitignore` excludes `docs/research/*.pdf`, so never commit them.
 - `docs/decisions/`: the ADRs, one per file, named `NNNN-short-title.md`. [README.md](docs/decisions/README.md) lists the founding requirements and indexes every record with its status.
+- `boot/stub/`: the UEFI boot stub, built for `aarch64-unknown-uefi`, which carries the kernel in its `.kernel` section ([0035](docs/decisions/0035-toolchain-image-linkage-and-esp-layout.md)).
+- `kernel/`: the kernel, a static PIE for `aarch64-unknown-none`, with its linker script.
+- `crates/`: `no_std` libraries shared by the stub, the kernel and the tools: `bootinfo` ([0041](docs/decisions/0041-boot-abi.md)), `kargs` (the kernel-argument grammar), `initfs` ([0037](docs/decisions/0037-initial-image-format-and-contents.md)) and `glyph-atlas` ([0034](docs/decisions/0034-noto-fonts-under-ofl.md)).
+- `grammars/`: ABNF grammars and their test vectors ([0013](docs/decisions/0013-abnf-for-protocols-and-calls.md), rule 6).
+- `tools/`: the glyph atlas generator, and the Dockerfile that builds GRUB. `xtask/`: the build tool (`cargo xtask build|run|test|check-production|grub`).
+- `assets/fonts/`: Noto Sans Mono, vendored and pinned by hash, under OFL-1.1 (`REUSE.toml` covers it).
 - `docs/design/`: design notes and architecture views.
   - The design notes fed the ADRs, and each names the records it led to. Examples: [authorization-tree.md](docs/design/authorization-tree.md), [security-tokens.md](docs/design/security-tokens.md), [twelve-factor-apps.md](docs/design/twelve-factor-apps.md).
   - [system-context.md](docs/design/system-context.md) is the C4 system context: an ASPIS realm, the people who use it and the systems around it.
@@ -110,7 +116,7 @@ Don't call a diagram done until you have seen it render.
 
 ## Code and dependencies
 
-There is no code yet. When it starts:
+The code so far is M1's. For all of it:
 
 - Write it in Rust: a microkernel for ARM64, bootable with GRUB ([founding requirements](docs/decisions/README.md#founding-requirements)). The boot image is a UEFI PE32+ image ([0006](docs/decisions/0006-uefi-boot-image.md)). The targets are QEMU `virt` first, then Raspberry Pi 4 ([0007](docs/decisions/0007-initial-hardware-targets.md)).
 - The toolchain is pinned stable Rust, 1.100.0 in `rust-toolchain.toml`, with no nightly features. The kernel is an `aarch64-unknown-none` payload inside the `aarch64-unknown-uefi` stub, and user-space programs are `no_std` until there is a `std` port ([0035](docs/decisions/0035-toolchain-image-linkage-and-esp-layout.md)).

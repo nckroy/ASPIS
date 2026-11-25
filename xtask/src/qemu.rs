@@ -1,0 +1,277 @@
+// SPDX-FileCopyrightText: 2026 Nicole Roy
+// SPDX-License-Identifier: MPL-2.0
+
+//! Running ASPIS on QEMU `virt` with EDK2 (ADR 0007, rule 1; ADR 0036).
+
+use crate::{Flavor, build_dir, esp, fail};
+use std::{
+    fs,
+    io::{BufRead, BufReader, Read, Write},
+    os::unix::net::UnixStream,
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant},
+};
+
+#[derive(Clone, Debug)]
+pub struct Options {
+    pub flavor: Flavor,
+    pub direct: bool,
+    pub config: String,
+    pub args: String,
+    pub expect: Option<String>,
+    pub screenshot: Option<PathBuf>,
+    pub timeout: u64,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            flavor: Flavor::Production,
+            direct: false,
+            config: "a72-v2".into(),
+            args: String::new(),
+            expect: None,
+            screenshot: None,
+            timeout: 120,
+        }
+    }
+}
+
+impl Options {
+    pub fn parse(args: &[String]) -> Self {
+        let mut o = Self::default();
+        let mut it = args.iter();
+        while let Some(a) = it.next() {
+            let mut value = || {
+                it.next()
+                    .cloned()
+                    .unwrap_or_else(|| fail(format!("{a} needs a value")))
+            };
+            match a.as_str() {
+                "--test-build" => o.flavor = Flavor::Test,
+                "--direct" => o.direct = true,
+                "--config" => o.config = value(),
+                "--args" => o.args = value(),
+                "--expect" => o.expect = Some(value()),
+                "--screenshot" => o.screenshot = Some(PathBuf::from(value())),
+                "--timeout" => {
+                    o.timeout = value().parse().unwrap_or_else(|_| fail("bad --timeout"))
+                }
+                other => fail(format!("unknown option {other}")),
+            }
+        }
+        o
+    }
+}
+
+/// The two configurations every change runs (ADR 0036, rule 3).
+fn machine(config: &str) -> (&'static str, &'static str) {
+    match config {
+        "a72-v2" => ("cortex-a72", "2"),
+        "max-v3" => ("max", "3"),
+        other => fail(format!(
+            "unknown configuration {other}; use a72-v2 or max-v3"
+        )),
+    }
+}
+
+/// QEMU's bundled EDK2 firmware (ADR 0036, rule 1).
+fn firmware_dir() -> PathBuf {
+    let qemu = Command::new("sh")
+        .args(["-c", "command -v qemu-system-aarch64"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| PathBuf::from(s.trim()))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| fail("qemu-system-aarch64 not found"));
+    let real = fs::canonicalize(&qemu).unwrap_or(qemu);
+    let share = real.parent().unwrap().parent().unwrap().join("share/qemu");
+    if !share.join("edk2-aarch64-code.fd").exists() {
+        fail(format!("no edk2-aarch64-code.fd in {}", share.display()));
+    }
+    share
+}
+
+/// Boots and returns an exit status: QEMU's own for a run without
+/// `--expect` (a test build ends it through semihosting), or 0 once the
+/// expected text appears.
+pub fn run(o: &Options) -> i32 {
+    let images = o.flavor.out();
+    let work = build_dir().join(format!("run-{}-{}", o.flavor.name(), o.config));
+    fs::create_dir_all(&work).unwrap();
+    let esp_img = work.join("esp.img");
+    if o.direct {
+        if !o.args.is_empty() {
+            fail("--direct boots without GRUB, so it can't pass --args");
+        }
+        esp::direct(&esp_img, &images);
+    } else {
+        let grub = crate::grub();
+        esp::grub(&esp_img, &images, &grub, &o.args);
+    }
+    let fw = firmware_dir();
+    let vars = work.join("vars.fd");
+    fs::copy(fw.join("edk2-arm-vars.fd"), &vars).unwrap();
+    let qmp = work.join("qmp.sock");
+    let _ = fs::remove_file(&qmp);
+
+    let (cpu, gic) = machine(&o.config);
+    let mut cmd = Command::new("qemu-system-aarch64");
+    cmd.args([
+        "-machine",
+        &format!("virt,gic-version={gic},iommu=smmuv3,acpi=off"),
+    ])
+    .args(["-cpu", cpu, "-smp", "4", "-m", "1G"])
+    .arg("-drive")
+    .arg(format!(
+        "if=pflash,format=raw,unit=0,readonly=on,file={}",
+        fw.join("edk2-aarch64-code.fd").display()
+    ))
+    .arg("-drive")
+    .arg(format!(
+        "if=pflash,format=raw,unit=1,file={}",
+        vars.display()
+    ))
+    .arg("-drive")
+    .arg(format!(
+        "if=none,id=esp,format=raw,file={}",
+        esp_img.display()
+    ))
+    .args(["-device", "virtio-blk-pci,drive=esp,bootindex=0"])
+    .args(["-device", "ramfb"])
+    .args(["-device", "virtio-rng-pci"])
+    .args(["-netdev", "user,id=net0"])
+    .args(["-device", "virtio-net-pci,netdev=net0,romfile="])
+    .args(["-nodefaults", "-display", "none"])
+    .args([
+        "-chardev",
+        "stdio,id=uart,signal=off",
+        "-serial",
+        "chardev:uart",
+    ])
+    .arg("-qmp")
+    .arg(format!("unix:{},server=on,wait=off", qmp.display()));
+    if o.flavor == Flavor::Test {
+        cmd.args(["-semihosting-config", "enable=on,target=native"]);
+    }
+    // Extra QEMU arguments for debugging, such as `-d int -D <file>`.
+    if let Ok(extra) = std::env::var("ASPIS_QEMU_EXTRA") {
+        cmd.args(extra.split_whitespace());
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    let mut child = cmd
+        .spawn()
+        .unwrap_or_else(|e| fail(format!("qemu-system-aarch64: {e}")));
+
+    // Copy the UART to our output, watching for the expected text.
+    let stdout = child.stdout.take().unwrap();
+    let (tx, rx) = mpsc::channel::<String>();
+    let reader = thread::spawn(move || {
+        let mut r = BufReader::new(stdout);
+        let mut buf = Vec::new();
+        loop {
+            buf.clear();
+            match r.read_until(b'\n', &mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let line = String::from_utf8_lossy(&buf).into_owned();
+                    print!("{line}");
+                    let _ = std::io::stdout().flush();
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(o.timeout);
+    let mut seen = String::new();
+    let status = loop {
+        if let Some(code) = child.try_wait().unwrap() {
+            break code.code().unwrap_or(-1);
+        }
+        while let Ok(line) = rx.try_recv() {
+            seen.push_str(&line);
+        }
+        if let Some(e) = &o.expect
+            && seen.contains(e.as_str())
+        {
+            // Let the console finish drawing before the screenshot.
+            thread::sleep(Duration::from_millis(500));
+            if let Some(shot) = &o.screenshot {
+                match screendump(&qmp, shot) {
+                    Ok(()) => eprintln!("xtask: screenshot in {}", shot.display()),
+                    Err(err) => eprintln!("xtask: screenshot failed: {err}"),
+                }
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            eprintln!("xtask: saw \"{e}\"");
+            break 0;
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            eprintln!("xtask: timed out after {} s", o.timeout);
+            break 124;
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    let _ = reader.join();
+    if o.expect.is_none() {
+        eprintln!("xtask: QEMU exited with status {status}");
+    }
+    status
+}
+
+/// Saves the screen as a PNG through QMP.
+fn screendump(sock: &Path, out: &Path) -> Result<(), String> {
+    if let Some(dir) = out.parent() {
+        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let mut s = UnixStream::connect(sock).map_err(|e| e.to_string())?;
+    s.set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|e| e.to_string())?;
+    let mut r = BufReader::new(s.try_clone().map_err(|e| e.to_string())?);
+    let mut line = String::new();
+    r.read_line(&mut line).map_err(|e| e.to_string())?; // greeting
+    let out = fs::canonicalize(out.parent().unwrap())
+        .map_err(|e| e.to_string())?
+        .join(out.file_name().unwrap());
+    let path = out
+        .display()
+        .to_string()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"");
+    for msg in [
+        "{\"execute\":\"qmp_capabilities\"}".to_string(),
+        format!(
+            "{{\"execute\":\"screendump\",\"arguments\":{{\"filename\":\"{path}\",\"format\":\"png\"}}}}"
+        ),
+    ] {
+        s.write_all(msg.as_bytes()).map_err(|e| e.to_string())?;
+        s.write_all(b"\n").map_err(|e| e.to_string())?;
+        loop {
+            line.clear();
+            r.read_line(&mut line).map_err(|e| e.to_string())?;
+            if line.contains("\"return\"") {
+                break;
+            }
+            if line.contains("\"error\"") {
+                return Err(line.trim().to_string());
+            }
+        }
+    }
+    let mut check = [0u8; 4];
+    fs::File::open(&out)
+        .and_then(|mut f| f.read_exact(&mut check))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}

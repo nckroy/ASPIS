@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+# Licensing for files that can't carry their own SPDX comments
+# (ADR 0033, rule 3).
+version = 1
+
+# Cargo rewrites Cargo.lock and drops any comment added to it.
+[[annotations]]
+path = "Cargo.lock"
+SPDX-FileCopyrightText = "2026 Nicole Roy"
+SPDX-License-Identifier = "MPL-2.0"
+
+# Noto Sans Mono and its license file, vendored unmodified from the Noto
+# project's release (ADR 0034, rules 1 and 2; assets/fonts/fonts.lock).
+[[annotations]]
+path = ["assets/fonts/NotoSansMono-Regular.ttf", "assets/fonts/OFL.txt"]
+precedence = "override"
+SPDX-FileCopyrightText = "2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)"
+SPDX-License-Identifier = "OFL-1.1"

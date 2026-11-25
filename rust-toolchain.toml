@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+# Pinned stable Rust, with no nightly features (ADR 0035, rule 1).
+[toolchain]
+channel = "1.100.0"
+targets = ["aarch64-unknown-uefi", "aarch64-unknown-none"]
+components = ["rustfmt", "clippy", "llvm-tools"]
+profile = "minimal"

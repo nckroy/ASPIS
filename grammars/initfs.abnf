@@ -1,0 +1,129 @@
+; SPDX-FileCopyrightText: 2026 Nicole Roy
+; SPDX-License-Identifier: MPL-2.0
+;
+; The ASPIS initial image, initfs.img.
+;
+; ADR 0037 (docs/decisions/0037-initial-image-format-and-contents.md)
+; decides the format, and rule 2 makes this grammar its definition.
+;
+; Notation: RFC 5234 ABNF. The image is a sequence of octets, and each
+; %x value is one octet. Integers are unsigned and little-endian: the
+; least significant octet comes first (ADR 0037, rule 1).
+;
+; ABNF can't tie a field's value to octets elsewhere in the image, so
+; comments marked "constraint:" state what the rules can't. They are
+; normative (ADR 0013, rule 4), and a reader rejects an image that
+; breaks one. In a constraint, a field's rule name stands for its value
+; as an integer. Offsets count from the image's first octet.
+
+initfs-image   = header body
+
+header         = magic major-version minor-version header-len alignment
+                 entry-count table-offset manifest-index reserved-4
+                 image-len reserved-16
+                 ; 64 octets.
+
+magic          = %x41.53.50.49.53.49.4D.47     ; "ASPISIMG", case-sensitive
+major-version  = %x01.00                       ; 1
+minor-version  = u16le
+                 ; 0 for this grammar. A reader accepts any minor version.
+header-len     = %x40.00.00.00                 ; 64
+alignment      = u32le
+                 ; constraint: a power of two, at least 4096.
+entry-count    = u32le
+table-offset   = u64le
+                 ; constraint: a multiple of 8, at least 64.
+                 ; constraint: table-offset + 128 * entry-count <= image-len.
+manifest-index = u32le
+                 ; constraint: less than entry-count.
+image-len      = u64le
+                 ; constraint: the number of octets in the whole image.
+
+body           = *OCTET
+                 ; constraint: the octets from table-offset to
+                 ; table-offset + 128 * entry-count match entry-table.
+                 ; constraint: the octets from each entry's offset to
+                 ; offset + length are that entry's contents.
+                 ; constraint: the entry table overlaps no entry's
+                 ; contents, and no entry's contents overlap the header.
+                 ; Every other octet is padding. A builder writes padding
+                 ; as zero, and a reader ignores it.
+
+entry-table    = *entry
+                 ; constraint: exactly entry-count entries.
+                 ; constraint: each entry's offset is at least the
+                 ; previous entry's offset + length, so the contents are in
+                 ; ascending offset order and don't overlap.
+                 ; constraint: no two entries have the same name.
+                 ; constraint: exactly one entry has kind manifest, and it
+                 ; is the entry at manifest-index, counting from 0.
+
+entry          = name-len kind flags reserved-4 offset length digest
+                 name-field
+                 ; 128 octets.
+
+name-len       = u16le
+                 ; constraint: 1 to 40, the number of name-char octets in
+                 ; name-field.
+kind           = executable / data / manifest
+executable     = %x01   ; a static ELF64 AArch64 program
+data           = %x02
+manifest       = %x03   ; the boot manifest, whose format is open (D40)
+flags          = %x00
+offset         = u64le
+                 ; constraint: a multiple of alignment.
+                 ; constraint: offset + length <= image-len.
+length         = u64le
+digest         = 64OCTET
+                 ; constraint: the SHA-512 (FIPS 180-4) of the entry's
+                 ; contents. A reader checks it before it uses the entry
+                 ; (ADR 0037, rule 7).
+name-field     = 40name-char
+               / 39name-char 1%x00
+               / 38name-char 2%x00
+               / 37name-char 3%x00
+               / 36name-char 4%x00
+               / 35name-char 5%x00
+               / 34name-char 6%x00
+               / 33name-char 7%x00
+               / 32name-char 8%x00
+               / 31name-char 9%x00
+               / 30name-char 10%x00
+               / 29name-char 11%x00
+               / 28name-char 12%x00
+               / 27name-char 13%x00
+               / 26name-char 14%x00
+               / 25name-char 15%x00
+               / 24name-char 16%x00
+               / 23name-char 17%x00
+               / 22name-char 18%x00
+               / 21name-char 19%x00
+               / 20name-char 20%x00
+               / 19name-char 21%x00
+               / 18name-char 22%x00
+               / 17name-char 23%x00
+               / 16name-char 24%x00
+               / 15name-char 25%x00
+               / 14name-char 26%x00
+               / 13name-char 27%x00
+               / 12name-char 28%x00
+               / 11name-char 29%x00
+               / 10name-char 30%x00
+               / 9name-char 31%x00
+               / 8name-char 32%x00
+               / 7name-char 33%x00
+               / 6name-char 34%x00
+               / 5name-char 35%x00
+               / 4name-char 36%x00
+               / 3name-char 37%x00
+               / 2name-char 38%x00
+               / 1name-char 39%x00
+                 ; 40 octets: the name, then zero octets to fill the field.
+name-char      = %x61-7A / %x30-39 / %x2E / %x5F / %x2D
+                 ; a-z, 0-9, ".", "_" and "-"
+
+u16le          = 2OCTET   ; least significant octet first
+u32le          = 4OCTET   ; least significant octet first
+u64le          = 8OCTET   ; least significant octet first
+reserved-4     = 4%x00
+reserved-16    = 16%x00

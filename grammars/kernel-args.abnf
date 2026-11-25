@@ -1,0 +1,23 @@
+; SPDX-FileCopyrightText: 2026 Nicole Roy
+; SPDX-License-Identifier: MPL-2.0
+;
+; Kernel arguments: the command line the stub hands the kernel.
+; Normative source: ADR 0041 (docs/decisions/0041-boot-abi.md), rule 5.
+; The rules below are copied verbatim from that record. SP, DIGIT and
+; DQUOTE are the RFC 5234 core rules.
+;
+; Rule 5 also limits the line to 4096 bytes. The grammar does not
+; express that limit; parsers enforce it separately.
+; Test vectors: kernel-args.vectors.
+
+kernel-args = *SP [ arg *( 1*SP arg ) *SP ]
+arg         = key [ "=" value ]
+key         = segment *( "." segment )
+segment     = lower *( lower / DIGIT / "-" )
+lower       = %x61-7A
+value       = bare / quoted
+bare        = 1*bare-char
+bare-char   = %x21 / %x23-7E                ; printable, not SP or DQUOTE
+quoted      = DQUOTE *( q-char / escape ) DQUOTE
+q-char      = %x20-21 / %x23-5B / %x5D-7E   ; not DQUOTE or "\"
+escape      = "\" ( DQUOTE / "\" )

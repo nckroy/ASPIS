@@ -6,3 +6,7 @@
 
 # Third-party source documents, kept locally for research only
 docs/research/*.pdf
+
+# Build output
+/target
+/build

@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+# Font files vendored for the build, each pinned by release and SHA-512
+# (ADR 0034, rule 1). The build fetches nothing; it checks each file
+# against its hash before using it.
+
+[[font]]
+file = "NotoSansMono-Regular.ttf"
+family = "Noto Sans Mono"
+style = "Regular"
+license = "OFL-1.1"
+license-file = "OFL.txt"
+upstream = "https://github.com/notofonts/latin-greek-cyrillic"
+release = "NotoSansMono-v2.014"
+url = "https://github.com/notofonts/latin-greek-cyrillic/releases/download/NotoSansMono-v2.014/NotoSansMono-v2.014.zip"
+# The release zip's SHA-512, as downloaded on 2026-11-25.
+archive-sha512 = "a7bda86990d13cfffbb8bd3edadb19348a1db20349af3cbaedf478e4cb8e30f486c24f40d8f9e3b690267295e882909420bae3c34edc8cb2e693f61f55e74f4d"
+# The file's path inside the zip: the unhinted TrueType build. The
+# atlas rasterizer ignores hinting, so the hinted build adds only size.
+archive-path = "NotoSansMono/unhinted/ttf/NotoSansMono-Regular.ttf"
+sha512 = "b0e83b903b91f976d68256381710b598887a68e866e1b465d7ce69e10db89a5f4913f8680e04622c19b8ce91a12d2004d0a33262951be8099c43f3829e8c58ed"
