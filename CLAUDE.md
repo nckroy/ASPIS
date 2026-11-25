@@ -25,7 +25,7 @@ ASPIS is an open-source microkernel operating system, written in Rust for ARM64 
   - The views zoom in from there: [realm-containers.md](docs/design/realm-containers.md) (the realm's services), [node-components.md](docs/design/node-components.md) (one node's servers), [kernel-components.md](docs/design/kernel-components.md) (the kernel) and [key-flows.md](docs/design/key-flows.md) (sequence diagrams across all three).
   - [build-plan.md](docs/design/build-plan.md) divides the build into chunks (C01…) and milestones (M1–M9, and MH for hardware and hardening). [design-backlog.md](docs/design/design-backlog.md) lists the open decisions (D01…) under the milestone each must be settled before. When a decision is made, record it as an ADR and mark its backlog entry settled.
 - [LICENSE](LICENSE): the verbatim text of the Mozilla Public License 2.0 ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 3). Don't edit it.
-- [LICENSES/](LICENSES): the license texts in the REUSE layout, `MPL-2.0.txt` and `CC-BY-4.0.txt` ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 3). Don't edit them either.
+- [LICENSES/](LICENSES): the license texts in the REUSE layout ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 3): `MPL-2.0.txt` for code, `CC-BY-4.0.txt` for documents, `OFL-1.1.txt` for the vendored fonts, `CC-BY-SA-4.0.txt` for the code of conduct, and `LicenseRef-DCO.txt` for the DCO that `CONTRIBUTING.md` quotes. Don't edit them either.
 
 ## This working copy is in iCloud
 
@@ -156,4 +156,4 @@ The code so far is M1's. For all of it:
 
 Many ADRs leave details to the design session, and say which. [design-backlog.md](docs/design/design-backlog.md) lists the open decisions under the milestone each must be settled before. Don't assume an answer to any of them.
 
-The two licensing questions that were open are settled: documents are under CC BY 4.0, and contributions come under the DCO ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md)). ASPIS accepts outside contributions once C01 adds `CONTRIBUTING.md` and the sign-off check in CI.
+The two licensing questions that were open are settled: documents are under CC BY 4.0, and contributions come under the DCO ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md)). ASPIS accepts outside contributions: [CONTRIBUTING.md](CONTRIBUTING.md) quotes the DCO and describes the workflow, CI checks sign-offs, [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) is the Contributor Covenant 3.0 (under CC BY-SA 4.0, the one document that isn't CC BY 4.0), and [SECURITY.md](SECURITY.md) points to GitHub's private vulnerability reporting.
