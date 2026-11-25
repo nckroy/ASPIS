@@ -1,8 +1,9 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # 0029. The founding node's initial certificate is self-signed
 
-- **Status:** Proposed. Would amend [0020](0020-realm-certificate-authority.md) (rules 4 and 6).
+- **Status:** Accepted. Amends [0020](0020-realm-certificate-authority.md) (rules 4 and 6).
 - **Date:** 2026-11-24
 
 ## Context
@@ -15,7 +16,7 @@ The normal path can't produce that first certificate:
 - Issuing is an authorized call: the CA asks its node's decision point first ([0020](0020-realm-certificate-authority.md), rule 6). During the ceremony no decision point runs yet. Until one starts, authority comes only from the capabilities the root server hands out ([0018](0018-cedar-policy-language.md), rule 5).
 - The root signs only intermediate certificates, cross-certificates and its CRL ([0020](0020-realm-certificate-authority.md), rule 1), so it can't certify the node either.
 
-The [key flows](../design/key-flows.md#3-realm-creation-ceremony) listed this as open. Nicole decided it on 2026-11-24: the founding node generates its initial certificate as self-signed, signed with the node's genesis key. Rules 3 to 6 below spell that decision out and are proposals.
+The [key flows](../design/key-flows.md#3-realm-creation-ceremony) listed this as open. Nicole decided it on 2026-11-24: the founding node generates its initial certificate as self-signed, signed with the node's genesis key. Rules 3 to 6 below spell that decision out. Claude proposed them, and the project owner accepted them on 2026-11-25.
 
 ## Decision
 

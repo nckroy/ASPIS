@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # Applications that extend the system, and the catalog that finds them
 

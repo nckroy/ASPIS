@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # Entropy and the first keys
 
@@ -69,8 +70,8 @@ sequenceDiagram
     participant NS as Network server
     participant CA as Realm RPC CA
     FW->>Stub: seed from EFI_RNG_PROTOCOL, if present
-    Stub->>K: boot information, with the seed
-    K->>RS: start the root server and hand over the seed
+    Stub->>K: boot information, with the seed in a page of its own
+    K->>RS: start the root server and hand on the seed's page unread
     RS->>ES: start the entropy service first, with the seed
     RS->>HW: start the hardware generator and jitter drivers
     HW->>ES: health-tested samples
@@ -80,6 +81,8 @@ sequenceDiagram
     KS->>KS: operational TLS key, certified by the genesis key
     NS->>CA: enroll and obtain the node certificate
 ```
+
+**How the seed reaches the kernel.** The stub fills a page with bytes from `EFI_RNG_PROTOCOL` that it hasn't used for its own purposes, and erases every other copy. The page's address, length and source travel in the boot information. The kernel never reads the page. It hands it on and keeps no copy ([0041](../decisions/0041-boot-abi.md), rule 4). How the page travels through the root server to the entropy service, and how it is erased once ingested, is still open ([design backlog, D42](design-backlog.md#m3-node-user-space-and-the-entropy-gate)).
 
 **Who needs randomness, and when**
 
@@ -98,7 +101,7 @@ sequenceDiagram
 The first certificates are minted at two points:
 
 - **A realm's first certificates**, its root and intermediates, are minted when the realm is created ([0020](../decisions/0020-realm-certificate-authority.md), rule 1).
-- **A node's first certificate** is minted when the node first enrolls, after the key service has minted the genesis key ([0020](../decisions/0020-realm-certificate-authority.md), rule 4).
+- **A node's first certificate** is minted when the node first enrolls, after the key service has minted the genesis key ([0020](../decisions/0020-realm-certificate-authority.md), rule 4). The founding node is the exception: no CA can issue its first certificate, so during the realm's creation it signs its initial certificate itself, with its genesis key, and later replaces it by renewal with the RPC CA ([0029](../decisions/0029-founding-node-self-signed-certificate.md), rules 1, 2 and 5).
 
 Both come after the gate, provided nothing can produce a key before the entropy service answers.
 
@@ -139,7 +142,7 @@ Both come after the gate, provided nothing can produce a key before the entropy 
    - [0003](../decisions/0003-hybrid-post-quantum-cryptography.md) rule 6 keeps cryptography out of the kernel.
    - **Resolution:**
      - The generator lives in a user-space service.
-     - The kernel only passes the firmware's seed along.
+     - The kernel only passes the firmware's seed along, in a page of its own that it never reads ([0041](../decisions/0041-boot-abi.md), rule 4).
      - Nothing that runs before the gate needs randomness.
 2. **0001's random bits, before the gate and before storage.**
    - An ID's sequence number needs a durably reserved block ([0001](../decisions/0001-object-identifiers.md), rule 4), and its 40 random bits need the generator. Early in boot, neither storage nor the generator is ready.
@@ -154,7 +157,11 @@ Both come after the gate, provided nothing can produce a key before the entropy 
 4. **Time is the other first-boot gate.**
    - Certificates ([0020](../decisions/0020-realm-certificate-authority.md)) and tokens ([0015](../decisions/0015-jwt-tokens-and-oidc-identity.md)) need trustworthy time, and the Pi 4 has no battery-backed clock.
    - **Resolution:** enrollment waits for authenticated time as well as for the entropy gate. The design of time synchronization is still open.
-5. **Reproducible tests versus real entropy.** Continuous integration wants repeatable runs, but a production node must never accept an injected seed. This stays open.
+5. **Reproducible tests versus real entropy.** Continuous integration wants repeatable runs, but a production node must never accept an injected seed.
+   - **Resolution:** a seed hook in test builds only. Decided: [0036](../decisions/0036-qemu-configuration-and-test-builds.md), rules 6–8.
+     - Test builds are compiled with `--cfg aspis_test_build`, in a separate target directory, never as a Cargo feature.
+     - In a test build, the entropy service accepts a fixed seed from a kernel argument, and credits it, so a run can be replayed. A production build doesn't recognize that argument.
+     - CI checks every production image for test-only code, and fails the build on a hit.
 
 ## 6. Open questions
 
@@ -163,7 +170,7 @@ Both come after the gate, provided nothing can produce a key before the entropy 
 - **The reseed interval.**
 - **IDs minted before the gate:** what fills the random field of the node's well-known objects.
 - **The realm-creation ceremony:** whether it should demand a full-entropy (RBG3) source, such as an HSM, for the root key. Decided: [0021](../decisions/0021-entropy-before-keys.md), rules 5 and 6. The ceremony demands a node that meets rule 5, with a physical source and prediction resistance, not an RBG3 source; entropy from an HSM may be mixed in but is never credited.
-- **Reproducible tests:** a seed-injection hook for test builds only, and how production builds are kept free of it.
+- **Reproducible tests:** a seed-injection hook for test builds only, and how production builds are kept free of it. Decided: [0036](../decisions/0036-qemu-configuration-and-test-builds.md), rules 6–8. Only builds compiled with `--cfg aspis_test_build` contain the hook, and CI checks that production images hold no test code.
 - **The persisted seed:** where it lives in the store, and when it is rewritten.
 - **Time synchronization** that doesn't depend on certificates a node can't yet validate.
 

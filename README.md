@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # ASPIS
 
@@ -17,7 +18,7 @@ What sets it apart is what it changes and adds. Every object is named by an ID w
 ASPIS is in its design phase. This repository holds research notes, architecture decision records (ADRs) and design documents. There is no code yet.
 
 - **Process.** Research and discussion come first, then a design session, then code. The design session is under way.
-- **Decisions.** Most ADRs are accepted. A few, such as [0029](docs/decisions/0029-founding-node-self-signed-certificate.md), are still proposed. The [decision index](docs/decisions/README.md) gives each record's status.
+- **Decisions.** All 42 ADRs are accepted. The latest, [0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md) to [0042](docs/decisions/0042-log-ring-and-panic-path.md), settle the licensing questions and what the first milestone needs to build and boot. The [decision index](docs/decisions/README.md) gives each record's status.
 - **Design.** Zooming in from the system context, the design session has drawn views of a realm, a node and the kernel, and ten key flows.
 - **Still open.** The ADRs leave many details to the design session, such as the ID format specification, the cryptography library, the coherence protocol for shared remote objects and the kernel specification. Each record says what it leaves open.
 - **Targets.** QEMU `virt` with EDK2 firmware comes first, for development and CI. The Raspberry Pi 4 is the first real hardware ([0007](docs/decisions/0007-initial-hardware-targets.md)).
@@ -81,13 +82,17 @@ Ten design notes came before the decisions. Each led to the records beside it:
 ## License
 
 - ASPIS code (the kernel, servers, libraries and tools) is licensed under the Mozilla Public License 2.0. The text is in [LICENSE](LICENSE) ([0008](docs/decisions/0008-mpl-2.0-license.md)).
-- Dependencies must be MPL-2.0 or permissively licensed (MIT, Apache-2.0, BSD). The kernel and core servers use no GPL-only dependencies ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 4).
-- ASPIS's own files carry SPDX tags at the top, in the REUSE format ([0023](docs/decisions/0023-copyright-notices.md)). Source files carry `SPDX-FileCopyrightText: 2026 Nicole Roy` and `SPDX-License-Identifier: MPL-2.0`. Markdown documents carry the copyright tag only.
-- The documentation's own license is not decided yet. Until it is, the documents carry a copyright notice and no license, so nobody else has a license to reuse them.
+- ASPIS's documents are licensed under Creative Commons Attribution 4.0 International (CC BY 4.0): the research, the decision records, the design notes, this README and the other Markdown, with the diagrams they contain ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 2). Anyone may copy and adapt them, with attribution.
+- The license texts are in [LICENSES/](LICENSES), following REUSE ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 3).
+- Dependencies must be MPL-2.0 or permissively licensed (MIT, Apache-2.0, BSD). The kernel and core servers use no GPL-only dependencies ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 4). Fonts may also be under the SIL Open Font License 1.1: the console uses Noto Sans Mono, and the SVG layer uses Noto Sans Mono and Noto Sans ([0034](docs/decisions/0034-noto-fonts-under-ofl.md)).
+- ASPIS's own files carry two SPDX tags at the top, in the REUSE format ([0023](docs/decisions/0023-copyright-notices.md), [0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md)). Source files carry `SPDX-FileCopyrightText: 2026 Nicole Roy` and `SPDX-License-Identifier: MPL-2.0`. Markdown documents carry the same copyright tag and `SPDX-License-Identifier: CC-BY-4.0`.
+- A notice names its years as a range, from the year the holder first published the file to the latest year that holder changed it, such as `2026-2027 Nicole Roy` ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 4).
 - Third-party material keeps its own notices.
 
 ## Contributing
 
-Copyright in a contribution stays with its author unless an agreement assigns or licenses it. So before ASPIS accepts outside contributions, it needs a contribution policy: a DCO, a CLA or an assignment ([0023](docs/decisions/0023-copyright-notices.md)). That policy hasn't been chosen, so outside contributions aren't accepted yet.
+Contributions come under the Developer Certificate of Origin 1.1 ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 1). Each commit carries a `Signed-off-by:` line with the contributor's name, and anonymous contributions aren't accepted. A contribution is licensed under the license of the files it changes or adds: MPL-2.0 for code, CC BY 4.0 for documents. Contributors keep their copyright. A contributor adds their own `SPDX-FileCopyrightText` line to a file when their change to it is copyrightable, and a file a contributor creates names them. ASPIS asks for no CLA and no assignment.
+
+ASPIS will accept outside contributions once the repository has a `CONTRIBUTING.md` that quotes the DCO, and CI checks every commit in a pull request for a sign-off. Both come with the first build chunk, C01 ([build plan](docs/design/build-plan.md#m1-first-light)). Until then, outside contributions aren't accepted.
 
 Copyright 2026 Nicole Roy.

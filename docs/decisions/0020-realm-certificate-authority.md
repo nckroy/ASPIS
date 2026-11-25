@@ -1,8 +1,9 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # 0020. The realm as its own certificate authority, with hybrid post-quantum certificates
 
-- **Status:** Accepted. Amends [0003](0003-hybrid-post-quantum-cryptography.md) (rule 3 and its first consequence), [0013](0013-abnf-for-protocols-and-calls.md) (rule 2) and [0017](0017-openid-federation-membership.md) (rules 8 and 9). Amended by [0022](0022-spiffe-and-wimse-workload-identity.md) (rule 5) and [0026](0026-realm-as-cloud-provider.md) (rule 11).
+- **Status:** Accepted. Amends [0003](0003-hybrid-post-quantum-cryptography.md) (rule 3 and its first consequence), [0013](0013-abnf-for-protocols-and-calls.md) (rule 2) and [0017](0017-openid-federation-membership.md) (rules 8 and 9). Amended by [0022](0022-spiffe-and-wimse-workload-identity.md) (rule 5), [0026](0026-realm-as-cloud-provider.md) (rule 11) and [0029](0029-founding-node-self-signed-certificate.md) (rules 4 and 6).
 - **Date:** 2026-11-24
 
 ## Context

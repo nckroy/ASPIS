@@ -1,8 +1,9 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # Design backlog
 
-*2026-11-24. Every open design decision, in the order the build needs them. The companion to the [build plan](build-plan.md).*
+*2026-11-24, updated 2026-11-25. Every open design decision, in the order the build needs them. The companion to the [build plan](build-plan.md).*
 
 This note lists the design decisions that ASPIS still has to make. Each sits under the milestone it must be settled before, and the entries are numbered D01, D02, … in that order. Within a milestone they follow the order in which the build reaches them. The [build plan](build-plan.md) splits the build into chunks (C01, C02, …) and milestones, and says which chunk each decision unblocks.
 
@@ -13,7 +14,9 @@ An entry has a title and four parts:
 - **Options:** the options the documents have named so far. The backlog chooses none of them.
 - **Blocks:** the chunks that can't be finished without the decision. **Depends on:** the decisions it needs first.
 
-Once made, each decision becomes an ADR, or an amendment to one. [0029](../decisions/0029-founding-node-self-signed-certificate.md) and [0031](../decisions/0031-abnf-is-not-a-command-language.md) are proposed, not accepted, and are cited as such. Where accepted records conflict, the texts and the options are set out in [Conflicts between accepted ADRs](#conflicts-between-accepted-adrs); two of those conflicts block the build. [Settled since the reading phase](#settled-since-the-reading-phase) lists what has been decided since these items were first collected, so that nothing drops out unrecorded.
+A settled entry stays in place, with a **Settled:** line naming the record that settled it and the date it was accepted. An entry that is only partly settled has a **Settled in part:** line instead, which says what is still open. The rest of the entry is kept as the record of what was asked.
+
+Once made, each decision becomes an ADR, or an amendment to one. On 2026-11-25 the project owner accepted [0029](../decisions/0029-founding-node-self-signed-certificate.md) and [0031](../decisions/0031-abnf-is-not-a-command-language.md), which had been proposed, and [0033](../decisions/0033-contributions-docs-license-and-notice-years.md) to [0042](../decisions/0042-log-ring-and-panic-path.md), which settle D01 to D10. Where accepted records conflict, the texts and the options are set out in [Conflicts between accepted ADRs](#conflicts-between-accepted-adrs); two of those conflicts block the build. [Settled since the reading phase](#settled-since-the-reading-phase) lists what has been decided since these items were first collected, so that nothing drops out unrecorded.
 
 1. [M1. First light](#m1-first-light)
 2. [M2. Kernel objects](#m2-kernel-objects)
@@ -30,7 +33,7 @@ Once made, each decision becomes an ADR, or an amendment to one. [0029](../decis
 
 ## M1. First light
 
-Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)).
+Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)). All ten of M1's decisions were settled on 2026-11-25.
 
 **D01. Contribution policy, notice years and the documentation license**
 
@@ -38,6 +41,7 @@ Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)).
 - **Why open:** [0008](../decisions/0008-mpl-2.0-license.md), rule 5 leaves the documentation license to a separate decision. [0023](../decisions/0023-copyright-notices.md) leaves the contribution policy and later years open (Consequences), so documents carry no license and full REUSE compliance waits.
 - **Options:** a DCO, a CLA or an assignment ([0023](../decisions/0023-copyright-notices.md), Consequences). None named for the documentation license.
 - **Blocks:** C01, before outside contributions. **Depends on:** none.
+- **Settled:** [0033](../decisions/0033-contributions-docs-license-and-notice-years.md), accepted 2026-11-25: the DCO for contributions (rule 1), CC BY 4.0 for documents (rule 2), license texts in `LICENSES/` and a REUSE check in CI (rule 3), and years as ranges (rule 4). It amends [0023](../decisions/0023-copyright-notices.md), rules 1 and 2.
 
 **D02. Rust targets, image linkage and the ESP layout**
 
@@ -45,6 +49,7 @@ Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)).
 - **Why open:** [0006](../decisions/0006-uefi-boot-image.md), rules 1 and 3 fix the image and the GRUB entry, not the build. The linkage also decides whether the stub can randomize the kernel's placement, since the kernel uses no randomness ([0021](../decisions/0021-entropy-before-keys.md), rule 3).
 - **Options:** one UEFI target; a kernel payload that the stub relocates; a custom target specification with `build-std` for user space. The ESP layout should leave room for the two boot entries D146 may need.
 - **Blocks:** C02, C04, C26, C78. **Depends on:** none.
+- **Settled:** [0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), accepted 2026-11-25. It leaves three things to later decisions: whether the stub randomizes the kernel's placement is decided with C78 (rule 4; D145); whether and when to port Rust's standard library waits until the POSIX personality or applications need it (rule 5; D60); how a slot is chosen, and how a failed boot falls back, are D146's (rule 6).
 
 **D03. QEMU configuration, the test framework and the test seed hook**
 
@@ -52,6 +57,7 @@ Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)).
 - **Why open:** [0021](../decisions/0021-entropy-before-keys.md), rule 12, [0009](../decisions/0009-text-as-graphics-console.md), rule 2 and [0007](../decisions/0007-initial-hardware-targets.md), rule 1 fix virtio-rng, `ramfb`, the SMMUv3 and multi-node runs, and nothing else. QEMU's SMMUv3 translates only devices in the PCIe topology ([QEMU `virt`](https://www.qemu.org/docs/master/system/arm/virt.html)), so DMA isolation needs virtio-pci. [0021](../decisions/0021-entropy-before-keys.md) asks for the seed hook (Consequences).
 - **Options:** the `max` CPU, which gives `RNDR` under TCG; a Cortex-A72 model, which mirrors the Pi 4; a matrix over GIC versions and core counts.
 - **Blocks:** C02, C68, C21. **Depends on:** none.
+- **Settled:** [0036](../decisions/0036-qemu-configuration-and-test-builds.md), accepted 2026-11-25.
 
 **D04. The initial image's format and contents**
 
@@ -59,13 +65,15 @@ Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)).
 - **Why open:** [0006](../decisions/0006-uefi-boot-image.md), rule 2 names the root server and the core servers for storage and networking. Boot also needs the entropy service and the RNG drivers ([0021](../decisions/0021-entropy-before-keys.md), rule 1 and Consequences), `bootfb` ([0009](../decisions/0009-text-as-graphics-console.md), rule 4) and the key service.
 - **Options:** none named for the format. For the contents, read rule 2's list as not exhaustive: the image carries everything the root server starts before storage is up, as its boot manifest (D40) lists.
 - **Blocks:** C02, C19. **Depends on:** none.
+- **Settled:** [0037](../decisions/0037-initial-image-format-and-contents.md), accepted 2026-11-25. The boot manifest's format is D40's (rule 3), and how the image's memory becomes a memory object is decided with the kernel specification (rule 4; D13).
 
 **D05. Reproducible builds and provenance for ASPIS's own images**
 
 - **Decide:** what makes `aspis.efi` and `initfs.img` reproducible bit for bit; the SBOM and provenance formats; what signs provenance for images built outside any realm.
 - **Why open:** [0026](../decisions/0026-realm-as-cloud-provider.md), rules 3 and 4 demand an SBOM and SLSA 1.2 provenance for every app build, but no decision covers ASPIS's own images, and measured boot needs known-good measurements (C64).
-- **Options:** the formats named for app builds: SPDX 3 or CycloneDX, and an in-toto statement with the SLSA predicate in DSSE. D128 can reuse the choice.
+- **Options:** CycloneDX for the SBOM, as the project owner directed, and an in-toto statement with the SLSA predicate in DSSE. D128 reuses the choice.
 - **Blocks:** C69, C64. **Depends on:** D02.
+- **Settled:** [0038](../decisions/0038-reproducible-builds-and-provenance.md), accepted 2026-11-25. It also makes CycloneDX the SBOM format for app builds (rule 2), which settles that part of D128.
 
 **D06. The font family and its license**
 
@@ -73,6 +81,7 @@ Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)).
 - **Why open:** [0009](../decisions/0009-text-as-graphics-console.md), rule 3 requires one family for both and names none. [0008](../decisions/0008-mpl-2.0-license.md), rule 4 admits only permissive licenses and MPL-2.0, and many font families use a font license (see [Conflicts](#conflicts-between-accepted-adrs)).
 - **Options:** a family under an admitted license; an amendment to 0008 rule 4 that admits a font license, such as the SIL Open Font License, for data assets.
 - **Blocks:** C03, C44. **Depends on:** none.
+- **Settled:** [0034](../decisions/0034-noto-fonts-under-ofl.md), accepted 2026-11-25: Noto Sans Mono and Noto Sans (rule 1), atlases 16, 24 and 32 pixels high (rule 4), and OFL-1.1 admitted for fonts only, amending [0008](../decisions/0008-mpl-2.0-license.md), rule 4 (rule 2). That settles [the font's license](#conflicts-that-dont-block-the-build) conflict.
 
 **D07. UEFI runtime services**
 
@@ -80,6 +89,7 @@ Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)).
 - **Why open:** [0006](../decisions/0006-uefi-boot-image.md), rule 4 has the stub exit boot services and says nothing about runtime services. If they are used, the stub and the kernel must keep their regions mapped.
 - **Options:** use them; don't, and reset and power off through PSCI (D56).
 - **Blocks:** C04, C72. **Depends on:** none.
+- **Settled:** [0039](../decisions/0039-no-uefi-runtime-services.md), accepted 2026-11-25: ASPIS calls no runtime service (rule 1), and resets and powers off through PSCI (rule 3). The rest of power management is D56's (rule 3), and boot selection without UEFI variables is D146's (rule 5).
 
 **D08. How the stub checks the initial image**
 
@@ -87,6 +97,7 @@ Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)).
 - **Why open:** Secure Boot needs a signed `aspis.efi` ([0006](../decisions/0006-uefi-boot-image.md), Consequences), but GRUB serves the initial image separately, so the signature on `aspis.efi` doesn't cover it ([key flows §1](key-flows.md#1-boot-to-the-entropy-gate)).
 - **Options:** check it against a hash inside the signed image; measure it into a TPM 2.0.
 - **Blocks:** C04, C77, C64. **Depends on:** D04.
+- **Settled:** [0040](../decisions/0040-the-stub-checks-the-initial-image.md), accepted 2026-11-25: both options, a SHA-512 digest inside the signed `aspis.efi` (rules 1 and 2) and a measurement into PCR 9 where a TPM exists (rule 3).
 
 **D09. The boot ABI**
 
@@ -94,6 +105,7 @@ Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)).
 - **Why open:** [0006](../decisions/0006-uefi-boot-image.md), rule 4 lists what the stub collects but not how it is passed, and rule 3 fixes neither the arguments nor the fallback path. Every text format needs an ABNF grammar ([0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2).
 - **Options:** none named. The layout must leave room for the initial image's hash (D08).
 - **Blocks:** C04, C05. **Depends on:** D02, D08.
+- **Settled:** [0041](../decisions/0041-boot-abi.md), accepted 2026-11-25. How the seed's page is handed on from the kernel is D42's (rule 4).
 
 **D10. The log ring and the panic path**
 
@@ -101,6 +113,7 @@ Chunks C01 to C05, C68 and C69 ([build plan](build-plan.md#m1-first-light)).
 - **Why open:** [0009](../decisions/0009-text-as-graphics-console.md), rule 3 sends console output to a log ring buffer, and rule 5 draws a panic on the framebuffer only if it is still the active scan-out. Neither says how.
 - **Options:** the log ring as the source Display SVG imports the console's text from, read through a kernel interface (D55).
 - **Blocks:** C05, C24. **Depends on:** none.
+- **Settled:** [0042](../decisions/0042-log-ring-and-panic-path.md), accepted 2026-11-25. The ring's interface is written in the IDL with the other kernel interfaces in M2 (rule 5). Display SVG's import is D55's, and keeping panic records across a reboot is C73's (rule 7).
 
 ## M2. Kernel objects
 
@@ -109,28 +122,28 @@ Chunks C06, C07, C10 to C12, C13a, C13b, C14 to C17, C70 and C71 ([build plan](b
 **D11. Byte order and signed integers in the core rules**
 
 - **Decide:** the byte order of fixed-width integers in ASPIS messages, and whether the core rules define signed integers.
-- **Why open:** [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 4 makes byte order a design-session item and keeps IDs big-endian. Every field of an ID is unsigned ([0001](../decisions/0001-object-identifiers.md), rule 2), but POSIX's `off_t` is signed, and [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 3 parses token times as 64-bit integers without fixing their sign.
+- **Why open:** [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 4 makes byte order a design-session item and keeps IDs big-endian. Every field of an ID is unsigned ([0001](../decisions/0001-object-identifiers.md), rule 2), but POSIX's `off_t` is signed, and [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 3 parses token times as 64-bit integers without fixing their sign. The initial image and the boot information are little-endian, because they are in-memory structures, not messages ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 1; [0041](../decisions/0041-boot-abi.md), rule 2), so they leave messages' byte order to this entry.
 - **Options:** big-endian everywhere, so that byte order is sort order ([research notes §5](../research/aegis-domain-os.md#5-implications-for-aspis)); two's complement or offset binary for signed values.
 - **Blocks:** C06. **Depends on:** none.
 
 **D12. Method names, the canonical call text, and interface and type names**
 
 - **Decide:** method names beside their stable numbers; the ABNF of the canonical text form of calls; the grammar of interface and type names and of interface references.
-- **Why open:** [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 5 requires a text form for every call, and it must line up with Cedar action names, which are the interface, major version and method ([0019](../decisions/0019-authzen-decision-protocol.md), rule 4), and with token scopes. [0031](../decisions/0031-abnf-is-not-a-command-language.md) (proposed) would make that form machine-facing only, not what people type. [0027](../decisions/0027-applications-extend-the-system.md), rule 7 makes names dotted and reverse-DNS, reserves `aspis.` and leaves the grammar to ABNF.
+- **Why open:** [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 5 requires a text form for every call, and it must line up with Cedar action names, which are the interface, major version and method ([0019](../decisions/0019-authzen-decision-protocol.md), rule 4), and with token scopes. [0031](../decisions/0031-abnf-is-not-a-command-language.md), rule 3 makes that form machine-facing only, for logs, traces and token scopes, not what people type. [0027](../decisions/0027-applications-extend-the-system.md), rule 7 makes names dotted and reverse-DNS, reserves `aspis.` and leaves the grammar to ABNF.
 - **Options:** the illustrative grammar in the [discovery note §4.6](extensibility-and-discovery.md#46-names): at least two lower-case labels, with majors and minors up to 65,535.
 - **Blocks:** C07, C31. **Depends on:** none.
 
 **D13. The kernel specification, and how far it follows seL4**
 
 - **Decide:** how the kernel meets the POSIX personality's needs (copy-on-write clones, a capability-table copy, cancelable waits, thread suspend and register access, fault delivery, eventcount sets and words, a thread-pointer register) and the twelve-factor needs (jobs, budgets, immutable and job-scoped memory objects); which of seL4's mechanisms it adopts.
-- **Why open:** [0012](../decisions/0012-posix-compatibility-layer.md) makes the [POSIX note §5](posix-compatibility.md#5-what-the-kernel-must-provide) an input to the kernel specification (Consequences), and [0025](../decisions/0025-twelve-factor-app-contract.md), rule 12 adds jobs and budgets. seL4 is the reference model ([0002](../decisions/0002-capability-security-model.md), rule 1), and its untyped memory and MCS scheduling contexts already provide most of jobs and budgets ([0025](../decisions/0025-twelve-factor-app-contract.md), Consequences), but no decision adopts them ([kernel view §3](kernel-components.md#3-open)).
+- **Why open:** [0012](../decisions/0012-posix-compatibility-layer.md) makes the [POSIX note §5](posix-compatibility.md#5-what-the-kernel-must-provide) an input to the kernel specification (Consequences), and [0025](../decisions/0025-twelve-factor-app-contract.md), rule 12 adds jobs and budgets. seL4 is the reference model ([0002](../decisions/0002-capability-security-model.md), rule 1), and its untyped memory and MCS scheduling contexts already provide most of jobs and budgets ([0025](../decisions/0025-twelve-factor-app-contract.md), Consequences), but no decision adopts them ([kernel view §3](kernel-components.md#3-open)). [0037](../decisions/0037-initial-image-format-and-contents.md), rule 4 also leaves to the kernel specification how the initial image's memory becomes a memory object.
 - **Options:** seL4 as the model throughout; a choice part by part, in D14 to D30.
 - **Blocks:** C10, C11, C12, C13a, C13b, C14, C15, C16, C17. **Depends on:** none.
 
 **D14. Kernel memory management**
 
 - **Decide:** how kernel objects get their memory; the physical frame allocator; the translation granule; the address-space layout; whether W^X, PAN and PXN apply from the first page tables (D145).
-- **Why open:** [0005](../decisions/0005-single-level-store.md) calls the virtual-memory subsystem early, critical work (Consequences), and no decision fixes the model. Job memory budgets follow from it ([0025](../decisions/0025-twelve-factor-app-contract.md), rule 12).
+- **Why open:** [0005](../decisions/0005-single-level-store.md) calls the virtual-memory subsystem early, critical work (Consequences), and no decision fixes the model. Job memory budgets follow from it ([0025](../decisions/0025-twelve-factor-app-contract.md), rule 12). [0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 2 links the kernel in the upper half of the address space and leaves the exact base to C05. The initial image aligns its files to 64 KiB until the kernel specification fixes the page size ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 1).
 - **Options:** seL4's untyped memory and retype; a kernel heap with quotas per job.
 - **Blocks:** C10, C16, C78. **Depends on:** D13.
 
@@ -243,7 +256,7 @@ Chunks C06, C07, C10 to C12, C13a, C13b, C14 to C17, C70 and C71 ([build plan](b
 
 - **Decide:** what a process is at kernel level; the native spawn interface; program loading; the initial capabilities; how the environment block is delivered; the executable format, and where the dynamic linker lives.
 - **Why open:** native process creation is spawn-only ([POSIX note §4.2](posix-compatibility.md#42-process-creation)), and the environment block arrives at spawn ([0025](../decisions/0025-twelve-factor-app-contract.md), rule 4). The format and the linker are open ([POSIX note §8](posix-compatibility.md#8-open-questions)).
-- **Options:** ELF for native and POSIX programs.
+- **Options:** ELF for native and POSIX programs. The programs in the initial image are already static ELF64 AArch64 programs ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 3), and user-space programs are built `no_std` for `aarch64-unknown-none` until there is a std port ([0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 5).
 - **Blocks:** C17, C47. **Depends on:** D16, D29.
 
 **D31. Debugging**
@@ -257,7 +270,7 @@ Chunks C06, C07, C10 to C12, C13a, C13b, C14 to C17, C70 and C71 ([build plan](b
 
 - **Decide:** which parsers must be fuzzed before their chunk counts as done; how the PDP is tested against Cedar; whether leases and catalog sequence numbers are model-checked; partition fault injection.
 - **Why open:** JSON parsing enters every manager's trust boundary ([0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), Consequences), and decoders run isolated because their input may be hostile ([0010](../decisions/0010-svg-core-primitive.md), rule 11). [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 6 checks grammars against test vectors, not hostile input.
-- **Options:** none named beyond the list of parsers at trust boundaries (C71).
+- **Options:** none named beyond the list of parsers at trust boundaries (C71). Two accepted records already make their parsers fuzzing targets: the initial image's ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 2) and the kernel arguments' ([0041](../decisions/0041-boot-abi.md), rule 5).
 - **Blocks:** C71. **Depends on:** D03.
 
 ## M3. Node user space and the entropy gate
@@ -316,7 +329,7 @@ Chunks C08, C09, C18 to C24, C72 and C73 ([build plan](build-plan.md#m3-node-use
 **D40. The root server**
 
 - **Decide:** its interface; the boot manifest's format; the capabilities the kernel grants it; how it starts and watches the servers it starts; its relation to the process manager.
-- **Why open:** [0006](../decisions/0006-uefi-boot-image.md), rule 2, [0018](../decisions/0018-cedar-policy-language.md), rule 5 and [0021](../decisions/0021-entropy-before-keys.md), rule 1 give the root server its jobs, not its design ([node view §2](node-components.md#2-boot-time-core)).
+- **Why open:** [0006](../decisions/0006-uefi-boot-image.md), rule 2, [0018](../decisions/0018-cedar-policy-language.md), rule 5 and [0021](../decisions/0021-entropy-before-keys.md), rule 1 give the root server its jobs, not its design ([node view §2](node-components.md#2-boot-time-core)). Accepted records now fix some of its inputs. The boot manifest is an entry of the initial image, whose format is left to this entry ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 3). The manifest lists everything the root server starts before storage is up (rule 5), and the root server checks each entry's digest before it starts or reads it (rule 7). The kernel gives the log ring's capability only to the root server, which passes it on ([0042](../decisions/0042-log-ring-and-panic-path.md), rule 5), and kernel arguments under `root.` reach the root server unread ([0041](../decisions/0041-boot-abi.md), rule 5).
 - **Options:** none named.
 - **Blocks:** C19. **Depends on:** D04, D30.
 
@@ -330,21 +343,21 @@ Chunks C08, C09, C18 to C24, C72 and C73 ([build plan](build-plan.md#m3-node-use
 **D42. How the seed reaches the entropy service**
 
 - **Decide:** the stub's seed's path from the kernel, through the root server, to the entropy service, and how each copy is erased.
-- **Why open:** the kernel hands the seed over and keeps no copy, and the root server starts the entropy service ([0021](../decisions/0021-entropy-before-keys.md), rule 1), so the seed passes through the root server. No decision gives the mechanism.
-- **Options:** the seed in a memory object whose capability the root server passes on unread, zeroized once it is ingested.
+- **Why open:** the kernel hands the seed over and keeps no copy, and the root server starts the entropy service ([0021](../decisions/0021-entropy-before-keys.md), rule 1), so the seed passes through the root server. [0041](../decisions/0041-boot-abi.md), rule 4 settles the first step: the stub puts the seed in a page of its own and erases every other copy, and the kernel never reads that page. It hands the page on as this entry decides, and keeps no copy. The rest of the path is open.
+- **Options:** the seed in a memory object whose capability the root server passes on unread, zeroized once it is ingested. The seed's own page suits this ([0041](../decisions/0041-boot-abi.md), Consequences).
 - **Blocks:** C19, C21. **Depends on:** D09, D40.
 
 **D43. Device discovery and the driver model**
 
 - **Decide:** who parses the device tree; the capability types for MMIO, interrupts and DMA; who programs the SMMUv3; PCIe enumeration through ECAM, and virtio-pci; which drivers exist on QEMU and on the Pi 4.
-- **Why open:** drivers run in user space ([0009](../decisions/0009-text-as-graphics-console.md), Context) and device tree comes first ([0007](../decisions/0007-initial-hardware-targets.md), rule 3), but no decision gives the model ([node view §1](node-components.md#1-overview)). DMA isolation on QEMU needs virtio-pci (D03).
+- **Why open:** drivers run in user space ([0009](../decisions/0009-text-as-graphics-console.md), Context) and device tree comes first ([0007](../decisions/0007-initial-hardware-targets.md), rule 3), but no decision gives the model ([node view §1](node-components.md#1-overview)). On QEMU every virtio device is on PCIe, behind the SMMUv3, and ASPIS uses no virtio-mmio ([0036](../decisions/0036-qemu-configuration-and-test-builds.md), rule 2). The initial image carries the PCIe, SMMUv3, virtio-blk and virtio-net drivers ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 5).
 - **Options:** the kernel parses only what it needs, and a device manager or the root server parses the rest and starts drivers with capabilities.
 - **Blocks:** C20. **Depends on:** D21, D40.
 
 **D44. A command interpreter on the serial console before dm**
 
 - **Decide:** whether node bring-up and CI get a minimal command interpreter on the UART before dm and the POSIX shell exist; what it may do; how it relates to a native command interpreter, if ASPIS has one (D102).
-- **Why open:** the kernel writes its console to the serial UART as well as the framebuffer ([0009](../decisions/0009-text-as-graphics-console.md), rule 3), but nothing reads commands there. dm is the console and login happens in a dm pad ([0011](../decisions/0011-dm-window-system.md), rule 5), and the POSIX shell comes with the POSIX personality ([0012](../decisions/0012-posix-compatibility-layer.md), rule 2), both in M6. Until then, bring-up and CI see only output. Before the first PDP, authority comes only from the root server's capabilities ([0018](../decisions/0018-cedar-policy-language.md), rule 5), which bounds what such an interpreter could do. The project owner has ruled out ABNF as its language, as [0031](../decisions/0031-abnf-is-not-a-command-language.md) (proposed), rule 1 records.
+- **Why open:** the kernel writes its console to the serial UART as well as the framebuffer ([0009](../decisions/0009-text-as-graphics-console.md), rule 3), but nothing reads commands there. dm is the console and login happens in a dm pad ([0011](../decisions/0011-dm-window-system.md), rule 5), and the POSIX shell comes with the POSIX personality ([0012](../decisions/0012-posix-compatibility-layer.md), rule 2), both in M6. Until then, bring-up and CI see only output. Before the first PDP, authority comes only from the root server's capabilities ([0018](../decisions/0018-cedar-policy-language.md), rule 5), which bounds what such an interpreter could do. The project owner has ruled out ABNF as its language, as [0031](../decisions/0031-abnf-is-not-a-command-language.md), rule 1 records.
 - **Options:** none named. Without one, interactive use of a node waits for dm's pads (C46).
 - **Blocks:** C19, C20. **Depends on:** D40, D43.
 
@@ -421,21 +434,21 @@ Chunks C08, C09, C18 to C24, C72 and C73 ([build plan](build-plan.md#m3-node-use
 **D55. The display driver interface, input and the console handoff**
 
 - **Decide:** the interface Display SVG presents frames through, with mode setting and page flipping for hardware drivers; how keyboard and pointer events reach Display SVG; several displays; how Display SVG imports the console's text, and how the kernel learns to stop drawing.
-- **Why open:** [0009](../decisions/0009-text-as-graphics-console.md), rule 4 and [0010](../decisions/0010-svg-core-primitive.md), rules 6 and 9 fix the parts and the behavior, not the interfaces ([node view §4](node-components.md#4-graphics-and-the-console)).
-- **Options:** none named for the interface; the log ring as the import source (D10).
+- **Why open:** [0009](../decisions/0009-text-as-graphics-console.md), rule 4 and [0010](../decisions/0010-svg-core-primitive.md), rules 6 and 9 fix the parts and the behavior, not the interfaces ([node view §4](node-components.md#4-graphics-and-the-console)). [0042](../decisions/0042-log-ring-and-panic-path.md) settles two parts. Display SVG imports the console's text from the log ring by sequence number, with a capability the root server passes on (rule 5 and Consequences). The kernel stops drawing when the boot framebuffer moves from Kernel to Adopted, by a call on its kernel object, and a hardware display driver must retire it before it changes the scan-out (rule 6). The display driver interface, input and several displays are still open.
+- **Options:** none named for the interface. The import source is settled: the log ring ([0042](../decisions/0042-log-ring-and-panic-path.md), rule 5).
 - **Blocks:** C24, C45, C48. **Depends on:** D10, D43.
 
 **D56. Shutdown, reboot and power**
 
 - **Decide:** how a node powers off, resets and idles; what an orderly shutdown does, such as flushing dirty pages and rewriting the persisted seed; suspend and resume, and the Pi 4's thermal throttling, later.
-- **Why open:** no decision covers power. [0021](../decisions/0021-entropy-before-keys.md), rule 9 presumes a resume from suspend, and when the persisted seed is rewritten is open ([entropy note §6](entropy-and-first-keys.md#6-open-questions)).
-- **Options:** PSCI `SYSTEM_OFF`, `SYSTEM_RESET` and `CPU_OFF`; WFI when idle; UEFI runtime services, if D07 keeps them.
+- **Why open:** [0039](../decisions/0039-no-uefi-runtime-services.md) settles reset and power-off: they go through PSCI `SYSTEM_RESET` and `SYSTEM_OFF` (rule 3), and ASPIS calls no UEFI runtime service (rule 1). It leaves the rest of power management to this entry. On the Pi 4, `SYSTEM_OFF` only halts the board (Consequences). [0021](../decisions/0021-entropy-before-keys.md), rule 9 presumes a resume from suspend, and when the persisted seed is rewritten is open ([entropy note §6](entropy-and-first-keys.md#6-open-questions)).
+- **Options:** PSCI `SYSTEM_OFF`, `SYSTEM_RESET` and `CPU_OFF`; WFI when idle. UEFI runtime services, the option if D07 had kept them, are ruled out ([0039](../decisions/0039-no-uefi-runtime-services.md), rule 1).
 - **Blocks:** C72. **Depends on:** D07, D49.
 
 **D57. Supervision and crash recovery of system servers**
 
 - **Decide:** restart policy and state recovery for the entropy service, the key service, the network server, the PDP, pagers and the root server; what a fault returns when an object's pager has died; panic records that survive on headless nodes; a watchdog.
-- **Why open:** no decision covers it. [0004](../decisions/0004-network-transparency-and-failure.md), rule 4 covers pages that can't be fetched in time, and nothing covers a local pager that has crashed ([key flows §6](key-flows.md#6-mapping-an-object-and-taking-a-page-fault)).
+- **Why open:** no decision covers it. [0004](../decisions/0004-network-transparency-and-failure.md), rule 4 covers pages that can't be fetched in time, and nothing covers a local pager that has crashed ([key flows §6](key-flows.md#6-mapping-an-object-and-taking-a-page-fault)). A panic always reaches the UART and the log ring, and keeping panic records across a reboot is left to C73 ([0042](../decisions/0042-log-ring-and-panic-path.md), rule 7).
 - **Options:** none named.
 - **Blocks:** C19, C73. **Depends on:** D22, D40.
 
@@ -460,8 +473,8 @@ Chunks C25 to C36, C74 and C75 ([build plan](build-plan.md#m4-a-founding-node-wi
 **D60. The Rust `std` port: its name and its randomness**
 
 - **Decide:** the target's name; where `std` gets randomness, such as `HashMap` seeds; whether any server that starts before the gate may use `std`.
-- **Why open:** `aarch64-unknown-aspis` is only an example ([POSIX note §7](posix-compatibility.md#7-c-library-and-rust)). The entropy service is the only source of randomness ([0021](../decisions/0021-entropy-before-keys.md), rule 1), and it waits at the gate (rule 2).
-- **Options:** `std` draws on the process's child DRBG or on the entropy service; every server that starts before the gate is `no_std`.
+- **Why open:** `aarch64-unknown-aspis` is only an example ([POSIX note §7](posix-compatibility.md#7-c-library-and-rust)). The entropy service is the only source of randomness ([0021](../decisions/0021-entropy-before-keys.md), rule 1), and it waits at the gate (rule 2). [0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 5 builds every user-space program `no_std` until there is a std port, and leaves whether and when to port it until the POSIX personality or applications need it. A port needs a custom target, so nightly Rust, until `build-std` is stable, and rule 1 allows no nightly feature without a decision of its own.
+- **Options:** `std` draws on the process's child DRBG or on the entropy service; every server that starts before the gate is `no_std`. For now every user-space program is `no_std` ([0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 5).
 - **Blocks:** C26. **Depends on:** D02, D47.
 
 **D61. The authorization tree's key layout**
@@ -579,21 +592,22 @@ Chunks C25 to C36, C74 and C75 ([build plan](build-plan.md#m4-a-founding-node-wi
 **D77. Authenticated time synchronization**
 
 - **Decide:** a post-quantum authenticated protocol whose bootstrap doesn't need certificates the node can't yet validate; clock-skew tolerance; the first-boot time gate; where wall time is served.
-- **Why open:** [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 7 makes authenticated time a requirement whose design is open, and [0020](../decisions/0020-realm-certificate-authority.md) adds that it must not depend on a certificate the node can't validate before its clock is set (Consequences). The Pi 4 has no battery-backed clock ([0021](../decisions/0021-entropy-before-keys.md), Consequences).
+- **Why open:** [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 7 makes authenticated time a requirement whose design is open, and [0020](../decisions/0020-realm-certificate-authority.md) adds that it must not depend on a certificate the node can't validate before its clock is set (Consequences). The Pi 4 has no battery-backed clock ([0021](../decisions/0021-entropy-before-keys.md), Consequences). Time doesn't come from firmware: on QEMU a driver reads the PL031, and the Pi 4 has no clock to read ([0039](../decisions/0039-no-uefi-runtime-services.md), rule 4).
 - **Options:** NTS (RFC 8915), which depends on TLS.
 - **Blocks:** C34, C63. **Depends on:** D17.
 
 **D78. Accepting ADR 0029**
 
-- **Decide:** whether to accept [0029](../decisions/0029-founding-node-self-signed-certificate.md), which is proposed: the founding node certifies its operational key with its genesis key, records that certificate in the genesis state, uses it alone, and replaces it by a renewal with the RPC CA before any other node enrolls.
-- **Why open:** the project owner decided that the founding node signs its own initial certificate. Rules 3 to 6 of 0029, which spell that out, are proposals that would amend [0020](../decisions/0020-realm-certificate-authority.md), rules 4 and 6. Until then the accepted rules have the RPC CA issue every node certificate after enrollment, as [0021](../decisions/0021-entropy-before-keys.md)'s Context also says.
+- **Decide:** whether to accept [0029](../decisions/0029-founding-node-self-signed-certificate.md), which was then proposed: the founding node certifies its operational key with its genesis key, records that certificate in the genesis state, uses it alone, and replaces it by a renewal with the RPC CA before any other node enrolls.
+- **Why open:** the project owner decided that the founding node signs its own initial certificate. Rules 3 to 6 of 0029, which spell that out, were proposals that would amend [0020](../decisions/0020-realm-certificate-authority.md), rules 4 and 6. Until 0029 was accepted, the accepted rules had the RPC CA issue every node certificate after enrollment, as [0021](../decisions/0021-entropy-before-keys.md)'s Context also says.
 - **Options:** accept 0029 as written; accept it with changes to rules 3 to 6.
 - **Blocks:** C35, C36. **Depends on:** none.
+- **Settled:** [0029](../decisions/0029-founding-node-self-signed-certificate.md), accepted 2026-11-25. It amends [0020](../decisions/0020-realm-certificate-authority.md), rules 4 and 6. The ceremony and the genesis state are still D79's.
 
 **D79. The ceremony's procedure and the genesis tree state**
 
 - **Decide:** the order of minting; what the ceremony outputs (the root certificate, CSRs, metadata, the first signed root); the genesis batch (first epoch, founding administrator, the realm-policy branch with the token-scope ceiling and the CAs' issuing rules, the founding node's principal, genesis key and initial certificate, and the policies that let it renew and enroll the next node); where the online keys go; the scripted QEMU mode and the ceremony tool.
-- **Why open:** [0021](../decisions/0021-entropy-before-keys.md), rule 6 makes creating a realm a ceremony and lists what it mints: the CA root and intermediates of [0020](../decisions/0020-realm-certificate-authority.md), rule 1, the federation keys and the tree-signing key. [0029](../decisions/0029-founding-node-self-signed-certificate.md) (proposed) lists what the genesis state must hold (Consequences). No procedure exists ([key flows §3](key-flows.md#3-realm-creation-ceremony)).
+- **Why open:** [0021](../decisions/0021-entropy-before-keys.md), rule 6 makes creating a realm a ceremony and lists what it mints: the CA root and intermediates of [0020](../decisions/0020-realm-certificate-authority.md), rule 1, the federation keys and the tree-signing key. [0029](../decisions/0029-founding-node-self-signed-certificate.md) lists what the genesis state must hold (rule 3 and Consequences). No procedure exists ([key flows §3](key-flows.md#3-realm-creation-ceremony)).
 - **Options:** the ceremony writes and signs a genesis batch; bootstrap templates as well-known objects.
 - **Blocks:** C35. **Depends on:** D58, D61, D78.
 
@@ -607,7 +621,7 @@ Chunks C25 to C36, C74 and C75 ([build plan](build-plan.md#m4-a-founding-node-wi
 **D81. Enrollment proofs, the CA's interface and certificate records**
 
 - **Decide:** the format of the genesis key's certification of an operational key, and of the enrollment proof; the CA's interface (name, methods, errors, revocation requests); the layout of certificate records under each CA's branch; whether node certificates carry the genesis proof, about 5 KB more.
-- **Why open:** [0020](../decisions/0020-realm-certificate-authority.md), rules 4, 6 and 7 require each of these without a format ([CA note §8](realm-certificate-authority.md#8-open-questions)). Under [0029](../decisions/0029-founding-node-self-signed-certificate.md) (proposed), the founding node's initial certificate is that certification in X.509 form.
+- **Why open:** [0020](../decisions/0020-realm-certificate-authority.md), rules 4, 6 and 7 require each of these without a format ([CA note §8](realm-certificate-authority.md#8-open-questions)). Under [0029](../decisions/0029-founding-node-self-signed-certificate.md), rule 2, the founding node's initial certificate is that certification in X.509 form.
 - **Options:** a CSR attribute holding a composite signature over the key; an ASPIS-defined statement in ABNF; an `aspis.ca/1` interface with enroll, renew, issue and get-chain.
 - **Blocks:** C36. **Depends on:** D28, D61, D63, D78.
 
@@ -628,7 +642,7 @@ Chunks C25 to C36, C74 and C75 ([build plan](build-plan.md#m4-a-founding-node-wi
 **D84. Observability of system services**
 
 - **Decide:** where system servers log; what health and metrics they expose; how a headless node reports what it is waiting for; how trace context crosses RPC.
-- **Why open:** a node that waits for entropy "reports what it is waiting for" ([0021](../decisions/0021-entropy-before-keys.md), rule 5), and the log router serves only deploys ([0026](../decisions/0026-realm-as-cloud-provider.md), rule 9). Nothing covers system services.
+- **Why open:** a node that waits for entropy "reports what it is waiting for" ([0021](../decisions/0021-entropy-before-keys.md), rule 5), and the log router serves only deploys ([0026](../decisions/0026-realm-as-cloud-provider.md), rule 9). Nothing covers system services. For the kernel's own messages, the root server passes the log ring's capability to the server that collects system logs (C74; [0042](../decisions/0042-log-ring-and-panic-path.md), rule 5).
 - **Options:** none named.
 - **Blocks:** C74. **Depends on:** D10, D25.
 
@@ -702,7 +716,7 @@ Chunks C37 to C40 and C76 ([build plan](build-plan.md#m5-two-nodes-one-realm)).
 **D94. Node provisioning before enrollment**
 
 - **Decide:** where a new node's realm domain, enrollment endpoint, anchor hash, network settings, time sources and friendly name come from; how an administrator admits it.
-- **Why open:** images carry no secrets ([0021](../decisions/0021-entropy-before-keys.md), rule 11) and cloned SD cards must stay safe (Consequences), so per-node settings and any join credential arrive out of band ([key flows §2](key-flows.md#2-first-boot-genesis-identity-and-enrollment)).
+- **Why open:** images carry no secrets ([0021](../decisions/0021-entropy-before-keys.md), rule 11) and cloned SD cards must stay safe (Consequences), so per-node settings and any join credential arrive out of band ([key flows §2](key-flows.md#2-first-boot-genesis-identity-and-enrollment)). Kernel arguments are now defined: ASCII only, at most 4096 bytes, with keys under `root.` passed to the root server unread ([0041](../decisions/0041-boot-abi.md), rule 5). So settings that are passed as kernel arguments can't carry text that isn't ASCII, such as some friendly names.
 - **Options:** kernel arguments, a file on the ESP or a console prompt; an administrator approves the genesis-key fingerprint the node shows on its console.
 - **Blocks:** C76, C40, C63. **Depends on:** D64, D82.
 
@@ -748,7 +762,7 @@ Chunks C41 to C48 ([build plan](build-plan.md#m6-a-console-you-can-log-in-to)).
 **D100. The ASPIS SVG profile, the renderer and the text stack**
 
 - **Decide:** the exact SVG 2 static subset, filter subset and CSS subset; the CPU renderer; text shaping, with fonts as objects; what must work in `no_std`.
-- **Why open:** [0010](../decisions/0010-svg-core-primitive.md), rule 2 leaves the profile to the design session, and rule 10 the library.
+- **Why open:** [0010](../decisions/0010-svg-core-primitive.md), rule 2 leaves the profile to the design session, and rule 10 the library. The fonts are settled: the SVG layer uses Noto Sans Mono and Noto Sans, with other Noto families as fallbacks for other scripts ([0034](../decisions/0034-noto-fonts-under-ofl.md), rule 1).
 - **Options:** resvg with usvg and tiny-skia (0.47); `vello_cpu` (alpha); `vello_hybrid` (0.0.x) ([0010](../decisions/0010-svg-core-primitive.md), rule 10).
 - **Blocks:** C44. **Depends on:** D06.
 
@@ -761,15 +775,16 @@ Chunks C41 to C48 ([build plan](build-plan.md#m6-a-console-you-can-log-in-to)).
 
 **D102. A native command interpreter, and accepting ADR 0031**
 
-- **Decide:** whether ASPIS has a native command interpreter besides dm's commands and the POSIX shell; if so, what its language is, and how that language is specified, which [0031](../decisions/0031-abnf-is-not-a-command-language.md) (proposed) says is not ABNF; whether to accept 0031.
-- **Why open:** [0011](../decisions/0011-dm-window-system.md), rule 6 leaves dm's command language to the design session, and [0012](../decisions/0012-posix-compatibility-layer.md) brings the POSIX.1-2024 shell (rule 2). No accepted record says whether ASPIS has an interpreter of its own beside them. The project owner decided that ABNF is a protocol specification metalanguage, not the language of a command interpreter people use. [0031](../decisions/0031-abnf-is-not-a-command-language.md) records that decision and frames this question (Consequences), and is proposed. Until it is accepted, [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2 still lists "the dm command language" among the formats ABNF describes, and rule 5 makes the canonical call text serve "the command line".
+- **Decide:** whether ASPIS has a native command interpreter besides dm's commands and the POSIX shell; if so, what its language is, and how that language is specified, which [0031](../decisions/0031-abnf-is-not-a-command-language.md), rule 1 says is not ABNF; whether to accept 0031.
+- **Why open:** [0011](../decisions/0011-dm-window-system.md), rule 6 leaves dm's command language to the design session, and [0012](../decisions/0012-posix-compatibility-layer.md) brings the POSIX.1-2024 shell (rule 2). No accepted record says whether ASPIS has an interpreter of its own beside them. The project owner decided that ABNF is a protocol specification metalanguage, not the language of a command interpreter people use. [0031](../decisions/0031-abnf-is-not-a-command-language.md) records that decision and frames this question (Consequences). It amends [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rules 2 and 5: "the dm command language" leaves the list of formats ABNF describes, and the canonical call text no longer serves "the command line".
 - **Options:** for 0031, accept it as written or with changes to its wording. None named yet for the interpreter or its language.
 - **Blocks:** C46. **Depends on:** none.
+- **Settled in part:** whether to accept 0031. [0031](../decisions/0031-abnf-is-not-a-command-language.md) was accepted 2026-11-25. Whether ASPIS has a native interpreter, what its language is and how that language is specified are still open.
 
 **D103. dm's detailed design**
 
 - **Decide:** the command language, and how it is specified; key bindings; pad types, including terminal mode and the login pad; window policies; the catalog browser, and how IDL documentation is rendered.
-- **Why open:** [0011](../decisions/0011-dm-window-system.md), rule 6 leaves these to the design session, and [0028](../decisions/0028-discovery-and-realm-catalog.md), rule 10 adds the catalog browser. [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2 still lists the dm command language among the formats ABNF describes. [0031](../decisions/0031-abnf-is-not-a-command-language.md) (proposed) would take it off that list and leave the language's design to choose how it is specified (D102).
+- **Why open:** [0011](../decisions/0011-dm-window-system.md), rule 6 leaves these to the design session, and [0028](../decisions/0028-discovery-and-realm-catalog.md), rule 10 adds the catalog browser. [0031](../decisions/0031-abnf-is-not-a-command-language.md), rule 2 takes the dm command language off [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2's list of formats ABNF describes, and leaves the language's design to choose how it is specified (D102).
 - **Options:** none named for the language or the pads.
 - **Blocks:** C46. **Depends on:** D100, D102.
 
@@ -953,8 +968,9 @@ Chunks C54 to C58 and C80 ([build plan](build-plan.md#m8-twelve-factor-apps-on-a
 
 - **Decide:** the SBOM and provenance formats, and their signatures for verifiers outside ASPIS; the OCI layout of a build (media types, layers, the base referenced or embedded).
 - **Why open:** [0026](../decisions/0026-realm-as-cloud-provider.md), rule 3 signs provenance with the builder's workload identity, a composite, and exchanges builds as OCI artifacts. Verifiers outside ASPIS may not check composites, a problem [0022](../decisions/0022-spiffe-and-wimse-workload-identity.md), rule 5 solves for tokens.
-- **Options:** SPDX 3 or CycloneDX; an in-toto statement with the SLSA predicate in DSSE; an added ML-DSA-65 or classical signature on export. D05 may already have chosen the formats.
+- **Options:** an in-toto statement with the SLSA predicate in DSSE; an added ML-DSA-65 or classical signature on export. The SBOM format is CycloneDX, for app builds as for ASPIS's own images ([0038](../decisions/0038-reproducible-builds-and-provenance.md), rule 2).
 - **Blocks:** C55. **Depends on:** D05, D86.
+- **Settled in part:** the SBOM format, by [0038](../decisions/0038-reproducible-builds-and-provenance.md), accepted 2026-11-25: CycloneDX is ASPIS's only SBOM format (rule 2). What remains is the OCI layout of app builds and the signatures that verifiers outside ASPIS can check (Consequences).
 
 **D129. Code intake and the realm mirror**
 
@@ -1072,22 +1088,25 @@ Chunks C63 to C66, C77 to C79 and C81 ([build plan](build-plan.md#mh-hardware-an
 **D144. Secure Boot and measured boot**
 
 - **Decide:** how the image is signed; how measured boot works, and what it measures.
-- **Why open:** [0006](../decisions/0006-uefi-boot-image.md) leaves both to later (Consequences).
+- **Why open:** [0006](../decisions/0006-uefi-boot-image.md) leaves both to later (Consequences). Later records fix parts of each. The stub checks `initfs.img` against a SHA-512 digest inside the signed `aspis.efi`, so a signature on `aspis.efi` covers the initial image too ([0040](../decisions/0040-the-stub-checks-the-initial-image.md), rules 1 and 2). Where a TPM exists, the stub extends PCR 9 with the image (rule 3), and the boot information reserves a record for the TPM event log ([0041](../decisions/0041-boot-abi.md), rule 3). A release's hashes are the known-good values ([0038](../decisions/0038-reproducible-builds-and-provenance.md), rule 5). How `aspis.efi` is signed, and the rest of what measured boot measures, are still open.
 - **Options:** shim; ASPIS's own key; GRUB 2.14's shim loader protocol; TPM 2.0 ([0006](../decisions/0006-uefi-boot-image.md), Consequences).
 - **Blocks:** C64, C77. **Depends on:** D05, D08, D58.
 
 **D145. Kernel hardening**
 
-- **Decide:** Spectre-class mitigations on the Cortex-A72; when W^X, PAN and PXN arrive; layout randomization for servers that start before the gate. Whether the stub randomizes the kernel's placement is D02.
-- **Why open:** no decision covers hardening. The kernel uses no randomness ([0021](../decisions/0021-entropy-before-keys.md), rule 3), so only the stub could randomize its placement (D02), and servers that start before the gate get no randomness from the entropy service.
+- **Decide:** Spectre-class mitigations on the Cortex-A72; when W^X, PAN and PXN arrive; layout randomization for servers that start before the gate; whether the stub randomizes the kernel's placement, which [0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 4 leaves to be decided with C78.
+- **Why open:** no decision covers hardening. The kernel uses no randomness ([0021](../decisions/0021-entropy-before-keys.md), rule 3), so only the stub could randomize its placement, and servers that start before the gate get no randomness from the entropy service. D02 is settled: the kernel is position-independent and the stub relocates it, so the stub can choose its virtual base. To randomize it, the stub would use the firmware's seed for its own purpose, as [0021](../decisions/0021-entropy-before-keys.md), rule 3 allows. Until C78 the base is fixed ([0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rules 2 to 4).
 - **Options:** mitigations for branch-target injection and Spectre-BHB, with firmware workarounds on context switch; W^X and PAN from the first page tables (D14).
 - **Blocks:** C78. **Depends on:** D02, D14.
 
 **D146. Node software update and rollback**
 
 - **Decide:** how `aspis.efi`, `initfs.img` and node servers are updated; how a failed boot rolls back; how the kernel interface library stays compatible; rolling upgrades of realm services across interface majors; how measurements change under measured boot.
-- **Why open:** no decision covers updates. [0014](../decisions/0014-versioned-object-apis.md), rules 6 and 7 let the raw ABI change under a versioned library whose majors have support periods.
-- **Options:** A/B boot entries, through `grub.cfg` or UEFI `BootNext`.
+- **Why open:** no decision says how updates are made or rolled back. [0014](../decisions/0014-versioned-object-apis.md), rules 6 and 7 let the raw ABI change under a versioned library whose majors have support periods. Accepted records now fix the layout and rule out one mechanism:
+  - The ESP has two slots, `/aspis/a/` and `/aspis/b/`, each holding an `aspis.efi` and an `initfs.img`, with the menu in `/aspis/grub.cfg` and GRUB at `/EFI/BOOT/BOOTAA64.EFI`. Slot `b` stays empty until updates exist (C79). How a slot is chosen, and how a failed boot falls back, are left to this entry ([0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 6).
+  - `aspis.efi` embeds the initial image's digest, so the two are released and updated together, one slot at a time ([0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), Consequences; [0040](../decisions/0040-the-stub-checks-the-initial-image.md), Consequences).
+  - Boot selection uses files on the ESP that GRUB and the stub can read, never UEFI variables ([0039](../decisions/0039-no-uefi-runtime-services.md), rule 5).
+- **Options:** A/B boot entries through `grub.cfg`, choosing between the two slots by files on the ESP. UEFI `BootNext` is ruled out ([0039](../decisions/0039-no-uefi-runtime-services.md), rule 5).
 - **Blocks:** C79. **Depends on:** D02, D29, D115, D144.
 
 **D147. Cloud VM nodes**
@@ -1138,7 +1157,7 @@ Where accepted records disagree, the fix is an amendment, or a reading that a ne
 - **Proofs attached to tokens.** [0016](../decisions/0016-authorization-sparse-merkle-tree.md), rule 5: a client "may also attach a proof and a signed root to its token". [0019](../decisions/0019-authzen-decision-protocol.md), rule 8 removed the grant keys tokens named, so nothing says what such a proof covers, or whether tokens still carry an issue epoch. Options: keep attached proofs only for grants checked against another realm's roots; drop the issue epoch unless the profile needs it. Settled by D85.
 - **IDs for kernel objects.** [0001](../decisions/0001-object-identifiers.md)'s Context names processes, threads and endpoints among the objects IDs name. Kernel objects are reached by capability ([0002](../decisions/0002-capability-security-model.md), rule 1), and the kernel uses no randomness ([0021](../decisions/0021-entropy-before-keys.md), rule 3), so it can't mint their IDs. Options: the user-space server that creates the object mints its ID; IDs for only some threads and endpoints, which needs an amendment to 0001. Settled by D16.
 - **The kernel's interfaces and ABNF.** [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2 puts "every RPC and IPC call" in generated ABNF. [0014](../decisions/0014-versioned-object-apis.md), rule 6 has the raw system-call ABI "change underneath" the kernel interface library. Options: define the library's interfaces in the IDL, and treat the raw ABI as no IPC call, unpublished. Settled by D29.
-- **The font's license.** [0009](../decisions/0009-text-as-graphics-console.md), rule 3 shares one OpenType family between the kernel and the SVG layer. [0008](../decisions/0008-mpl-2.0-license.md), rule 4 admits only permissive licenses and MPL-2.0, which a font under a font license would break. Options: a family under an admitted license; an amendment to 0008 rule 4. Settled by D06.
+- **The font's license.** [0009](../decisions/0009-text-as-graphics-console.md), rule 3 shares one OpenType family between the kernel and the SVG layer. [0008](../decisions/0008-mpl-2.0-license.md), rule 4 admits only permissive licenses and MPL-2.0, which a font under a font license would break. Options: a family under an admitted license; an amendment to 0008 rule 4. Settled by D06: [0034](../decisions/0034-noto-fonts-under-ofl.md), accepted 2026-11-25, amends 0008 rule 4 to admit OFL-1.1 for fonts and the data derived from them, never for code (rule 2). The conflict is closed.
 - **An entropy service that "never blocks again".** [0021](../decisions/0021-entropy-before-keys.md), rule 2: once the gate opens, "the service never blocks again". Rule 5 makes requests for long-lived keys wait without a healthy physical source, and rule 9 reseeds "before giving any further output" after a restore. Options: "never blocks" covers ordinary requests, requests with prediction resistance wait by design, and output after a restore pauses only for the reseed. Settled by D46.
 - **Tokens on remote PDP requests.** [0019](../decisions/0019-authzen-decision-protocol.md), rule 6: remote requests travel "carrying the enforcement point's workload token". [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 1: calls go through a session "with no token per call". Options: the remote enforcement point binds to the PDP once with its token, then uses the session. Settled by D74.
 - **Reaching `//` from a confined process.** [0012](../decisions/0012-posix-compatibility-layer.md), rule 5: "`//` is the network root". [0025](../decisions/0025-twelve-factor-app-contract.md), rule 3: a process's namespace "holds only four things". Options: `//` reached only through a capability, which the default per-node POSIX instance's root includes, with app instances reaching realm names only through bindings. Settled by D52.
@@ -1156,7 +1175,7 @@ Where accepted records disagree, the fix is an amendment, or a reading that a ne
 
 ## Settled since the reading phase
 
-The reading phase collected the open items and the conflicts between the documents. Since then, two new records, three of the project owner's decisions, a check of every item against the accepted rules and a correction of the older design notes have settled some of them. Each is listed here with what settled it. Where only part was settled, the rest is in the decision named.
+The reading phase collected the open items and the conflicts between the documents. Since then, two new records, three of the project owner's decisions, the twelve records accepted on 2026-11-25, a check of every item against the accepted rules and a correction of the older design notes have settled some of them. Each is listed here with what settled it. Where only part was settled, the rest is in the decision named.
 
 ### By ADR 0030
 
@@ -1170,9 +1189,26 @@ The reading phase collected the open items and the conflicts between the documen
 
 ### By the project owner's decisions
 
-- **The founding node's first certificate.** The project owner decided that the founding node signs its initial certificate itself, with its genesis key. [0029](../decisions/0029-founding-node-self-signed-certificate.md) records the decision and spells it out, and is proposed. What remains is accepting it (D78) and designing the ceremony and the genesis state (D79).
-- **ABNF and the command language.** The project owner decided that ABNF is a protocol specification metalanguage, never the language of a command interpreter people use. [0031](../decisions/0031-abnf-is-not-a-command-language.md) records the decision and is proposed. It would take dm's command language out of [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2's list, and make the canonical text form of calls machine-facing only. What remains is accepting 0031 and deciding on a native interpreter (D102), dm's design (D103), and any interpreter on the serial console before dm (D44).
+- **The founding node's first certificate.** The project owner decided that the founding node signs its initial certificate itself, with its genesis key. [0029](../decisions/0029-founding-node-self-signed-certificate.md) records the decision and spells it out. The project owner accepted it on 2026-11-25, which settles D78, and it amends [0020](../decisions/0020-realm-certificate-authority.md), rules 4 and 6. What remains is designing the ceremony and the genesis state (D79).
+- **ABNF and the command language.** The project owner decided that ABNF is a protocol specification metalanguage, never the language of a command interpreter people use. [0031](../decisions/0031-abnf-is-not-a-command-language.md) records the decision, and the project owner accepted it on 2026-11-25. It takes dm's command language out of [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2's list (rule 2), and makes the canonical text form of calls machine-facing only (rule 3). What remains is deciding on a native interpreter (D102), dm's design (D103), and any interpreter on the serial console before dm (D44).
 - **Whose historical-keys endpoint marks a revoked workload's keys.** [0017](../decisions/0017-openid-federation-membership.md), rule 11 stands: revoking a workload marks its keys revoked in the realm's historical-keys endpoint. It had been questioned because OpenID Federation 1.1 lists an entity's own past keys at its own endpoint. It isn't open.
+
+### By the records accepted on 2026-11-25
+
+On 2026-11-25 the project owner accepted twelve records. Each settled or narrowed these items:
+
+- **[0029](../decisions/0029-founding-node-self-signed-certificate.md), the founding node's initial certificate.** Settles D78. Amends [0020](../decisions/0020-realm-certificate-authority.md), rules 4 and 6. The ceremony and the genesis state stay in D79.
+- **[0031](../decisions/0031-abnf-is-not-a-command-language.md), ABNF is not a command language.** Settles D102's question whether to accept it. Amends [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rules 2 and 5. The native interpreter stays in D102, and dm's command language in D103.
+- **[0033](../decisions/0033-contributions-docs-license-and-notice-years.md), contributions, the documentation license and notice years.** Settles D01: the DCO 1.1, CC BY 4.0 for documents, a REUSE check in CI and years as ranges. Amends [0023](../decisions/0023-copyright-notices.md), rules 1 and 2. It also answers the two licensing questions [0008](../decisions/0008-mpl-2.0-license.md), rule 5 and [0023](../decisions/0023-copyright-notices.md)'s Consequences had left open.
+- **[0034](../decisions/0034-noto-fonts-under-ofl.md), the fonts.** Settles D06: Noto Sans Mono and Noto Sans, with atlases 16, 24 and 32 pixels high. Amends [0008](../decisions/0008-mpl-2.0-license.md), rule 4 to admit OFL-1.1 for fonts only, which closes [the font's license](#conflicts-that-dont-block-the-build) conflict. Gives D100 its fonts.
+- **[0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), the toolchain, image linkage and the ESP layout.** Settles D02: pinned stable Rust 1.100.0, the kernel as a position-independent ELF payload in the stub's `.kernel` section, `no_std` user space, and two ESP slots. Amends [0006](../decisions/0006-uefi-boot-image.md), rule 3, whose paths become slot `a`'s, such as `/aspis/a/aspis.efi`. Narrows D146 (the slots), D60 (no std port yet), D145 (randomizing the kernel's placement is decided with C78), D14 (the kernel linked in the upper half) and D30 (`no_std` user space).
+- **[0036](../decisions/0036-qemu-configuration-and-test-builds.md), QEMU and test builds.** Settles D03: QEMU 11.1.3, two configurations on every change and a nightly matrix, host and in-QEMU tests, and test builds marked by `--cfg aspis_test_build`, which alone carry the seed hook. Narrows D43 (every virtio device on PCIe).
+- **[0037](../decisions/0037-initial-image-format-and-contents.md), the initial image.** Settles D04: an ASPIS format with page-aligned files and a SHA-512 digest for each, and contents that cover everything the root server starts before storage. Narrows D40 (the boot manifest is an entry of the image, its format still D40's), D13 (how the image becomes memory objects), D14 (64 KiB alignment until the page size is fixed), D43 (the drivers the image carries), D11, D30 and D32.
+- **[0038](../decisions/0038-reproducible-builds-and-provenance.md), reproducible builds and provenance.** Settles D05: bit-for-bit reproducible images, CycloneDX 1.7 SBOMs, SLSA 1.2 provenance and Sigstore signing. Settles D128's SBOM format, CycloneDX for app builds too, so D128 narrows to the OCI layout and signatures for outside verifiers. Narrows D144 (a release's hashes are the known-good values).
+- **[0039](../decisions/0039-no-uefi-runtime-services.md), no UEFI runtime services.** Settles D07: reset and power-off through PSCI, and boot selection by files on the ESP, not UEFI variables. Narrows D56 (runtime services ruled out), D146 (UEFI `BootNext` ruled out) and D77 (no time from firmware).
+- **[0040](../decisions/0040-the-stub-checks-the-initial-image.md), the stub checks the initial image.** Settles D08: a SHA-512 digest embedded in the signed `aspis.efi`, and a PCR 9 measurement where a TPM exists. Narrows D144 and D146 (the two images are updated together).
+- **[0041](../decisions/0041-boot-abi.md), the boot ABI.** Settles D09: the kernel's entry state, tagged boot-information records, the kernel-argument grammar and the order the stub searches for the initial image. Narrows D42 (the seed comes in a page of its own, which the kernel never reads), D144 (a record reserved for the TPM event log), D11, D32, D40 and D94.
+- **[0042](../decisions/0042-log-ring-and-panic-path.md), the log ring and the panic path.** Settles D10: the ring's record format, reading by capability, and the boot framebuffer's Kernel, Adopted and Retired states. Narrows D55 (the import source and how the kernel stops drawing), D40 (the root server alone gets the ring's capability), D57 and D84.
 
 ### By rules already accepted
 
@@ -1183,8 +1219,8 @@ Items listed as open, or as conflicts, that an accepted rule already decides.
 - **The form of entity identifiers.** [0017](../decisions/0017-openid-federation-membership.md), rule 1: HTTPS. An `aspis:` profile would need an amendment.
 - **Cross-certifying other realms.** [0020](../decisions/0020-realm-certificate-authority.md), rules 1 and 10: the root issues each cross-certificate, in a ceremony. An online cross-certification CA would need an amendment. The rest is in D141.
 - **Whether the root key needs a full-entropy source.** [0021](../decisions/0021-entropy-before-keys.md), rules 5 and 6: the ceremony runs on a node with a physical source and prediction resistance, and an HSM's entropy may be mixed in but is never credited ([entropy note §6](entropy-and-first-keys.md#6-open-questions)).
-- **QEMU's fixed parts.** virtio-rng always ([0021](../decisions/0021-entropy-before-keys.md), rule 12); `ramfb` ([0009](../decisions/0009-text-as-graphics-console.md), rule 2); the SMMUv3 and multi-node runs ([0007](../decisions/0007-initial-hardware-targets.md), rule 1). The rest is in D03.
-- **The seed's path.** Not a conflict: the root server starts the entropy service ([0021](../decisions/0021-entropy-before-keys.md), rule 1), so the seed passes through it. The mechanism is D42.
+- **QEMU's fixed parts.** virtio-rng always ([0021](../decisions/0021-entropy-before-keys.md), rule 12); `ramfb` ([0009](../decisions/0009-text-as-graphics-console.md), rule 2); the SMMUv3 and multi-node runs ([0007](../decisions/0007-initial-hardware-targets.md), rule 1). The rest was D03, which [0036](../decisions/0036-qemu-configuration-and-test-builds.md) settled.
+- **The seed's path.** Not a conflict: the root server starts the entropy service ([0021](../decisions/0021-entropy-before-keys.md), rule 1), so the seed passes through it. The kernel receives it in a page of its own and never reads it ([0041](../decisions/0041-boot-abi.md), rule 4). The rest of the mechanism is D42.
 - **Whether kernel objects carry IDs.** They do: [0001](../decisions/0001-object-identifiers.md) names processes, threads and endpoints (Context). Who mints them is D16.
 - **The key a node uses with the provider.** An operational key the genesis key has certified ([0001](../decisions/0001-object-identifiers.md), rule 3; [0020](../decisions/0020-realm-certificate-authority.md), rule 4). The mechanism is D91.
 - **Where some realm services run.** The router on edge nodes ([0026](../decisions/0026-realm-as-cloud-provider.md), rule 6); the provider and the authorization service with the registry ([0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 2; [authorization tree note §4](authorization-tree.md#4-roots-epochs-and-replication)); a PDP and a catalog replica on every node ([0019](../decisions/0019-authzen-decision-protocol.md), rule 3; [0028](../decisions/0028-discovery-and-realm-catalog.md), rule 3). The rest is D88.

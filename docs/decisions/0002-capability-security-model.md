@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # 0002. Capabilities in the kernel; object IDs are names
 

@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 780" width="1280" height="780" role="img" aria-labelledby="t d">
   <title id="t">Mockup of dm, the ASPIS window system</title>
   <desc id="d">Three dm windows. Each pad has its own color, and the graphics in it are drawn in that color, with amber kept for warnings. pad_0001, in indigo, shows an operator checking a release rollout: text lines mixed with a rollout bar, a latency chart and a map of where instances run, with "v42" selected and a menu offering copy, search and open. It then reads rows from the shop database through its mount at //example.org/sys/sql. pad_0002, in teal, tails the deploy's live log. The catalog browser keeps dm's neutral gray frame and finds the SQL database interfaces and the system name where the database is mounted.</desc>

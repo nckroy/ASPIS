@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # The realm as its own certificate authority
 
@@ -136,6 +137,8 @@ Every certificate:
 
 Only CA certificates carry CRL distribution points.
 
+**The founding node's initial certificate** is the one certificate in force that no CA issues. During the realm-creation ceremony no decision point runs yet, so the RPC CA can't certify the founding node. The node instead signs its initial certificate with its own genesis key. The certified key is its operational TLS key. Like a node certificate, it has one URI subjectAltName, the node's identity URI, uses `id-MLDSA65-Ed25519-SHA512` and lives seven days at most. The ceremony records it in the authorization tree's genesis state. Only the founding node uses it, since it doesn't chain to the realm's root. Once its decision point runs, the node renews with the RPC CA, before any other node enrolls, and the initial certificate is revoked in the tree. Decided: [0029](../decisions/0029-founding-node-self-signed-certificate.md), rules 1–5, which amend [0020](../decisions/0020-realm-certificate-authority.md), rules 4 and 6.
+
 **Identity URIs.** A node's or workload's identity URI is a SPIFFE ID, which is also a WIMSE identifier ([0022](../decisions/0022-spiffe-and-wimse-workload-identity.md)). Its trust domain is the realm's DNS name, and its path carries the principal's object ID ([0001](../decisions/0001-object-identifiers.md)) in the text form that [0013](../decisions/0013-abnf-for-protocols-and-calls.md) defines in ABNF. The path layout below was a placeholder for the design session to settle. Decided: [0022](../decisions/0022-spiffe-and-wimse-workload-identity.md), rule 2:
 
 ```
@@ -203,7 +206,7 @@ Either way, the result is a CA certificate for the intermediate's name and key, 
 
 ### 6.1 Enrolling a node and renewing its certificate
 
-The node mints every key in this flow after its entropy service has opened its gate. The genesis key also needs a physical entropy source and a fresh reseed ([0021](../decisions/0021-entropy-before-keys.md), rules 2 and 5).
+The node mints every key in this flow after its entropy service has opened its gate. The genesis key also needs a physical entropy source and a fresh reseed ([0021](../decisions/0021-entropy-before-keys.md), rules 2 and 5). The founding node doesn't enroll this way: its first RPC CA certificate comes by renewing its self-signed initial certificate ([§4](#4-certificate-profiles); [0029](../decisions/0029-founding-node-self-signed-certificate.md), rule 5).
 
 ```mermaid
 sequenceDiagram

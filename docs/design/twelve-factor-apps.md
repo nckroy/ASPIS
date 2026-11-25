@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # Twelve-factor apps, and the realm as their cloud
 
@@ -202,7 +203,7 @@ An app written only to the POSIX column runs on ASPIS and on other twelve-factor
   - the single-level store can hold immutable objects; AEGIS had `ms_$mk_immutable` ([research §2.2](../research/aegis-domain-os.md#22-single-level-store));
   - IDs are unique and ordered without a clock ([0001](../decisions/0001-object-identifiers.md)).
 - **Proposal:**
-  - **Build.** The builder runs buildpacks in a sandbox under the POSIX personality. Its network grants reach only the package registries the app declares, or a realm mirror ([0026](../decisions/0026-realm-as-cloud-provider.md), rule 3). Its output is a **build**: an immutable object holding the file tree, the process types and an SBOM. It carries SLSA build provenance, signed with the builder's workload identity [SLSA].
+  - **Build.** The builder runs buildpacks in a sandbox under the POSIX personality. Its network grants reach only the package registries the app declares, or a realm mirror ([0026](../decisions/0026-realm-as-cloud-provider.md), rule 3). Its output is a **build**: an immutable object holding the file tree, the process types and an SBOM. The SBOM is CycloneDX, the one SBOM format ASPIS uses, for app builds as for its own images ([0038](../decisions/0038-reproducible-builds-and-provenance.md), rule 2). It carries SLSA build provenance, signed with the builder's workload identity [SLSA].
   - **Release.** A **release** is an immutable object that joins a build, its base, the deploy's config and its bindings.
     - Each deploy numbers its releases `v1`, `v2` and so on, with a 64-bit counter. Each release also has an object ID.
     - Twelve-factor suggests timestamps as release IDs. ASPIS keeps clocks out of identity ([0001](../decisions/0001-object-identifiers.md), rule 1).

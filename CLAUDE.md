@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # Working in the ASPIS repository
 
@@ -8,7 +9,7 @@ ASPIS is an open-source microkernel operating system, written in Rust for ARM64 
 
 ## Repository layout
 
-- `docs/research/`: background research. [aegis-domain-os.md](docs/research/aegis-domain-os.md) covers AEGIS and Domain/OS, with a source tag on every fact.
+- `docs/research/`: background research. [aegis-domain-os.md](docs/research/aegis-domain-os.md) covers AEGIS and Domain/OS, with a source tag on every fact. Third-party source PDFs kept beside it are for local research only: `.gitignore` excludes `docs/research/*.pdf`, so never commit them.
 - `docs/decisions/`: the ADRs, one per file, named `NNNN-short-title.md`. [README.md](docs/decisions/README.md) lists the founding requirements and indexes every record with its status.
 - `docs/design/`: design notes and architecture views.
   - The design notes fed the ADRs, and each names the records it led to. Examples: [authorization-tree.md](docs/design/authorization-tree.md), [security-tokens.md](docs/design/security-tokens.md), [twelve-factor-apps.md](docs/design/twelve-factor-apps.md).
@@ -16,6 +17,7 @@ ASPIS is an open-source microkernel operating system, written in Rust for ARM64 
   - The views zoom in from there: [realm-containers.md](docs/design/realm-containers.md) (the realm's services), [node-components.md](docs/design/node-components.md) (one node's servers), [kernel-components.md](docs/design/kernel-components.md) (the kernel) and [key-flows.md](docs/design/key-flows.md) (sequence diagrams across all three).
   - [build-plan.md](docs/design/build-plan.md) divides the build into chunks (C01…) and milestones (M1–M9, and MH for hardware and hardening). [design-backlog.md](docs/design/design-backlog.md) lists the open decisions (D01…) under the milestone each must be settled before. When a decision is made, record it as an ADR and mark its backlog entry settled.
 - [LICENSE](LICENSE): the verbatim text of the Mozilla Public License 2.0 ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 3). Don't edit it.
+- [LICENSES/](LICENSES): the license texts in the REUSE layout, `MPL-2.0.txt` and `CC-BY-4.0.txt` ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 3). Don't edit them either.
 
 ## How the project works
 
@@ -26,7 +28,7 @@ ASPIS is an open-source microkernel operating system, written in Rust for ARM64 
 - Accepted ADRs are settled. Follow the effective rule after any amendments, and don't re-argue them.
 - If two accepted records conflict, say so and propose an amending record, as [0030](docs/decisions/0030-bind-tokens-sessions-and-group-memberships.md) does.
 - Record a new decision as the next numbered ADR, and add it to the index in [docs/decisions/README.md](docs/decisions/README.md). Records are never renumbered.
-- Mark a new record "Proposed" until the project owner accepts it. A Proposed record, such as [0029](docs/decisions/0029-founding-node-self-signed-certificate.md), isn't settled: check the index for each record's status.
+- Mark a new record "Proposed" until the project owner accepts it. A Proposed record isn't settled: check the index for each record's status.
 - Amend a record; never rewrite it.
   - The amended record's status line gets "Amended by NNNN (rule k)", once the amending record is accepted.
   - The new record's status line says "Amends NNNN, rule k". A Proposed record says "Would amend".
@@ -42,11 +44,17 @@ Follow the existing records:
 - A `- **Status:**` line and a `- **Date:**` line.
 - Four sections: Context, Decision (numbered rules), Consequences and References.
 
+<!-- REUSE-IgnoreStart -->
+
 ## Writing conventions
 
-- **Copyright.** Line 1 of every novel Markdown file is exactly `<!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->` ([0023](docs/decisions/0023-copyright-notices.md)).
-  - Markdown carries the copyright tag only, with no license tag, because the documentation license is still undecided.
+- **Copyright and license tags.** Every novel Markdown file starts with two tags ([0023](docs/decisions/0023-copyright-notices.md); [0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 2):
+  - Line 1 is the copyright tag: exactly `<!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->` for a file first published in 2026, with the years as a range once it changes in a later year (below).
+  - Line 2 is exactly `<!-- SPDX-License-Identifier: CC-BY-4.0 -->`. Documents are licensed under CC BY 4.0, and code examples inside a document are part of it.
+  - SVG files, such as the mockups in `docs/mockups/`, carry the same two comments at the top.
   - Code files begin with `SPDX-FileCopyrightText: 2026 Nicole Roy` and `SPDX-License-Identifier: MPL-2.0`, in the file's comment syntax.
+  - A notice names its years as a range: the year the holder first published the file, up to the latest year that holder changed it, such as `2026-2027 Nicole Roy`. A contributor's change doesn't extend Nicole Roy's range ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 4).
+  - Files that can't carry a comment, such as generated assets, are covered by a `REUSE.toml` ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 3).
   - Third-party material keeps its own notices: quotations, code copied or vendored from elsewhere, and test vectors taken from standards.
 - **Tone.** Plain, short sentences. Say what is decided and where. Say plainly what is still open.
 - **Spelling.** American English in every document (the project owner's rule): "license" for both noun and verb, "behavior", "organization", "enrollment", "synchronization", "modeled", "canceled". Third-party text, such as `LICENSE` and quotations, keeps its own spelling.
@@ -63,6 +71,8 @@ Follow the existing records:
   - Cite the newest Final version, and note when an earlier version is equivalent.
   - Flag drafts as drafts, with their revision and date.
   - Example: OpenID Federation 1.1 split into a protocol-independent core and OpenID Federation for OpenID Connect 1.1.
+
+<!-- REUSE-IgnoreEnd -->
 
 ## Diagrams
 
@@ -103,15 +113,17 @@ Don't call a diagram done until you have seen it render.
 There is no code yet. When it starts:
 
 - Write it in Rust: a microkernel for ARM64, bootable with GRUB ([founding requirements](docs/decisions/README.md#founding-requirements)). The boot image is a UEFI PE32+ image ([0006](docs/decisions/0006-uefi-boot-image.md)). The targets are QEMU `virt` first, then Raspberry Pi 4 ([0007](docs/decisions/0007-initial-hardware-targets.md)).
+- The toolchain is pinned stable Rust, 1.100.0 in `rust-toolchain.toml`, with no nightly features. The kernel is an `aarch64-unknown-none` payload inside the `aarch64-unknown-uefi` stub, and user-space programs are `no_std` until there is a `std` port ([0035](docs/decisions/0035-toolchain-image-linkage-and-esp-layout.md)).
 - All ASPIS code is licensed under MPL-2.0 ([0008](docs/decisions/0008-mpl-2.0-license.md)). Every source file carries both SPDX tags.
-- Dependencies must use MIT, Apache-2.0, BSD or MPL-2.0. The kernel and core servers take no GPL-only dependencies ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 4).
+- Dependencies must use MIT, Apache-2.0, BSD or MPL-2.0. The kernel and core servers take no GPL-only dependencies ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 4). Fonts, and data derived from them such as glyph atlases, may also be OFL-1.1, never code. The fonts are Noto Sans Mono and Noto Sans ([0034](docs/decisions/0034-noto-fonts-under-ofl.md)).
+- Contributions come under the DCO: every commit in an outside contribution carries a `Signed-off-by:` line ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 1).
+- ASPIS's own images build reproducibly, bit for bit. CycloneDX is the only SBOM format: CycloneDX 1.7 for ASPIS's images, and CycloneDX for app builds too. Provenance is SLSA 1.2 ([0038](docs/decisions/0038-reproducible-builds-and-provenance.md)). Per-file copyright and license tags stay SPDX tags.
 - Interfaces are written in the ASPIS IDL, and the IDL compiler generates each interface's ABNF. CI parses every grammar and runs its test vectors ([0013](docs/decisions/0013-abnf-for-protocols-and-calls.md)).
-- ABNF is a protocol specification metalanguage: it describes protocols, calls and machine-read formats, never the language of the command interpreter people use. Don't propose ABNF, or the canonical text form of calls, as the interpreter's syntax (the project owner's rule; [0031](docs/decisions/0031-abnf-is-not-a-command-language.md), proposed).
+- ABNF is a protocol specification metalanguage: it describes protocols, calls and machine-read formats, never the language of the command interpreter people use. Don't propose ABNF, or the canonical text form of calls, as the interpreter's syntax (the project owner's rule; [0031](docs/decisions/0031-abnf-is-not-a-command-language.md)).
 - Infrastructure as code uses OpenTofu, never Terraform. [0026](docs/decisions/0026-realm-as-cloud-provider.md) rule 12 makes the App API declarative enough to back an OpenTofu provider.
 
 ## Still open
 
-Many ADRs leave details to the design session, and say which. Two licensing questions are open too. Don't assume an answer to either:
+Many ADRs leave details to the design session, and say which. [design-backlog.md](docs/design/design-backlog.md) lists the open decisions under the milestone each must be settled before. Don't assume an answer to any of them.
 
-- **The documentation license** ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 5). Until it is decided, documents carry the copyright line only.
-- **The contribution policy**: a DCO, a CLA or an assignment ([0023](docs/decisions/0023-copyright-notices.md), Consequences). ASPIS needs one before it accepts outside contributions.
+The two licensing questions that were open are settled: documents are under CC BY 4.0, and contributions come under the DCO ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md)). ASPIS accepts outside contributions once C01 adds `CONTRIBUTING.md` and the sign-off check in CI.

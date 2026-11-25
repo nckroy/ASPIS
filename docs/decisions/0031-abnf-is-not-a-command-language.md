@@ -1,8 +1,9 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # 0031. ABNF specifies protocols and formats, not the command interpreter
 
-- **Status:** Proposed. Would amend [0013](0013-abnf-for-protocols-and-calls.md) (rules 2 and 5).
+- **Status:** Accepted. Amends [0013](0013-abnf-for-protocols-and-calls.md) (rules 2 and 5).
 - **Date:** 2026-11-24
 
 ## Context
@@ -12,7 +13,7 @@
 - Rule 2 lists "the dm command language" among the text formats ABNF describes.
 - Rule 5 gives every call a canonical text form, defined in ABNF, "for logs, traces, token scopes and the command line".
 
-The command interpreter that users work in is still to be designed. That includes dm's command language, which [0011](0011-dm-window-system.md) rule 6 leaves to the design session. Nicole decided on 2026-11-24 that ABNF is a protocol specification metalanguage, and is not appropriate for a user-facing command interpreter. Rules 1 to 3 below record that decision; their exact wording is proposed.
+The command interpreter that users work in is still to be designed. That includes dm's command language, which [0011](0011-dm-window-system.md) rule 6 leaves to the design session. Nicole decided on 2026-11-24 that ABNF is a protocol specification metalanguage, and is not appropriate for a user-facing command interpreter. Rules 1 to 3 below record that decision. Claude proposed their exact wording, and the project owner accepted it on 2026-11-25.
 
 ## Decision
 

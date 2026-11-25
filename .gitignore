@@ -3,3 +3,6 @@
 
 # macOS Finder metadata
 .DS_Store
+
+# Third-party source documents, kept locally for research only
+docs/research/*.pdf

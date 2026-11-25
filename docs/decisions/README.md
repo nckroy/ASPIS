@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # Architecture decision records
 
@@ -61,7 +62,17 @@ These come from the project brief and aren't re-decided here:
 | [0026](0026-realm-as-cloud-provider.md) | The realm as a virtual cloud provider for twelve-factor apps | Accepted | 2026-11-24 |
 | [0027](0027-applications-extend-the-system.md) | Applications extend the system through objects and versioned interfaces | Accepted | 2026-11-24 |
 | [0028](0028-discovery-and-realm-catalog.md) | Discovery: a realm catalog of interfaces, types and objects, updated in real time | Accepted | 2026-11-24 |
-| [0029](0029-founding-node-self-signed-certificate.md) | The founding node's initial certificate is self-signed | Proposed | 2026-11-24 |
+| [0029](0029-founding-node-self-signed-certificate.md) | The founding node's initial certificate is self-signed | Accepted | 2026-11-24 |
 | [0030](0030-bind-tokens-sessions-and-group-memberships.md) | What managers accept, when sessions end, and where group memberships come from | Accepted | 2026-11-24 |
-| [0031](0031-abnf-is-not-a-command-language.md) | ABNF specifies protocols and formats, not the command interpreter | Proposed | 2026-11-24 |
+| [0031](0031-abnf-is-not-a-command-language.md) | ABNF specifies protocols and formats, not the command interpreter | Accepted | 2026-11-24 |
 | [0032](0032-stateful-services-run-as-platform-deploys.md) | Stateful services run as platform deploys | Accepted | 2026-11-24 |
+| [0033](0033-contributions-docs-license-and-notice-years.md) | Contributions under the DCO, documents under CC BY 4.0, and year ranges in notices | Accepted | 2026-11-25 |
+| [0034](0034-noto-fonts-under-ofl.md) | Fonts: Noto, under the SIL Open Font License, with atlases at 16, 24 and 32 pixels | Accepted | 2026-11-25 |
+| [0035](0035-toolchain-image-linkage-and-esp-layout.md) | Toolchain, image linkage and the ESP layout | Accepted | 2026-11-25 |
+| [0036](0036-qemu-configuration-and-test-builds.md) | QEMU configuration, the test framework and test builds | Accepted | 2026-11-25 |
+| [0037](0037-initial-image-format-and-contents.md) | The initial image: an ASPIS format, carrying everything that starts before storage | Accepted | 2026-11-25 |
+| [0038](0038-reproducible-builds-and-provenance.md) | Reproducible builds, CycloneDX SBOMs and SLSA provenance | Accepted | 2026-11-25 |
+| [0039](0039-no-uefi-runtime-services.md) | No UEFI runtime services after boot | Accepted | 2026-11-25 |
+| [0040](0040-the-stub-checks-the-initial-image.md) | The stub checks the initial image against a digest in `aspis.efi` | Accepted | 2026-11-25 |
+| [0041](0041-boot-abi.md) | The boot ABI: entry state, boot information and kernel arguments | Accepted | 2026-11-25 |
+| [0042](0042-log-ring-and-panic-path.md) | The kernel log ring and the panic path | Accepted | 2026-11-25 |

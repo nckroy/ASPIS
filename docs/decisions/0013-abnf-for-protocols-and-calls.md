@@ -1,8 +1,9 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # 0013. ABNF for protocols, formats, and every RPC and IPC call
 
-- **Status:** Accepted. Amended by [0020](0020-realm-certificate-authority.md) (rule 2).
+- **Status:** Accepted. Amended by [0020](0020-realm-certificate-authority.md) (rule 2) and [0031](0031-abnf-is-not-a-command-language.md) (rules 2 and 5).
 - **Date:** 2026-11-24
 
 ## Context

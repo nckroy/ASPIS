@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # POSIX compatibility on ASPIS
 
@@ -255,11 +256,11 @@ Source compatibility comes first. Running unmodified Linux AArch64 binaries woul
 ## 7. C library and Rust
 
 - **libc:** port relibc by adding an ASPIS runtime layer beside its Linux and Redox backends. relibc is MIT-licensed [RELIBC-LIC], which fits [ADR 0008](../decisions/0008-mpl-2.0-license.md). The alternative is musl (also MIT), which is written in C and assumes Linux system calls.
-- **Rust std:** implemented directly on ASPIS APIs, as a target such as `aarch64-unknown-aspis`, rather than through libc. That way native Rust programs don't inherit POSIX semantics.
+- **Rust std:** implemented directly on ASPIS APIs, as a target such as `aarch64-unknown-aspis`, rather than through libc. That way native Rust programs don't inherit POSIX semantics. Partly decided: [0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rules 1 and 5. The toolchain is pinned stable Rust, and a custom target needs nightly until `build-std` is stable. So until a std port exists, user-space programs are `no_std`, built for `aarch64-unknown-none` with ASPIS's runtime crate. Whether and when to port std is decided when the POSIX personality or applications need it.
 
 ## 8. Open questions
 
-- **Executable format:** ELF for both native and POSIX programs, and where the dynamic linker lives.
+- **Executable format:** ELF for both native and POSIX programs, and where the dynamic linker lives. Partly decided: the executables in the initial image are static ELF64 AArch64 programs ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 3). The format of other programs, and dynamic linking, are still open.
 - **`fork()` in multithreaded processes:** POSIX copies only the calling thread; do we go beyond that minimum?
 - **Cross-node pids,** or native APIs only.
 - **uid/gid mapping** between federated realms.

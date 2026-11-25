@@ -1,8 +1,9 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # 0006. Boot: a UEFI PE32+ image loaded by GRUB
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by [0035](0035-toolchain-image-linkage-and-esp-layout.md) (rule 3).
 - **Date:** 2026-11-24
 
 ## Context

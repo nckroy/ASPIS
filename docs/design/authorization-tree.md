@@ -1,4 +1,5 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # Authorization tree: permissions and revocation with a sparse Merkle tree
 
@@ -118,7 +119,7 @@ Revocation replaces the subtree at a prefix with a marker node:
 - **POSIX** ([0012](../decisions/0012-posix-compatibility-layer.md)): mode bits become a view of the object's grant branch, and `chmod` writes grants.
 - **Federation:** each realm has its own trees. A grant from another realm is checked against that realm's signed roots, whose keys are trusted through OpenID Federation.
 - **Certificates** ([0020](../decisions/0020-realm-certificate-authority.md)):
-  - The realm's CA records every certificate it issues under a branch for the issuing CA, so the signed root commits to every certificate in force.
+  - The realm's CA records every certificate it issues under a branch for the issuing CA, so the signed root commits to every certificate in force. The founding node's initial certificate, which no CA issues, is recorded in the tree's genesis state, so the first signed root commits to it too ([0029](../decisions/0029-founding-node-self-signed-certificate.md), rule 3).
   - Peers check a certificate's principal and serial number against their replica during the TLS handshake.
   - Revoking a principal's branch, or a CA's branch, revokes the certificates under it.
 

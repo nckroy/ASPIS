@@ -1,9 +1,12 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
 # 0023. Copyright notices
 
-- **Status:** Accepted. Amends [0008](0008-mpl-2.0-license.md), rule 2.
+- **Status:** Accepted. Amends [0008](0008-mpl-2.0-license.md), rule 2. Amended by [0033](0033-contributions-docs-license-and-notice-years.md) (rules 1 and 2).
 - **Date:** 2026-11-24
+
+<!-- REUSE-IgnoreStart -->
 
 ## Context
 
@@ -33,6 +36,8 @@ The REUSE specification standardizes machine-readable copyright and license tags
    - **Markdown documents** begin with `<!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->`. They carry no license tag until the documentation license is decided ([0008](0008-mpl-2.0-license.md), rule 5).
 3. **Third-party material keeps its own notices.** This covers quotations, code copied or vendored from elsewhere, and test vectors taken from standards.
 4. **Every existing document gets the notice now.**
+
+<!-- REUSE-IgnoreEnd -->
 
 ## Consequences
 
