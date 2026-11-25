@@ -3,8 +3,8 @@
 
 # 0029. The founding node's initial certificate is self-signed
 
-- **Status:** Accepted. Amends [0020](0020-realm-certificate-authority.md) (rules 4 and 6).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -41,9 +41,6 @@ The [key flows](../design/key-flows.md#3-realm-creation-ceremony) listed this as
 - **The root's role is unchanged.** It still signs only intermediates, cross-certificates and its CRL ([0020](0020-realm-certificate-authority.md), rule 1).
 - **There is a short bootstrap window.** Until its first renewal, the founding node holds a certificate that no CA issued. The window is bounded by the certificate's seven-day life and by the requirement to renew before another node enrolls. The tree records the certificate throughout, so it is auditable.
 - **The genesis tree state grows.** It must record the initial certificate and the founding node's principal with its genesis public key. It must also hold the policies that let the founding node renew, enroll the next node and run the realm's services. Designing that state is part of the ceremony's design.
-- **Amends [0020](0020-realm-certificate-authority.md), once accepted.**
-  - Rule 4: the founding node's initial certificate is signed with its own genesis key and not issued by the RPC CA.
-  - Rule 6: no CA issues that certificate, so no decision point is asked; its replacement is an ordinary renewal.
 
 ## References
 

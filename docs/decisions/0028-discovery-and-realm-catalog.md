@@ -3,8 +3,8 @@
 
 # 0028. Discovery: a realm catalog of interfaces, types and objects, updated in real time
 
-- **Status:** Accepted. Amends [0014](0014-versioned-object-apis.md) (rule 5), [0017](0017-openid-federation-membership.md) (rule 8) and [0026](0026-realm-as-cloud-provider.md) (rule 7).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -31,7 +31,7 @@ Facts this decision relies on (details and sources in the [design note](../desig
 ## Decision
 
 1. **Discovery has three layers.**
-   - **Each object** implements the base discovery interface. It now also reports the object's publisher, and the object's catalog entry if it has one. This amends [0014](0014-versioned-object-apis.md), rule 5.
+   - **Each object** implements the base discovery interface ([0014](0014-versioned-object-apis.md), rule 5). Besides its interfaces, versions, type and attributes, it reports the object's publisher, and the object's catalog entry if it has one.
    - **Each manager** implements an enumeration interface:
      - it lists the objects the manager holds, one page at a time;
      - it lists them only to callers allowed to see them;
@@ -49,7 +49,7 @@ Facts this decision relies on (details and sources in the [design note](../desig
 3. **The catalog is an object.**
    - It has a versioned interface, `aspis.catalog`, and a well-known ID under the reserved authority ([0001](0001-object-identifiers.md), rule 7). It lists itself.
    - Every node holds a replica.
-   - The service broker's catalog of service types and plans becomes part of it. This amends [0026](0026-realm-as-cloud-provider.md), rule 7.
+   - The service broker's catalog of service types and plans is part of it ([0026](0026-realm-as-cloud-provider.md), rule 7).
 4. **Registrations are signed state.**
    - Registrations are recorded in the authorization tree, in a catalog branch, as certificates already are ([0020](0020-realm-certificate-authority.md), rule 7).
    - Keys are laid out so that everything one publisher registered shares a prefix ([0016](0016-authorization-sparse-merkle-tree.md), rule 2).
@@ -90,7 +90,7 @@ Facts this decision relies on (details and sources in the [design note](../desig
       - The realm serves `/.well-known/api-catalog` (RFC 9727): a Linkset of its HTTPS APIs, each with a `service-desc` link to its OpenAPI description.
       - The catalog's own interface is also offered over HTTPS, for tools outside ASPIS.
 11. **Federation.**
-    - ASPIS-native federation metadata names the realm's catalog endpoint. This amends [0017](0017-openid-federation-membership.md), rule 8, as [0020](0020-realm-certificate-authority.md) already amended it.
+    - ASPIS-native federation metadata names the realm's catalog endpoint ([0017](0017-openid-federation-membership.md), rule 8).
     - A realm can query another realm's catalog for the entries exported to it. Each entry carries its own realm's signed root.
 
 ## Consequences

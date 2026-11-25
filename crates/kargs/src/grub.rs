@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Nicole Roy
 // SPDX-License-Identifier: MPL-2.0
 
-//! Undoing GRUB's rewriting of the command line (ADR 0044).
+//! Undoing GRUB's rewriting of the command line (ADR 0041, rule 5).
 //!
 //! GRUB's arm64 `linux` command builds the load options from the menu
 //! entry's words: it puts `BOOT_IMAGE=<path>` first, puts a backslash

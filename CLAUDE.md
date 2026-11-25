@@ -17,7 +17,7 @@ ASPIS is an open-source microkernel operating system, written in Rust for ARM64 
 - `grammars/`: ABNF grammars and their test vectors ([0013](docs/decisions/0013-abnf-for-protocols-and-calls.md), rule 6).
 - `tools/`: the glyph atlas generator, the logo rasterizer, the Dockerfile that builds GRUB, and `tools/ci/`, the scripts CI runs. `xtask/`: the build tool (`cargo xtask build|run|test|matrix|lint|check-production|grub`).
 - `.github/`: CI (C68). `ci.yml` runs on every change: REUSE, sign-offs on pull requests, the grammars and their vectors, the Mermaid render check, rustfmt and clippy, the host and QEMU tests, and the reproducibility check. `nightly.yml` runs the full QEMU matrix. Actions are pinned to commit SHAs.
-- `assets/fonts/`: Noto Sans Mono, and the fallbacks Noto Sans Math and Noto Sans Symbols ([0046](docs/decisions/0046-fallback-fonts-for-wgl4-symbols.md)), vendored and pinned by hash in `fonts.lock`, under OFL-1.1 (`REUSE.toml` covers them).
+- `assets/fonts/`: Noto Sans Mono, and the fallbacks Noto Sans Math and Noto Sans Symbols ([0034](docs/decisions/0034-noto-fonts-under-ofl.md), rule 1), vendored and pinned by hash in `fonts.lock`, under OFL-1.1 (`REUSE.toml` covers them).
 - `assets/logo/`: the boot logo, `aspis-boot.svg`. The build rasterizes it into coverage bitmaps for the kernel console, which holds no SVG code ([0009](docs/decisions/0009-text-as-graphics-console.md), rule 3).
 - `docs/design/`: design notes and architecture views.
   - The design notes fed the ADRs, and each names the records it led to. Examples: [authorization-tree.md](docs/design/authorization-tree.md), [security-tokens.md](docs/design/security-tokens.md), [twelve-factor-apps.md](docs/design/twelve-factor-apps.md).
@@ -55,14 +55,16 @@ GitHub deletes a pull request's branch when it is merged. In this clone, `fetch.
 - The design session settles what the ADRs leave open, in the order the build needs it.
 - The project owner may add a tenet mid-discussion. Fold each new one into the ADRs and design notes.
 - Read the relevant research, design notes and ADRs before proposing a design.
-- Accepted ADRs are settled. Follow the effective rule after any amendments, and don't re-argue them.
-- If two accepted records conflict, say so and propose an amending record, as [0030](docs/decisions/0030-bind-tokens-sessions-and-group-memberships.md) does.
+- Accepted ADRs are settled. Follow them, and don't re-argue them. To change one, propose an edit to it (below).
+- If two accepted records conflict, say so and propose an edit that resolves the conflict.
 - Record a new decision as the next numbered ADR, and add it to the index in [docs/decisions/README.md](docs/decisions/README.md). Records are never renumbered.
 - Mark a new record "Proposed" until the project owner accepts it. A Proposed record isn't settled: check the index for each record's status.
-- Amend a record; never rewrite it.
-  - The amended record's status line gets "Amended by NNNN (rule k)", once the amending record is accepted.
-  - The new record's status line says "Amends NNNN, rule k". A Proposed record says "Would amend".
-  - A replaced record keeps its file, with its status changed to "Superseded by NNNN".
+- During the build phase, ADRs are edited in place (the project owner's rule, from 2026-11-25). We discover decisions as we build, and amendment chains made the records hard to follow.
+  - Change a record by editing it, so that each record always says what is in force. Don't write amending records, and don't add "Amends" or "Amended by" notes.
+  - Propose a change to an accepted record as an edit in a pull request. Merging the pull request accepts it. Git history records what changed and when.
+  - A record's `Date` line is the date it was first written. When a record is edited on a later day than its date, its Date line adds "updated" and that day, as `2026-11-24, updated 2026-11-26`. The index copies each record's Date line.
+  - In the same change, correct every record and design note that cites the changed rule.
+  - A record that no longer applies keeps its file and its number, with its status changed to "Superseded by NNNN" or "Withdrawn".
 - Design notes are inputs to decisions. When a decision makes a note stale, correct the note in place and cite the ADR that settles it.
 - Where something isn't decided yet, say so. Don't guess.
 
@@ -90,7 +92,7 @@ Follow the existing records:
 - **Spelling.** American English in every document (the project owner's rule): "license" for both noun and verb, "behavior", "organization", "enrollment", "synchronization", "modeled", "canceled". Third-party text, such as `LICENSE` and quotations, keeps its own spelling.
 - **Terminology.**
   - Write "the authorization tree", never "SMT". Cedar's policy analysis is built on SMT solvers, so the abbreviation is ambiguous ([policy note §6](docs/design/policy-and-decisions.md#6-conflicts-and-resolutions), item 8).
-  - Getting a capability or session from an object's manager is a "bind" ([0014](docs/decisions/0014-versioned-object-apis.md), rule 4). ADR 0002 rule 3, written earlier, calls the same step "opening" an object.
+  - Getting a capability or session from an object's manager is a "bind" ([0014](docs/decisions/0014-versioned-object-apis.md), rule 4).
   - "The provider" is the realm's OpenID Provider and OAuth authorization server ([0015](docs/decisions/0015-jwt-tokens-and-oidc-identity.md), rule 2).
 - **Citations.**
   - Cite an ADR as "ADR 0020" or as a link, `[0020](docs/decisions/0020-realm-certificate-authority.md)`. Add the rule where it matters: "([0026](docs/decisions/0026-realm-as-cloud-provider.md), rule 6)".
@@ -145,7 +147,7 @@ The code so far is M1's. For all of it:
 - Write it in Rust: a microkernel for ARM64, bootable with GRUB ([founding requirements](docs/decisions/README.md#founding-requirements)). The boot image is a UEFI PE32+ image ([0006](docs/decisions/0006-uefi-boot-image.md)). The targets are QEMU `virt` first, then Raspberry Pi 4 ([0007](docs/decisions/0007-initial-hardware-targets.md)).
 - The toolchain is pinned stable Rust, 1.100.0 in `rust-toolchain.toml`, with no nightly features. The kernel is an `aarch64-unknown-none` payload inside the `aarch64-unknown-uefi` stub, and user-space programs are `no_std` until there is a `std` port ([0035](docs/decisions/0035-toolchain-image-linkage-and-esp-layout.md)).
 - All ASPIS code is licensed under MPL-2.0 ([0008](docs/decisions/0008-mpl-2.0-license.md)). Every source file carries both SPDX tags.
-- Dependencies must use MIT, Apache-2.0, BSD or MPL-2.0. The kernel and core servers take no GPL-only dependencies ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 4). Fonts, and data derived from them such as glyph atlases, may also be OFL-1.1, never code. The fonts are Noto Sans Mono and Noto Sans ([0034](docs/decisions/0034-noto-fonts-under-ofl.md)), with Noto Sans Math and Noto Sans Symbols as the console's fallbacks ([0046](docs/decisions/0046-fallback-fonts-for-wgl4-symbols.md)).
+- Dependencies must use MIT, Apache-2.0, BSD or MPL-2.0. The kernel and core servers take no GPL-only dependencies ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 4). Fonts, and data derived from them such as glyph atlases, may also be OFL-1.1, never code. The fonts are Noto Sans Mono and Noto Sans, with Noto Sans Math and Noto Sans Symbols as the console's fallbacks ([0034](docs/decisions/0034-noto-fonts-under-ofl.md), rule 1).
 - Contributions come under the DCO: every commit in an outside contribution carries a `Signed-off-by:` line ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 1).
 - ASPIS's own images build reproducibly, bit for bit. CycloneDX is the only SBOM format: CycloneDX 1.7 for ASPIS's images, and CycloneDX for app builds too. Provenance is SLSA 1.2 ([0038](docs/decisions/0038-reproducible-builds-and-provenance.md)). Per-file copyright and license tags stay SPDX tags.
 - Interfaces are written in the ASPIS IDL, and the IDL compiler generates each interface's ABNF. CI parses every grammar and runs its test vectors ([0013](docs/decisions/0013-abnf-for-protocols-and-calls.md)).

@@ -21,7 +21,7 @@ archive-sha512 = "a7bda86990d13cfffbb8bd3edadb19348a1db20349af3cbaedf478e4cb8e30
 archive-path = "NotoSansMono/unhinted/ttf/NotoSansMono-Regular.ttf"
 sha512 = "b0e83b903b91f976d68256381710b598887a68e866e1b465d7ce69e10db89a5f4913f8680e04622c19b8ce91a12d2004d0a33262951be8099c43f3829e8c58ed"
 
-# The fallbacks for the WGL4 symbols Noto Sans Mono lacks (ADR 0046,
+# The fallbacks for the WGL4 symbols Noto Sans Mono lacks (ADR 0034,
 # rule 1). The atlas tool tries them in this order: Noto Sans Math has 17
 # of the 18 symbols, and Noto Sans Symbols has U+263A.
 [[font]]

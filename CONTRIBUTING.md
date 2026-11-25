@@ -14,7 +14,7 @@ Everyone who takes part follows the [code of conduct](CODE_OF_CONDUCT.md). Repor
 - **Research, then design, then code.** The [research notes](docs/research/aegis-domain-os.md) come first. The design session turns them into decisions, architecture views and a [build plan](docs/design/build-plan.md) of chunks (C01…) and milestones (M1–M9, and MH for hardware and hardening). Code follows the plan.
 - **Decisions are records.** Each architecture decision is an ADR in [docs/decisions/](docs/decisions/README.md), and the index there gives each record's status.
   - A new decision starts as a **Proposed** record. It is settled only when the project owner accepts it.
-  - Accepted records aren't reopened. A change is a new record that amends the old one, which is never rewritten.
+  - During the build phase, accepted records are edited in place, so each one says what is in force. Propose a change as an edit to the record in a pull request; merging it accepts the change. Git history records what changed and when.
   - The [design backlog](docs/design/design-backlog.md) lists the decisions still open, under the milestone each must be settled before. A good place to start a design discussion is an issue about one of them.
 - **Larger code changes follow a chunk.** Before writing a lot of code, check the build plan for the chunk it belongs to and the decisions that chunk waits on. If a decision is still open, the code waits for it, or the pull request proposes the decision too.
 
@@ -77,7 +77,7 @@ CI runs four jobs on every pull request. `cargo xtask lint` and `cargo xtask tes
   // SPDX-License-Identifier: MPL-2.0
   ```
 
-- **Dependencies** must be under MIT, Apache-2.0, BSD or MPL-2.0. Fonts may also be under OFL-1.1, and code never is ([0008](docs/decisions/0008-mpl-2.0-license.md), as [0034](docs/decisions/0034-noto-fonts-under-ofl.md) amends it). The kernel and the core servers take no GPL-only dependency.
+- **Dependencies** must be under MIT, Apache-2.0, BSD or MPL-2.0. Fonts may also be under OFL-1.1, and code never is ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 4). The kernel and the core servers take no GPL-only dependency.
 - **Libraries the kernel uses are `no_std`**, don't allocate unless a feature asks them to, and never panic on untrusted input.
 - **A crate with a `tests/` directory sets `autotests = false`** and declares each file in it as a `[[test]]` in its `Cargo.toml`. Do both when you add a crate's first integration test.
 - **A new crate is added to the package lists** in `cargo xtask test` and `cargo xtask lint` (`xtask/src/main.rs`), or CI won't test or lint it.

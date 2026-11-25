@@ -3,8 +3,8 @@
 
 # 0006. Boot: a UEFI PE32+ image loaded by GRUB
 
-- **Status:** Accepted. Amended by [0035](0035-toolchain-image-linkage-and-esp-layout.md) (rule 3).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -21,16 +21,16 @@ GRUB's `chainloader` loads any EFI image. ([Research §4.1](../research/aegis-do
 
 1. **Boot artifact.** ASPIS boots from an AArch64 UEFI PE32+ executable containing a Rust boot stub and the kernel. Its PE major image version is 1 or higher, so GRUB's `linux` command serves the initrd through `LoadFile2`.
 2. **Initial image.** The initrd carries the initial user-space image: the root server and the core servers needed to bring up storage and networking.
-3. **GRUB entry:**
+3. **GRUB entry.** The EFI system partition has two slots, `a` and `b`, each a directory holding an `aspis.efi` and an `initfs.img` ([0035](0035-toolchain-image-linkage-and-esp-layout.md), rule 6). The entry for slot `a` is:
 
    ```
    menuentry "ASPIS" {
-       linux  /aspis/aspis.efi <kernel arguments>
-       initrd /aspis/initfs.img
+       linux  /aspis/a/aspis.efi <kernel arguments>
+       initrd /aspis/a/initfs.img
    }
    ```
 
-   `chainloader /aspis/aspis.efi` and direct firmware boot are also supported. In those cases the stub loads the initial image from the EFI system partition itself.
+   `chainloader /aspis/a/aspis.efi` and direct firmware boot are also supported. In those cases the stub loads the initial image from its own directory on the EFI system partition ([0041](0041-boot-abi.md), rule 6), so each slot is self-contained.
 4. **The boot stub** reads the command line and collects the UEFI memory map, the device tree and/or ACPI tables, the initrd, the framebuffer (GOP) and, where available, a seed from `EFI_RNG_PROTOCOL`. It then exits boot services and enters the kernel at EL1, first configuring and leaving EL2 if the firmware handed over at EL2.
 5. **Development** uses QEMU `virt` with EDK2 firmware and GRUB arm64-efi.
 

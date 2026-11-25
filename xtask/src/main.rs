@@ -204,7 +204,7 @@ fn atlases() -> PathBuf {
                 "--font",
             ])
             .arg(fonts.join("NotoSansMono-Regular.ttf"))
-            // The fallbacks, in the order to try them (ADR 0046, rule 1).
+            // The fallbacks, in the order to try them (ADR 0034, rule 1).
             .arg("--fallback")
             .arg(fonts.join("NotoSansMath-Regular.ttf"))
             .arg("--fallback")
@@ -430,7 +430,7 @@ fn test() {
         }
     }
     // A quoted value in a GRUB menu entry reaches the kernel intact
-    // (ADR 0044): GRUB rewrites it, and the stub undoes that.
+    // (ADR 0041, rule 5): GRUB rewrites it, and the stub undoes that.
     let opts = qemu::Options {
         flavor: Flavor::Production,
         config: "a72-v2".into(),

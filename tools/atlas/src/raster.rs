@@ -122,7 +122,7 @@ fn blit(
 /// The most times [`draw_fallback`] shrinks a glyph that still overflows.
 const SHRINK_STEPS: u32 = 64;
 
-/// Draws `c` from a fallback font into `cell` (ADR 0046, rule 1).
+/// Draws `c` from a fallback font into `cell` (ADR 0034, rule 1).
 ///
 /// The glyph is rasterized at the main font's size, `g.px`, so the
 /// fallback's em matches the main font's. If its ink is wider than the

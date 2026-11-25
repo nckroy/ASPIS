@@ -3,8 +3,8 @@
 
 # 0002. Capabilities in the kernel; object IDs are names
 
-- **Status:** Accepted. Amended by [0015](0015-jwt-tokens-and-oidc-identity.md) (rule 5) and [0016](0016-authorization-sparse-merkle-tree.md) (rule 3).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -14,9 +14,11 @@ AEGIS checked access control lists against three-part principals such as `user.n
 
 1. **The kernel uses capabilities only.** Every kernel operation goes through a capability: an unforgeable handle in the calling process's capability space that names a kernel object (address space, thread, endpoint, eventcount, memory object, interrupt, …) together with a set of rights. Capabilities can be copied with fewer rights, passed over IPC and revoked. seL4 is the reference model.
 2. **IDs grant nothing.** Holding or guessing an object ID ([0001](0001-object-identifiers.md)) gives no access.
-3. **Opening an object.** A process asks the object's manager to open an ID: its type manager, or the name service for directories. The manager checks policy (the object's ACL and the caller's authenticated principal) and returns a capability to an endpoint or memory object.
+3. **Binding to an object.** A process asks the object's manager to bind it to an ID ([0014](0014-versioned-object-apis.md), rule 4). The manager is the object's type manager, or the name service for directories. The manager checks policy (the object's ACL and the caller's authenticated principal) and returns a capability to an endpoint or memory object.
+   - Permissions live in the realm's authorization tree ([0016](0016-authorization-sparse-merkle-tree.md), rule 1). An object's ACL is the set of grants under that object's branch.
+   - Managers read permissions from the tree rather than storing them privately.
 4. **Principals** (people, groups, services and nodes) are objects with IDs and post-quantum keys, kept in the realm registry. ACL entries name principals by ID.
-5. **Across nodes, raw capabilities never travel.** The network server ([0004](0004-network-transparency-and-failure.md)) gives the local process a capability to a proxy endpoint and authenticates to the remote node with the node's key. How authority is delegated across nodes (signed tokens or similar) is a design-session item.
+5. **Across nodes, raw capabilities never travel.** The network server ([0004](0004-network-transparency-and-failure.md)) gives the local process a capability to a proxy endpoint and authenticates to the remote node with the node's key. Authority is delegated across nodes with JWTs ([0015](0015-jwt-tokens-and-oidc-identity.md)).
 
 ## Consequences
 

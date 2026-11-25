@@ -3,7 +3,7 @@
 
 # Security tokens and identity on ASPIS
 
-*2026-11-24. Input to the design session; the decisions it led to are recorded in [ADR 0015](../decisions/0015-jwt-tokens-and-oidc-identity.md).*
+*2026-11-24, updated 2026-11-25. Input to the design session; the decisions it led to are recorded in [ADR 0015](../decisions/0015-jwt-tokens-and-oidc-identity.md).*
 
 1. [The tenet](#1-the-tenet)
 2. [Standards status](#2-standards-status-november-2026)
@@ -72,7 +72,7 @@ The JWTs sit at the level of the native object APIs ([0014](../decisions/0014-ve
      - Nodes keep replicas of the tree and cached realm keys, so checks keep working during a partition, up to a staleness bound.
 9. **ID tokens versus access tokens.**
    - OIDC ID tokens tell a client who the user is. They aren't credentials for APIs.
-   - **Resolution:** managers never accept ID tokens. They accept access tokens (`at+jwt`) and workload tokens, which take WIMSE's WIT form, `wit+jwt` ([0022](../decisions/0022-spiffe-and-wimse-workload-identity.md), rule 4; [0030](../decisions/0030-bind-tokens-sessions-and-group-memberships.md), rule 1).
+   - **Resolution:** managers never accept ID tokens. They accept access tokens (`at+jwt`) and workload tokens, which take WIMSE's WIT form, `wit+jwt` ([0022](../decisions/0022-spiffe-and-wimse-workload-identity.md), rule 4; [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 2).
 
 ## 4. Flows
 

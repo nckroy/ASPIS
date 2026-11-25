@@ -3,16 +3,16 @@
 
 # 0033. Contributions under the DCO, documents under CC BY 4.0, and year ranges in notices
 
-- **Status:** Accepted. Amends [0023](0023-copyright-notices.md) (rules 1 and 2).
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context
 
 Three licensing questions were left open, and the first milestone's repository chunk (C01) needs all three answered ([design backlog, D01](../design/design-backlog.md#m1-first-light)):
 
-- **The documentation license.** [0008](0008-mpl-2.0-license.md), rule 5 leaves it to a separate decision. Until then, documents carry a copyright notice and no license, so nobody else may reuse them, and a REUSE check can't pass ([0023](0023-copyright-notices.md), Consequences).
-- **The contribution policy.** Copyright in a contribution stays with its author unless an agreement assigns or licenses it. ASPIS needs a policy before it accepts outside contributions: a DCO, a CLA or an assignment ([0023](0023-copyright-notices.md), Consequences).
-- **Years after 2026.** [0023](0023-copyright-notices.md), rule 1 names 2026, and its Consequences leave later years open.
+- **The documentation license.** [0008](0008-mpl-2.0-license.md), rule 5, as first accepted, left it to a separate decision. Until then, documents carried a copyright notice and no license, so nobody else could reuse them, and a REUSE check couldn't pass ([0023](0023-copyright-notices.md), Consequences, as first accepted).
+- **The contribution policy.** Copyright in a contribution stays with its author unless an agreement assigns or licenses it. ASPIS needs a policy before it accepts outside contributions: a DCO, a CLA or an assignment ([0023](0023-copyright-notices.md), Consequences, as first accepted).
+- **Years after 2026.** [0023](0023-copyright-notices.md), rule 1, as first accepted, named 2026 only, and its Consequences left later years open.
 
 The options:
 
@@ -32,13 +32,12 @@ The project owner decided on 2026-11-25: the DCO for contributions, CC BY 4.0 fo
    - CI checks that every commit in a pull request carries a sign-off.
 2. **Documents are licensed under Creative Commons Attribution 4.0 International (CC BY 4.0).**
    - This covers ASPIS's own documents: the research, the decision records, the design notes, the README and the other Markdown in the repository, with the diagrams they contain.
-   - Every Markdown document carries a license tag as well as its copyright tag. Line 1 stays the copyright tag, and line 2 is:
+   - Every Markdown document carries a license tag as well as its copyright tag. Line 1 is the copyright tag ([0023](0023-copyright-notices.md), rule 2), and line 2 is:
 
      ```html
      <!-- SPDX-License-Identifier: CC-BY-4.0 -->
      ```
 
-     This amends [0023](0023-copyright-notices.md), rule 2, which gave Markdown the copyright tag only until this decision.
    - Code examples inside a document are part of it, under CC BY 4.0. Code meant to be built or run lives in source files, under MPL-2.0.
    - Third-party material keeps its own notices ([0023](0023-copyright-notices.md), rule 3).
 3. **License texts follow REUSE.** The repository holds `LICENSES/MPL-2.0.txt` and `LICENSES/CC-BY-4.0.txt`. `LICENSE` stays, with the MPL-2.0 text ([0008](0008-mpl-2.0-license.md), rule 3). Files that can't carry a comment, such as `.gitignore` and generated assets, are covered by a `REUSE.toml`. A REUSE check runs in CI and fails the build on any file without both tags.
@@ -46,7 +45,7 @@ The project owner decided on 2026-11-25: the DCO for contributions, CC BY 4.0 fo
    - A notice starts with the year the holder first published the file.
    - When the holder changes the file in a later year, the notice becomes a range up to that year: `2026-2027 Nicole Roy`. The range runs from the first year to the latest, with no gaps listed.
    - Each holder's line counts that holder's own changes. A contributor's change doesn't extend Nicole Roy's range.
-   - This amends [0023](0023-copyright-notices.md), rule 1, which named 2026 only.
+   - [0023](0023-copyright-notices.md), rule 1 states this rule for Nicole Roy's notices.
 5. **The tags go on every existing document once this record is accepted**, as [0023](0023-copyright-notices.md), rule 4 did for the copyright tag.
 
 ## Consequences

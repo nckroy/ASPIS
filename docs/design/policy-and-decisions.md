@@ -3,7 +3,7 @@
 
 # Policy and decisions: Cedar and AuthZEN
 
-*2026-11-24. Input to the design session. The decisions it led to are recorded in [ADR 0018](../decisions/0018-cedar-policy-language.md) and [ADR 0019](../decisions/0019-authzen-decision-protocol.md).*
+*2026-11-24, updated 2026-11-25. Input to the design session. The decisions it led to are recorded in [ADR 0018](../decisions/0018-cedar-policy-language.md) and [ADR 0019](../decisions/0019-authzen-decision-protocol.md).*
 
 1. [The tenet](#1-the-tenet)
 2. [Where things stand](#2-where-things-stand)
@@ -79,7 +79,7 @@ flowchart LR
 |---|---|
 | Policy enforcement point (PEP) | Object managers, at bind time |
 | Policy decision point (PDP) | A server on every node, plus a realm endpoint for outside callers |
-| Policy information point | The principal tree (principals, groups: [0019](../decisions/0019-authzen-decision-protocol.md), rule 5; [0030](../decisions/0030-bind-tokens-sessions-and-group-memberships.md), rule 3); managers (resource attributes); verified tokens (context) |
+| Policy information point | The principal tree (principals, groups: [0018](../decisions/0018-cedar-policy-language.md), rule 3; [0019](../decisions/0019-authzen-decision-protocol.md), rule 5); managers (resource attributes); verified tokens (context) |
 | Policy administration point | The realm policy service, which validates changes and writes them into the authorization tree. The realm's authorization service applies them in batches and signs each root ([0016](../decisions/0016-authorization-sparse-merkle-tree.md), rule 4) |
 
 ## 4. Mapping ASPIS onto Cedar and AuthZEN

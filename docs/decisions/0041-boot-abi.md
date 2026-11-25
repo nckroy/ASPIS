@@ -3,7 +3,7 @@
 
 # 0041. The boot ABI: entry state, boot information and kernel arguments
 
-- **Status:** Accepted. Amended by [0044](0044-stub-undoes-grubs-command-line.md) (rule 5).
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context
@@ -19,6 +19,12 @@ Other records constrain the hand-off:
 - **The console.** The framebuffer's description goes to the kernel ([0009](0009-text-as-graphics-console.md), rule 2).
 
 Precedents: Linux's arm64 boot protocol enters the kernel with the MMU off and the device tree's address in `x0`. Multiboot2 and Limine pass tagged records that a kernel can skip if it doesn't know them.
+
+GRUB's arm64 `linux` command doesn't pass a menu entry's arguments as written. GRUB 2.14's `grub_create_loader_cmdline` builds the load options from the entry's words, after GRUB's own parser has removed their quoting. M1's first boot through GRUB (2026-11-25) showed the result ([0044](0044-stub-undoes-grubs-command-line.md)):
+
+- **It puts `BOOT_IMAGE=<path of the image>` first,** as GRUB does for Linux. `BOOT_IMAGE` isn't a lowercase key, so the grammar in rule 5 would reject the line at its first byte.
+- **It puts a backslash before every `\`, `'` and `"`** in a word, so a backslash in a value arrives doubled.
+- **It wraps a word that contains a space in double quotes,** around the whole word. A menu entry's `root.name="a b"` reaches the stub as `"root.name=a b"`, and a key can't start with a quote.
 
 Claude proposed this record, and the project owner accepted it on 2026-11-25.
 
@@ -74,6 +80,11 @@ Claude proposed this record, and the project owner accepted it on 2026-11-25.
    ```
 
    - **Length and errors.** The command line is at most 4096 bytes. The stub rejects characters outside ASCII and passes the rest. If the kernel finds an error, it reports the error and uses only the arguments before it.
+   - **The stub undoes GRUB's rewriting.** `BOOT_IMAGE` tells the kernel nothing it needs, since the stub already reports how it was started (rule 3).
+     - A leading `BOOT_IMAGE=` word, after any spaces, marks GRUB's form, and the stub treats the line as GRUB's.
+     - The stub then recovers GRUB's words: a backslash takes the next byte literally, and double quotes group a word that holds spaces. It drops the `BOOT_IMAGE=` word, and writes each remaining word again, separated by one space. A `key=value` word whose value is empty, or holds a space or a double quote, becomes `key="value"`, with `\"` and `\\` escapes, as `quoted` allows. Any other word is written as it is.
+     - A line GRUB couldn't have written passes no arguments. An unclosed double quote, or a backslash at the very end, means the line isn't GRUB's form after all. The stub reports it and passes an empty command line.
+     - Lines without the marker are passed as they are, apart from the ASCII conversion.
    - **Repeated keys.** If a key appears more than once, the last one counts, and the kernel logs the repeat.
    - **The first keys are:**
      - `console` (`fb`, `uart` or `fb,uart`), and `console.cell` (`16`, `24` or `32`; [0034](0034-noto-fonts-under-ofl.md), rule 4);
@@ -93,12 +104,17 @@ Claude proposed this record, and the project owner accepted it on 2026-11-25.
 - **The kernel's first code is simple.** It starts in a known state, with one pointer, and doesn't need to know which loader started it.
 - **The format can grow.** Measured boot, ACPI-first platforms and new firmware facts add records without breaking older kernels, and a record no kernel may ignore can say so.
 - **The seed travels in a page of its own**, which D42 can hand on as a memory object without anyone reading it.
-- **Kernel arguments are small and strict.** Values with spaces need quotes, and non-ASCII text isn't accepted, so the arguments can't carry anything for people to read. ABNF here describes a machine-read format, which suits [0031](0031-abnf-is-not-a-command-language.md) (proposed).
+- **Arguments in a GRUB menu entry reach the kernel as written there,** quoted values included. M1's tests use this: `test.panic` and a quoted `root.` value come in through GRUB.
+- **The conversion is shared code.** It lives in the `kargs` crate, beside the grammar's parser, and its host tests check that every converted line parses.
+- **The image's path isn't recorded.** The boot information says how the stub was started, but not the path GRUB loaded it from. If a later decision needs the path, for example to report which ESP slot booted ([0035](0035-toolchain-image-linkage-and-esp-layout.md), rule 6), it adds a record.
+- **Other loaders may add words of their own.** Each one found gets the same treatment, by a change to rule 5.
+- **Kernel arguments are small and strict.** Values with spaces need quotes, and non-ASCII text isn't accepted, so the arguments can't carry anything for people to read. ABNF here describes a machine-read format, which suits [0031](0031-abnf-is-not-a-command-language.md).
 
 ## References
 
 - [Linux arm64 booting](https://docs.kernel.org/arch/arm64/booting.html)
 - [Multiboot2 specification](https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html); [Limine boot protocol](https://github.com/limine-bootloader/limine-protocol)
-- [GRUB 2.14 `linux` loader for EFI](https://cgit.git.savannah.gnu.org/cgit/grub.git/tree/grub-core/loader/efi/linux.c?h=grub-2.14)
+- [GRUB 2.14 `linux` loader for EFI](https://cgit.git.savannah.gnu.org/cgit/grub.git/tree/grub-core/loader/efi/linux.c?h=grub-2.14) (`BOOT_IMAGE=` before the arguments) and [`grub_create_loader_cmdline`](https://cgit.git.savannah.gnu.org/cgit/grub.git/tree/grub-core/lib/cmdline.c?h=grub-2.14) (escaping and quoting)
 - [RFC 5234: ABNF](https://www.rfc-editor.org/rfc/rfc5234)
 - [Key flows §1: boot to the entropy gate](../design/key-flows.md#1-boot-to-the-entropy-gate)
+- [0044. The stub undoes GRUB's rewriting of the command line](0044-stub-undoes-grubs-command-line.md)

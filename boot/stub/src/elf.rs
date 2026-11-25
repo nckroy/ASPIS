@@ -181,7 +181,7 @@ impl<'a> Kernel<'a> {
                 DT_RELASZ => relasz = val,
                 DT_RELAENT => relaent = val,
                 // Only RELA relocations are applied, so any other kind of
-                // table is refused rather than ignored (ADR 0045).
+                // table is refused rather than ignored (ADR 0035, rule 2 and Consequences).
                 DT_RELR => return Err(Error::Unsupported("DT_RELR relocations")),
                 DT_REL => return Err(Error::Unsupported("DT_REL relocations")),
                 DT_JMPREL => return Err(Error::Unsupported("PLT relocations")),

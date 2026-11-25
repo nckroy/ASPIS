@@ -348,7 +348,7 @@ mod tests {
             assert!(atlas.glyph(' ').unwrap().iter().all(|&p| p == 0));
             assert!(atlas.glyph('█').unwrap().iter().all(|&p| p == 255));
             assert!(atlas.glyph('M').unwrap().iter().any(|&p| p > 128));
-            // The soft hyphen is drawn as a hyphen (ADR 0046, rule 2).
+            // The soft hyphen is drawn as a hyphen (ADR 0046, rule 1).
             assert_eq!(atlas.glyph(glyphs::SOFT_HYPHEN), atlas.glyph('-'));
             for cp in glyphs::EXCLUDED {
                 assert!(atlas.glyph(char::from_u32(cp).unwrap()).is_none());

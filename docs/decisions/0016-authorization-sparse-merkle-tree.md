@@ -3,8 +3,8 @@
 
 # 0016. Authorization store: a sparse Merkle tree, revoked by branch
 
-- **Status:** Accepted. Amends [0002](0002-capability-security-model.md), rule 3. Amended by [0018](0018-cedar-policy-language.md) (rule 1) and [0019](0019-authzen-decision-protocol.md) (rule 6).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -27,9 +27,11 @@ The [authorization tree design note](../design/authorization-tree.md) covers thi
 
 ## Decision
 
-1. **Permissions live in the tree.** Each realm keeps every grant of access to an object in an authorization tree: a sparse Merkle tree with 256-bit keys, hashed with SHA3-256.
-   - An object's ACL is the set of grants under that object's branch.
-   - Managers read permissions from the tree rather than storing them privately. This amends rule 3 of [0002](0002-capability-security-model.md).
+1. **Permissions live in the tree.** Each realm keeps every policy in an authorization tree: a sparse Merkle tree with 256-bit keys, hashed with SHA3-256. Policies are Cedar policies ([0018](0018-cedar-policy-language.md), rules 1 and 2).
+   - **Grants** of access to an object are template-linked policies: a template (a fixed set of actions) linked to one principal and one resource. They sit at grant leaves under the object's branch. An object's ACL is the set of grants under that object's branch.
+   - **Realm-wide policies** (static policies and templates) sit under a reserved realm-policy branch.
+   - The signed root therefore commits to every policy in force.
+   - Managers read permissions from the tree rather than storing them privately ([0002](0002-capability-security-model.md), rule 3).
 2. **Branches are revocation units.** Keys are laid out so that things revoked together share a prefix. The strawman, to be refined in the design session, has two trees:
    - a **grant tree**, keyed by object and then by delegation path. One branch holds every grant on an object, and each grant's branch holds everything delegated from it.
    - a **principal tree**, keyed by principal ID. Each principal is a leaf. Principal IDs begin with the authority that minted them ([0001](0001-object-identifiers.md)), so a single branch holds every principal a given node or service minted.
@@ -44,11 +46,11 @@ The [authorization tree design note](../design/authorization-tree.md) covers thi
    - Epochs, not clocks, order the tree's history.
 5. **Every node keeps a replica.**
    - Nodes hold the realm's tree, or the branches they need, and follow the signed roots.
-   - A manager checks grants against its replica when a client binds ([0014](0014-versioned-object-apis.md)).
+   - When a client binds ([0014](0014-versioned-object-apis.md)), the node's decision point checks grants against the node's replica ([0019](0019-authzen-decision-protocol.md), rules 1 and 3).
    - A client may also attach a proof and a signed root to its token.
 6. **Revocation reaches live sessions.**
-   - Access tokens ([0015](0015-jwt-tokens-and-oidc-identity.md)) name the grant keys they rely on.
-   - When a new root revokes a branch, managers end the sessions and revoke the kernel capabilities derived from grants under it.
+   - Managers tag each session and capability with the policies that determined its authorization decision ([0019](0019-authzen-decision-protocol.md), rule 8).
+   - When a new root revokes a branch that holds any of those policies, managers end the sessions and revoke the kernel capabilities tagged with them.
 7. **Partitions fail closed.** If a node's newest signed root is older than a policy bound, its managers refuse any new bind they can't confirm. Existing sessions last no longer than their tokens.
 8. **One tree per realm.** Each realm keeps its own trees. A grant from another realm is checked against that realm's signed roots, which are trusted through OpenID Federation ([0015](0015-jwt-tokens-and-oidc-identity.md)).
 

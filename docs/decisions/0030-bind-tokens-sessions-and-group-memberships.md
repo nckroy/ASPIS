@@ -3,7 +3,7 @@
 
 # 0030. What managers accept, when sessions end, and where group memberships come from
 
-- **Status:** Accepted. Amends [0015](0015-jwt-tokens-and-oidc-identity.md) (rules 1 and 2) and [0018](0018-cedar-policy-language.md) (rule 3).
+- **Status:** Superseded by [0015](0015-jwt-tokens-and-oidc-identity.md) and [0018](0018-cedar-policy-language.md)
 - **Date:** 2026-11-24
 
 ## Context

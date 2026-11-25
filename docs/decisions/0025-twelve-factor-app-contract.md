@@ -3,8 +3,8 @@
 
 # 0025. Twelve-factor apps: the app's contract as native APIs
 
-- **Status:** Accepted. Amended by [0027](0027-applications-extend-the-system.md) (rules 2 and 7).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -58,6 +58,7 @@ What ASPIS already has, and where it conflicts:
    - An app's manifest declares its process types, its base, the bindings it expects and its release task.
    - It is written in TOML 1.1, whose specification publishes an ABNF grammar, so it fits [0013](0013-abnf-for-protocols-and-calls.md) rule 2. ASPIS's schema is also given in ABNF.
    - A Procfile alone is a valid minimal manifest. The `web` and `release` process types keep their Heroku meanings.
+   - An app's manifest also declares the interfaces, types and published objects it exports. When a release goes live, the platform registers them in the realm catalog for the deploy ([0027](0027-applications-extend-the-system.md), rule 6).
 3. **Dependencies are isolated by construction.**
    - A process's namespace holds only four things: its build, read-only; its base; its scratch area; and its bindings.
    - The **base** is the runtime and POSIX userland the build runs on. It is an immutable, versioned object that each build pins.
@@ -89,6 +90,7 @@ What ASPIS already has, and where it conflicts:
    - Persistent state lives only behind bindings. A storage binding gives mapped access to objects in the single-level store ([0005](0005-single-level-store.md)), as an attached resource.
 7. **Port binding is an exported endpoint.**
    - **Natively,** a process exports a listener endpoint that accepts connections.
+   - A native process's listener endpoint serves only routes: browsers, clients outside ASPIS, and POSIX callers. A native app offers its functionality to other programs, to the system and to the realm through objects and interfaces ([0027](0027-applications-extend-the-system.md), rule 1).
    - **In POSIX,** a `web` process binds the port named in `PORT`, and the process manager attaches that socket to the instance's endpoint.
    - Port numbers are local to the instance, so instances never collide.
    - The app parses its own protocol: the platform injects no web server.
