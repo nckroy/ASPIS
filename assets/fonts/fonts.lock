@@ -20,3 +20,34 @@ archive-sha512 = "a7bda86990d13cfffbb8bd3edadb19348a1db20349af3cbaedf478e4cb8e30
 # atlas rasterizer ignores hinting, so the hinted build adds only size.
 archive-path = "NotoSansMono/unhinted/ttf/NotoSansMono-Regular.ttf"
 sha512 = "b0e83b903b91f976d68256381710b598887a68e866e1b465d7ce69e10db89a5f4913f8680e04622c19b8ce91a12d2004d0a33262951be8099c43f3829e8c58ed"
+
+# The fallbacks for the WGL4 symbols Noto Sans Mono lacks (ADR 0046,
+# rule 1). The atlas tool tries them in this order: Noto Sans Math has 17
+# of the 18 symbols, and Noto Sans Symbols has U+263A.
+[[font]]
+file = "NotoSansMath-Regular.ttf"
+family = "Noto Sans Math"
+style = "Regular"
+license = "OFL-1.1"
+license-file = "NotoSansMath-OFL.txt"
+upstream = "https://github.com/notofonts/math"
+release = "NotoSansMath-v3.000"
+url = "https://github.com/notofonts/math/releases/download/NotoSansMath-v3.000/NotoSansMath-v3.000.zip"
+# The release zip's SHA-512, as downloaded on 2026-11-25.
+archive-sha512 = "4a63ceed598f4c10436becd74834600b2a73e31926b4321364d2ee96f423b1048cb74db47a2ffd8f4475e507354513a678557fd627b58f9c3d70f5b161d532e1"
+archive-path = "NotoSansMath/unhinted/ttf/NotoSansMath-Regular.ttf"
+sha512 = "e20102b268a7aa21cfefd78ffa1b375119077df75fb9a1052da28eb34b2c8efb3e635a002f4cdcd6bb66251f021e5b86d59a21c36cf7c7ab166dddd5df529393"
+
+[[font]]
+file = "NotoSansSymbols-Regular.ttf"
+family = "Noto Sans Symbols"
+style = "Regular"
+license = "OFL-1.1"
+license-file = "NotoSansSymbols-OFL.txt"
+upstream = "https://github.com/notofonts/symbols"
+release = "NotoSansSymbols-v2.003"
+url = "https://github.com/notofonts/symbols/releases/download/NotoSansSymbols-v2.003/NotoSansSymbols-v2.003.zip"
+# The release zip's SHA-512, as downloaded on 2026-11-25.
+archive-sha512 = "2164f2ec8d3ca659c73edcff6a9d330d96e89f373411b4b851750eda4f44cdaade039c2a9286d5cd7012b55b5f4cb3d5b9f39bb4e7e9a8bc894a822f20e8f103"
+archive-path = "NotoSansSymbols/unhinted/ttf/NotoSansSymbols-Regular.ttf"
+sha512 = "3298a9f14e27aeaeaf696086e95e78875d007a031557f22dc795d6bbc8068b2b90d0e685a21699ddcc3a51bcadead426c48e5de29fdebfd75105b11ce9880c9b"

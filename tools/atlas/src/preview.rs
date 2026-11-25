@@ -5,9 +5,11 @@
 
 use glyph_atlas::Atlas;
 
-/// The sample text: Latin, Greek and Cyrillic, punctuation and symbols,
-/// box-drawing frames, blocks and shades. The last line has a character no
-/// atlas covers, which should come out as U+FFFD.
+use crate::glyphs;
+
+/// The sample text: Latin, Greek and Cyrillic, punctuation and symbols, a
+/// soft hyphen, box-drawing frames, blocks and shades. The last line has
+/// characters no atlas covers, which should come out as U+FFFD.
 const SAMPLE: &[&str] = &[
     "The quick brown fox jumps over the lazy dog. 0123456789",
     "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~ ¡¿ «» ‹› “” ‘’ „ ‚ – — … • †‡",
@@ -16,19 +18,35 @@ const SAMPLE: &[&str] = &[
     "Съешь же ещё этих мягких французских булок, да выпей чаю. ЁЇЎҐ ЀЍ",
     "€ £ ¥ ₧ ₤ ™ № ℓ Ω ℮ ⅛⅜⅝⅞ ←↑→↓↔↕ ∂∆−∙√∞∩≈≠≡≤≥ ⌐⌠⌡ ‗ ⁄",
     "■□▪▫▬▲►▼◄◊○●◘◙◦",
+    "A soft hyphen is drawn as a hyphen: co\u{AD}op co-op",
     "┌──┬──┐ ╔══╦══╗ ┏━━┳━━┓ ╒══╤══╕ ╓──╥──╖ ┍━━┯━━┑ ╭──╮ ╱╲╱╲",
     "│ab│cd│ ║ab║cd║ ┃ab┃cd┃ │ab│cd│ ║ab║cd║ │ab│cd│ │  │ ╲╱╲╱",
     "├──┼──┤ ╠══╬══╣ ┣━━╋━━┫ ╞══╪══╡ ╟──╫──╢ ┝━━┿━━┥ ╰──╯ ╳╳╳╳",
     "│ab│cd│ ║ab║cd║ ┃ab┃cd┃ │ab│cd│ ║ab║cd║ │ab│cd│ ┄┄┄┄ ┆┊╎╏",
     "└──┴──┘ ╚══╩══╝ ┗━━┻━━┛ ╘══╧══╛ ╙──╨──╜ ┕━━┷━━┙ ┈┈┈┈ ╌╍┅┉",
     "░░▒▒▓▓██ ▀▄▌▐ ▁▂▃▄▅▆▇█ ▏▎▍▌▋▊▉ ▖▗▘▙▚▛▜▝▞▟ ▔▕",
-    "Missing: 中 ☺ ∑ (should show the replacement character) �",
+    "Missing: 中 ﬁ \u{F001} (should show the replacement character) �",
 ];
 
-/// The sample lines, then every box-drawing character, 32 to a line with
-/// a space between each.
+/// The sample lines; the symbols from the fallback fonts (ADR 0046), run
+/// together and then each between an H and an x, to judge their size and
+/// baseline against the main font's; then every box-drawing character, 32
+/// to a line with a space between each.
+///
+/// The symbols are built from their code points. Written out as string
+/// literals, so many symbols in one file make REUSE's encoding detection
+/// misread it, and `reuse lint` then finds no SPDX tags in it.
 fn lines() -> Vec<String> {
     let mut out: Vec<String> = SAMPLE.iter().map(|s| (*s).to_owned()).collect();
+    let symbols: Vec<char> = glyphs::FALLBACK_SYMBOLS
+        .iter()
+        .filter_map(|&cp| char::from_u32(cp))
+        .collect();
+    out.insert(7, symbols.iter().collect());
+    out.insert(
+        8,
+        symbols.iter().flat_map(|&c| ['H', c, 'x', ' ']).collect(),
+    );
     let every: Vec<char> = (0x2500..=0x257F).filter_map(char::from_u32).collect();
     for row in every.chunks(32) {
         out.push(row.iter().flat_map(|&c| [c, ' ']).collect());

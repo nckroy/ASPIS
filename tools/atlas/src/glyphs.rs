@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Nicole Roy
 // SPDX-License-Identifier: MPL-2.0
 
-//! The characters each atlas covers (ADR 0034, rule 4): WGL4, the box
-//! drawing characters, the block elements and U+FFFD.
+//! The characters each atlas covers (ADR 0034, rule 4, as amended by
+//! ADR 0046, rule 4): WGL4 less the ligatures and two private-use code
+//! points, the box-drawing characters, the block elements and U+FFFD.
 
 /// Windows Glyph List 4, as Microsoft's OpenType specification lists it:
 /// "WGL4.0 Character Set", OpenType 1.5 and later,
@@ -69,6 +70,23 @@ pub const WGL4: [u32; 657] = [
     0x2663, 0x2665, 0x2666, 0x266A, 0x266B, 0xF001, 0xF002, 0xFB01, 0xFB02,
 ];
 
+/// The WGL4 code points the atlases leave out (ADR 0046, rule 3): the fi
+/// and fl ligatures, which a monospace console never forms, and their
+/// private-use duplicates, which have no standard meaning. The console
+/// draws them as U+FFFD.
+pub const EXCLUDED: [u32; 4] = [0xF001, 0xF002, 0xFB01, 0xFB02];
+
+/// The 18 WGL4 symbols Noto Sans Mono v2.014 lacks, which the atlases
+/// take from the fallback fonts (ADR 0046, Context): arrows, math
+/// operators, a technical symbol and the dingbats from code page 437.
+pub const FALLBACK_SYMBOLS: [u32; 18] = [
+    0x21A8, 0x220F, 0x2211, 0x2215, 0x221F, 0x222B, 0x2302, 0x263A, 0x263B, 0x263C, 0x2640, 0x2642,
+    0x2660, 0x2663, 0x2665, 0x2666, 0x266A, 0x266B,
+];
+
+/// U+00AD SOFT HYPHEN.
+pub const SOFT_HYPHEN: char = '\u{AD}';
+
 /// Box Drawing.
 pub const BOX_DRAWING: core::ops::RangeInclusive<u32> = 0x2500..=0x257F;
 
@@ -84,11 +102,20 @@ pub fn glyph_set() -> Vec<char> {
         .chain(BOX_DRAWING)
         .chain(BLOCK_ELEMENTS)
         .chain([u32::from(glyph_atlas::REPLACEMENT)])
+        .filter(|cp| !EXCLUDED.contains(cp))
         .filter_map(char::from_u32)
         .collect();
     set.sort_unstable();
     set.dedup();
     set
+}
+
+/// The character whose glyph draws `c`. A console shows the characters
+/// it's given, so the soft hyphen is drawn as a hyphen (ADR 0046,
+/// rule 2). Every other character is drawn as itself.
+#[must_use]
+pub const fn drawn_as(c: char) -> char {
+    if c == SOFT_HYPHEN { '-' } else { c }
 }
 
 #[cfg(test)]
@@ -104,8 +131,26 @@ mod tests {
     #[test]
     fn glyph_set_size() {
         // 657 WGL4 + 128 box + 32 block + U+FFFD, less the 40 box and 8
-        // block characters WGL4 already has.
-        assert_eq!(glyph_set().len(), 657 + 128 + 32 + 1 - 40 - 8);
+        // block characters WGL4 already has, and the 4 excluded.
+        assert_eq!(glyph_set().len(), 657 + 128 + 32 + 1 - 40 - 8 - 4);
         assert!(glyph_set().windows(2).all(|w| w[0] < w[1]));
+    }
+
+    #[test]
+    fn excludes_the_ligatures_and_private_use() {
+        assert!(EXCLUDED.iter().all(|cp| WGL4.contains(cp)));
+        let set = glyph_set();
+        for cp in EXCLUDED {
+            assert!(!set.contains(&char::from_u32(cp).unwrap()));
+        }
+        assert!(set.contains(&SOFT_HYPHEN));
+        assert!(FALLBACK_SYMBOLS.windows(2).all(|w| w[0] < w[1]));
+        assert!(FALLBACK_SYMBOLS.iter().all(|cp| WGL4.contains(cp)));
+    }
+
+    #[test]
+    fn soft_hyphen_is_drawn_as_a_hyphen() {
+        assert_eq!(drawn_as(SOFT_HYPHEN), '-');
+        assert_eq!(drawn_as('A'), 'A');
     }
 }

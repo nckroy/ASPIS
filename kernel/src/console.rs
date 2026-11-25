@@ -5,8 +5,10 @@
 //! framebuffer, from the first message (ADR 0009, rules 1 to 3).
 //!
 //! The kernel draws text, filled rectangles and bitmaps. Glyphs come from
-//! atlases rasterized at build time from Noto Sans Mono, at 16, 24 and 32
-//! pixels (ADR 0034). The kernel holds no rasterizer and no SVG code.
+//! atlases rasterized at build time from Noto Sans Mono, with Noto Sans
+//! Math and Noto Sans Symbols for the WGL4 symbols it lacks, at 16, 24 and
+//! 32 pixels (ADR 0034, ADR 0046). The kernel holds no rasterizer and no
+//! SVG code.
 
 use bootinfo::{Framebuffer, pixel_format};
 use core::sync::atomic::{AtomicU8, Ordering};

@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 Nicole Roy
 // SPDX-License-Identifier: MPL-2.0
 
-//! Rasterizes one atlas from the font.
+//! Rasterizes one atlas from the main font and its fallbacks.
 
 use fontdue::{Font, FontSettings};
 use glyph_atlas::{Atlas, Header, REPLACEMENT};
 
-use crate::boxes;
+use crate::{boxes, glyphs};
 
 /// The cell geometry for one atlas.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,13 +19,18 @@ pub struct Geometry {
     pub baseline: u16,
 }
 
-/// A finished atlas, with what the font lacked.
+/// A finished atlas, with what the main font lacked.
 pub struct Built {
     pub geometry: Geometry,
     pub bytes: Vec<u8>,
-    /// Characters in the glyph set that the font has no glyph for. The
-    /// atlas leaves them out, and the console draws them as U+FFFD.
+    /// Characters in the glyph set that no font has a glyph for. The atlas
+    /// leaves them out, and the console would draw them as U+FFFD.
     pub missing: Vec<char>,
+    /// Characters taken from a fallback font, each with the fallback's
+    /// index in the order given.
+    pub fallback: Vec<(char, usize)>,
+    /// Fallback characters too big for the cell, drawn smaller to fit.
+    pub shrunk: Vec<char>,
     /// Characters whose ink reached past the cell and was clipped, each
     /// with the highest coverage value lost.
     pub clipped: Vec<(char, u8)>,
@@ -36,7 +41,8 @@ pub struct Built {
 /// Draws `c` from the font into `cell`, on the baseline at the cell's
 /// pen position `x_offset`. A glyph the font makes wider than one cell,
 /// such as U+FFFD, is scaled down to fit and centered on its own middle.
-/// Returns the highest coverage value clipped at the cell's edges.
+/// Returns the highest coverage value clipped at the cell's edges, and
+/// whether the glyph was scaled down.
 fn draw_glyph(
     font: &Font,
     g: &Geometry,
@@ -44,16 +50,15 @@ fn draw_glyph(
     x_offset: i64,
     c: char,
     cell: &mut [u8],
-    narrowed: &mut Vec<char>,
-) -> Result<u8, String> {
-    let (w, h) = (i64::from(g.cell_width), i64::from(g.cell_height));
+) -> Result<(u8, bool), String> {
+    let w = i64::from(g.cell_width);
     let natural = font.metrics(c, g.px);
     let to_i64 = |v: usize| i64::try_from(v).map_err(|e| e.to_string());
     // Rounding to whole pixels: the values are small and finite.
     #[allow(clippy::cast_possible_truncation)]
     let round = |v: f32| v.round() as i64;
-    let (metrics, coverage, left, top) = if natural.advance_width > advance * 1.01 {
-        narrowed.push(c);
+    let wide = natural.advance_width > advance * 1.01;
+    let (metrics, coverage, left, top) = if wide {
         let ink = natural.bounds.width.max(1.0);
         let scale = (f32::from(g.cell_width) * 0.9 / ink).min(1.0);
         let (m, bitmap) = font.rasterize(c, g.px * scale);
@@ -77,8 +82,24 @@ fn draw_glyph(
         };
         (m, bitmap, left, top)
     };
+    Ok((blit(g, &coverage, metrics.width, left, top, cell)?, wide))
+}
+
+/// Copies a glyph's coverage, `width` pixels a row, into `cell` with its
+/// top-left corner at (`left`, `top`). Returns the highest coverage value
+/// that fell outside the cell.
+fn blit(
+    g: &Geometry,
+    coverage: &[u8],
+    width: usize,
+    left: i64,
+    top: i64,
+    cell: &mut [u8],
+) -> Result<u8, String> {
+    let (w, h) = (i64::from(g.cell_width), i64::from(g.cell_height));
+    let to_i64 = |v: usize| i64::try_from(v).map_err(|e| e.to_string());
     let mut lost = 0u8;
-    for (row, line) in coverage.chunks(metrics.width.max(1)).enumerate() {
+    for (row, line) in coverage.chunks(width.max(1)).enumerate() {
         let y = top + to_i64(row)?;
         for (col, &value) in line.iter().enumerate() {
             let x = left + to_i64(col)?;
@@ -96,6 +117,59 @@ fn draw_glyph(
         }
     }
     Ok(lost)
+}
+
+/// The most times [`draw_fallback`] shrinks a glyph that still overflows.
+const SHRINK_STEPS: u32 = 64;
+
+/// Draws `c` from a fallback font into `cell` (ADR 0046, rule 1).
+///
+/// The glyph is rasterized at the main font's size, `g.px`, so the
+/// fallback's em matches the main font's. If its ink is wider than the
+/// cell less one column, or taller than the cell's ascent plus descent,
+/// it is scaled down just enough to fit, and never scaled up. The spare
+/// column keeps neighbors apart, as the main font's side bearings do: the
+/// fallback fonts' symbols are wider than a monospace cell, and would
+/// otherwise run together. The glyph is centered across the cell, and
+/// sits on the console's baseline, scaled about it, so a symbol that
+/// stands on the baseline still does. If that would put ink above or
+/// below the cell, it moves up or down just enough to stay inside.
+/// Returns whether the glyph was scaled down.
+fn draw_fallback(font: &Font, g: &Geometry, c: char, cell: &mut [u8]) -> Result<bool, String> {
+    let spare = g.cell_width.saturating_sub(1);
+    let (w, h) = (usize::from(spare), usize::from(g.cell_height));
+    let bounds = font.metrics(c, g.px).bounds;
+    let mut scale = 1.0f32;
+    if bounds.width > f32::from(spare) {
+        scale = scale.min(f32::from(spare) / bounds.width);
+    }
+    if bounds.height > f32::from(g.cell_height) {
+        scale = scale.min(f32::from(g.cell_height) / bounds.height);
+    }
+    // The bitmap covers every pixel the outline touches, so it can be a
+    // pixel wider or taller than the outline's bounds. Shrink in small
+    // steps until it fits.
+    for _ in 0..SHRINK_STEPS {
+        let (m, coverage) = font.rasterize(c, g.px * scale);
+        if m.width <= w && m.height <= h {
+            let to_i64 = |v: usize| i64::try_from(v).map_err(|e| e.to_string());
+            let (width, height) = (to_i64(m.width)?, to_i64(m.height)?);
+            // Centered in the whole cell, not just the columns it may fill.
+            let left = (i64::from(g.cell_width) - width) / 2;
+            // fontdue's ymin is the bitmap's bottom row, up from the baseline.
+            let top =
+                (i64::from(g.baseline) - i64::from(m.ymin) - height).clamp(0, to_i64(h)? - height);
+            let lost = blit(g, &coverage, m.width, left, top, cell)?;
+            debug_assert_eq!(lost, 0, "U+{:04X} overflowed", u32::from(c));
+            return Ok(scale < 1.0);
+        }
+        scale *= 0.97;
+    }
+    Err(format!(
+        "U+{:04X} from a fallback font won't fit a {}x{h} cell",
+        u32::from(c),
+        g.cell_width
+    ))
 }
 
 fn load(data: &[u8], px: f32) -> Result<Font, String> {
@@ -151,17 +225,31 @@ pub fn geometry(font: &Font, cell_height: u16) -> Result<Geometry, String> {
 }
 
 /// Builds the atlas with cells `cell_height` pixels high, covering every
-/// character of `set` that the font has, or that [`boxes`] draws.
+/// character of `set` that [`boxes`] draws, or that the main font or one
+/// of the fallbacks has. The cell geometry comes from the main font alone.
+/// Each character's glyph comes from the main font if it has one, or else
+/// from the first fallback, in order, that does. The soft hyphen is drawn
+/// as a hyphen ([`glyphs::drawn_as`]).
 ///
 /// # Errors
 ///
-/// Fails if the font doesn't parse, lacks U+FFFD, or gives a geometry the
-/// format can't hold.
-pub fn build(font_data: &[u8], cell_height: u16, set: &[char]) -> Result<Built, String> {
+/// Fails if a font doesn't parse, the main font lacks U+FFFD, or the
+/// geometry is one the format can't hold.
+pub fn build(
+    font_data: &[u8],
+    fallback_data: &[&[u8]],
+    cell_height: u16,
+    set: &[char],
+) -> Result<Built, String> {
     // The metrics don't depend on the load-time scale; the glyphs do.
     let probe = load(font_data, f32::from(cell_height))?;
     let g = geometry(&probe, cell_height)?;
     let font = load(font_data, g.px)?;
+    let fallbacks = fallback_data
+        .iter()
+        .enumerate()
+        .map(|(i, data)| load(data, g.px).map_err(|e| format!("fallback {}: {e}", i + 1)))
+        .collect::<Result<Vec<_>, _>>()?;
     if !font.has_glyph(REPLACEMENT) {
         return Err("the font has no U+FFFD REPLACEMENT CHARACTER".into());
     }
@@ -178,15 +266,26 @@ pub fn build(font_data: &[u8], cell_height: u16, set: &[char]) -> Result<Built, 
     let mut missing = Vec::new();
     let mut clipped = Vec::new();
     let mut narrowed = Vec::new();
+    let mut fallback = Vec::new();
+    let mut shrunk = Vec::new();
     for &c in set {
         let mut cell = vec![0u8; cell_len];
+        let source = glyphs::drawn_as(c);
         if boxes::is_procedural(c) {
             boxes::draw(c, g.cell_width, g.cell_height, &mut cell);
-        } else if font.has_glyph(c) {
-            let lost = draw_glyph(&font, &g, advance, x_offset, c, &mut cell, &mut narrowed)?;
+        } else if font.has_glyph(source) {
+            let (lost, wide) = draw_glyph(&font, &g, advance, x_offset, source, &mut cell)?;
+            if wide {
+                narrowed.push(c);
+            }
             if lost > 0 {
                 clipped.push((c, lost));
             }
+        } else if let Some(i) = fallbacks.iter().position(|f| f.has_glyph(source)) {
+            if draw_fallback(&fallbacks[i], &g, source, &mut cell)? {
+                shrunk.push(c);
+            }
+            fallback.push((c, i));
         } else {
             missing.push(c);
             continue;
@@ -213,6 +312,8 @@ pub fn build(font_data: &[u8], cell_height: u16, set: &[char]) -> Result<Built, 
         geometry: g,
         bytes,
         missing,
+        fallback,
+        shrunk,
         clipped,
         narrowed,
     })

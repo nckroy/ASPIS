@@ -127,8 +127,10 @@ fn main() {
 }
 
 /// The commit's time, so builds are reproducible (ADR 0038, rule 1).
+/// A `SOURCE_DATE_EPOCH` already set wins, so a build without `.git` can
+/// match one with it.
 fn source_date_epoch() -> String {
-    if let Ok(epoch) = std::env::var("SOURCE_DATE_EPOCH")
+    if let Ok(epoch) = env::var("SOURCE_DATE_EPOCH")
         && !epoch.is_empty()
     {
         return epoch;
@@ -179,10 +181,13 @@ fn cargo(flavor: Flavor) -> Command {
     c
 }
 
-/// The glyph atlases, from the pinned font (ADR 0034), and the logo.
+/// The glyph atlases, from the pinned fonts (ADR 0034, ADR 0046), and the
+/// logo.
 fn atlases() -> PathBuf {
     let out = build_dir().join("atlas");
     fs::create_dir_all(&out).unwrap();
+    let fonts = root().join("assets/fonts");
+    verify_fonts(&fonts);
     run_cmd(
         Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
             .current_dir(root())
@@ -196,7 +201,12 @@ fn atlases() -> PathBuf {
                 "--",
                 "--font",
             ])
-            .arg(root().join("assets/fonts/NotoSansMono-Regular.ttf"))
+            .arg(fonts.join("NotoSansMono-Regular.ttf"))
+            // The fallbacks, in the order to try them (ADR 0046, rule 1).
+            .arg("--fallback")
+            .arg(fonts.join("NotoSansMath-Regular.ttf"))
+            .arg("--fallback")
+            .arg(fonts.join("NotoSansSymbols-Regular.ttf"))
             .arg("--out")
             .arg(&out),
     );
@@ -219,6 +229,43 @@ fn atlases() -> PathBuf {
             .arg(&out),
     );
     out
+}
+
+/// Checks every font file `fonts.lock` lists against its SHA-512, before the
+/// build uses it (ADR 0034, rule 1).
+fn verify_fonts(dir: &Path) {
+    let lock = fs::read_to_string(dir.join("fonts.lock"))
+        .unwrap_or_else(|e| fail(format!("fonts.lock: {e}")));
+    let value = |line: &str, key: &str| {
+        line.strip_prefix(key)
+            .and_then(|r| r.trim_start().strip_prefix('='))
+            .map(|r| r.trim().trim_matches('"').to_string())
+    };
+    let mut file: Option<String> = None;
+    let mut checked = 0;
+    for line in lock.lines().map(str::trim) {
+        if line == "[[font]]" {
+            file = None;
+        } else if let Some(f) = value(line, "file") {
+            file = Some(f);
+        } else if let Some(want) = value(line, "sha512") {
+            let name = file
+                .take()
+                .unwrap_or_else(|| fail("fonts.lock: a sha512 before its file"));
+            let bytes = fs::read(dir.join(&name)).unwrap_or_else(|e| fail(format!("{name}: {e}")));
+            let got: String = initfs::image_digest(&bytes)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            if got != want {
+                fail(format!("{name} doesn't match its SHA-512 in fonts.lock"));
+            }
+            checked += 1;
+        }
+    }
+    if checked == 0 {
+        fail("fonts.lock lists no fonts");
+    }
 }
 
 /// The boot manifest's placeholder. Its format is the root server's
