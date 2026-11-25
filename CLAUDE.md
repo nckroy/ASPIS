@@ -38,6 +38,17 @@ The repository lives in `~/Documents`, which iCloud syncs, and the project owner
 - **Tools that glob for files skip names with a space**, as `tools/ci/check-grammars.py` does. Prefer `git ls-files` to globbing.
 - **If copies appear anyway,** move them into `build/icloud-duplicates/` with their paths; don't delete them, since some may hold older versions.
 
+## Changing `main`
+
+`main` is protected on GitHub. Every change reaches it through a pull request:
+
+1. **Branch from `main`.** Never commit to `main` itself.
+2. **Sign off every commit** with `git commit -s`. CI checks that every commit in a pull request carries a `Signed-off-by:` line ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 1). The sign-off certifies the DCO, so it is the project owner's to give: commit with `-s` only when the project owner has asked for the commit.
+3. **Push the branch and open a pull request.** CI's four jobs must pass, and the branch must be up to date with `main`. No approval is needed.
+4. **Merge by rebase**, so history stays linear: `gh pr merge <n> --rebase --delete-branch`. Merge commits and force-pushes to `main` are refused.
+
+GitHub deletes a pull request's branch when it is merged. In this clone, `fetch.prune` and a local `post-merge` hook then delete the local branch at the next `git pull` on `main`. The hook lives in `.git.nosync/hooks/` and isn't committed, so another clone doesn't have it. The project owner, as an admin, can still push to `main` directly; GitHub records that as a bypass.
+
 ## How the project works
 
 - The work goes in three steps: research and discussion; a design session (architecture views, documentation, and dividing the build into chunks); then implementation.
