@@ -128,6 +128,11 @@ fn main() {
 
 /// The commit's time, so builds are reproducible (ADR 0038, rule 1).
 fn source_date_epoch() -> String {
+    if let Ok(epoch) = std::env::var("SOURCE_DATE_EPOCH")
+        && !epoch.is_empty()
+    {
+        return epoch;
+    }
     Command::new("git")
         .args(["log", "-1", "--format=%ct"])
         .current_dir(root())

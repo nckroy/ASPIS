@@ -12,15 +12,21 @@ root=$(pwd)
 other=/tmp/aspis-elsewhere
 user=aspisrepro
 
+# The commit's time, for both builds: the copy has no .git to read it from.
+SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+export SOURCE_DATE_EPOCH
+
 cargo xtask build
 
 sudo rm -rf "$other"
 sudo mkdir -p "$other"
-# The whole checkout, .git included, so the commit time is the same.
-tar -C "$root" --exclude=./target --exclude=./build -cf - . | sudo tar -C "$other" -xf -
+# The checkout's files, without .git: cargo reads git's ignore files when
+# it fingerprints packages, and the other user may not be able to read the
+# ones the runner's git configuration names.
+tar -C "$root" --exclude=./target --exclude=./build --exclude=./.git -cf - . | sudo tar -C "$other" -xf -
 id "$user" >/dev/null 2>&1 || sudo useradd --create-home "$user"
 sudo chown -R "$user" "$other"
-sudo -u "$user" -H sh -c "
+sudo -u "$user" -H env SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH" sh -c "
     set -eu
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
     . \"\$HOME/.cargo/env\"
