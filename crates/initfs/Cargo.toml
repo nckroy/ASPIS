@@ -10,6 +10,10 @@ license.workspace = true
 authors.workspace = true
 publish.workspace = true
 rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/reject 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
 
 [features]
 default = []
@@ -25,3 +29,19 @@ initfs = { path = ".", features = ["std"] }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "adversarial"
+path = "tests/adversarial.rs"
+
+[[test]]
+name = "reject"
+path = "tests/reject.rs"
+
+[[test]]
+name = "robustness"
+path = "tests/robustness.rs"
+
+[[test]]
+name = "roundtrip"
+path = "tests/roundtrip.rs"

@@ -10,3 +10,16 @@ docs/research/*.pdf
 # Build output
 /target
 /build
+
+# This working copy lives in iCloud-synced ~/Documents. iCloud's conflict
+# copies are named "file 2.ext", "file 3" and so on: never track them.
+* [0-9]
+* [0-9].*
+* [0-9][0-9]
+* [0-9][0-9].*
+
+# The git database and build outputs, renamed so iCloud doesn't sync them
+# (iCloud skips names ending in .nosync); see CLAUDE.md.
+/.git.nosync/
+/build.nosync/
+/target.nosync/

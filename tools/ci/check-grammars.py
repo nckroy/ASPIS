@@ -96,7 +96,8 @@ def check(abnf: pathlib.Path) -> int:
 
 def main() -> int:
     root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "grammars")
-    grammars = sorted(root.glob("*.abnf"))
+    # Names with a space are iCloud's conflict copies, such as "initfs 2.abnf".
+    grammars = sorted(g for g in root.glob("*.abnf") if " " not in g.name)
     if not grammars:
         print(f"no grammars in {root}")
         return 1

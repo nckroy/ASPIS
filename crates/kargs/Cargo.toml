@@ -9,6 +9,18 @@ license.workspace = true
 authors.workspace = true
 publish.workspace = true
 rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/reject 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
 
 [lints]
 workspace = true
+
+[[test]]
+name = "reference"
+path = "tests/reference.rs"
+
+[[test]]
+name = "vectors"
+path = "tests/vectors.rs"

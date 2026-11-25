@@ -27,6 +27,17 @@ ASPIS is an open-source microkernel operating system, written in Rust for ARM64 
 - [LICENSE](LICENSE): the verbatim text of the Mozilla Public License 2.0 ([0008](docs/decisions/0008-mpl-2.0-license.md), rule 3). Don't edit it.
 - [LICENSES/](LICENSES): the license texts in the REUSE layout, `MPL-2.0.txt` and `CC-BY-4.0.txt` ([0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 3). Don't edit them either.
 
+## This working copy is in iCloud
+
+The repository lives in `~/Documents`, which iCloud syncs, and the project owner depends on that sync. iCloud makes conflict copies named like `lib 2.rs` or `Dockerfile 3` when a file changes while it syncs. So:
+
+- **The git database is `.git.nosync`**, behind a one-line `.git` file (`gitdir: .git.nosync`), because iCloud skips names that end in `.nosync`. Git works as usual. Other devices get the files through iCloud, but not the history.
+- **`build` and `target` are symlinks** to `build.nosync` and `target.nosync`, for the same reason.
+- **`.gitignore` ignores conflict copies**, so `git status` doesn't show them and `git add -A` can't commit them.
+- **Cargo discovers no tests.** Crates with a `tests/` directory set `autotests = false` and list each test in `Cargo.toml`. Declare every new file in `tests/` there.
+- **Tools that glob for files skip names with a space**, as `tools/ci/check-grammars.py` does. Prefer `git ls-files` to globbing.
+- **If copies appear anyway,** move them into `build/icloud-duplicates/` with their paths; don't delete them, since some may hold older versions.
+
 ## How the project works
 
 - The work goes in three steps: research and discussion; a design session (architecture views, documentation, and dividing the build into chunks); then implementation.
