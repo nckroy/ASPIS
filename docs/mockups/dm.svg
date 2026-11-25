@@ -1,0 +1,169 @@
+<!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 780" width="1280" height="780" role="img" aria-labelledby="t d">
+  <title id="t">Mockup of dm, the ASPIS window system</title>
+  <desc id="d">Three dm windows. A pad shows an operator checking a release rollout: text lines mixed with a rollout bar, a latency chart and a map of where instances run, with "v42" selected and a menu offering copy, search and open. It then reads rows from the shop database through its mount at //example.org/sys/sql. A second pad tails the deploy's live log. A catalog browser finds the SQL database interfaces and the system name where the database is mounted.</desc>
+  <style>
+    .ui { font-family: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .win { fill: #fbfcfe; stroke: #8d99ad; stroke-width: 1; }
+    .bar { fill: #e3e8f0; }
+    .ttl { font-size: 13px; font-weight: 600; fill: #2a3242; }
+    .txt { font-size: 13px; fill: #1d2330; }
+    .dim { fill: #7a8496; }
+    .sm { font-size: 11px; }
+    .grid { stroke: #e2e6ed; stroke-width: 1; }
+    .new { fill: #2f8f5f; }
+    .old { fill: #9aa3b2; }
+    .warn { fill: #b56d00; }
+  </style>
+
+  <!-- dm's root document -->
+  <rect width="1280" height="780" fill="#2b3240"/>
+  <rect width="1280" height="30" fill="#1d222c"/>
+  <text class="ui" x="16" y="20" font-size="14" font-weight="700" fill="#e9eef5">dm</text>
+  <text class="ui" x="640" y="20" font-size="12" fill="#c3cbd8" text-anchor="middle">example.org · pi-03</text>
+  <text class="ui" x="1264" y="20" font-size="12" fill="#c3cbd8" text-anchor="end">ada · 14:07</text>
+
+  <!-- Window 1: a pad mixing text and graphics -->
+  <g>
+    <rect class="win" x="16" y="46" width="752" height="718" rx="8"/>
+    <path class="bar" d="M16 74 V54 a8 8 0 0 1 8 -8 H760 a8 8 0 0 1 8 8 V74 Z"/>
+    <text class="ui ttl" x="30" y="65">shop/production · pad</text>
+
+    <text class="mono txt" x="32" y="98"><tspan class="dim">%</tspan> deploy status shop/production</text>
+    <text class="mono txt" x="32" y="120">release <tspan font-weight="700">v42</tspan> · build 9f3c1e · promoted from staging · 4 of 6 web instances ready</text>
+
+    <!-- rollout bar -->
+    <g class="ui" font-size="12" text-anchor="middle" fill="#ffffff">
+      <rect x="32" y="134" width="100" height="30" rx="5" fill="#ffffff" stroke="#b56d00" stroke-width="2"/>
+      <text x="82" y="154" fill="#b56d00">web.1 v41</text>
+      <rect class="new" x="140" y="134" width="100" height="30" rx="5"/><text x="190" y="154">web.2 v42</text>
+      <rect class="new" x="248" y="134" width="100" height="30" rx="5"/><text x="298" y="154">web.3 v42</text>
+      <rect class="old" x="356" y="134" width="100" height="30" rx="5"/><text x="406" y="154">web.4 v41</text>
+      <rect class="new" x="464" y="134" width="100" height="30" rx="5"/><text x="514" y="154">web.5 v42</text>
+      <rect class="new" x="572" y="134" width="100" height="30" rx="5"/><text x="622" y="154">web.6 v42</text>
+    </g>
+    <text class="ui dim sm" x="680" y="153">web.1 stopping</text>
+
+    <!-- latency chart -->
+    <text class="mono txt" x="32" y="196">p95 latency (ms), last 15 minutes</text>
+    <g class="grid">
+      <line x1="72" y1="230" x2="736" y2="230"/><line x1="72" y1="270" x2="736" y2="270"/>
+      <line x1="72" y1="310" x2="736" y2="310"/><line x1="72" y1="350" x2="736" y2="350"/>
+      <line x1="72" y1="390" x2="736" y2="390" stroke="#b8c0cc"/>
+    </g>
+    <g class="ui dim sm" text-anchor="end">
+      <text x="64" y="234">160</text><text x="64" y="274">120</text><text x="64" y="314">80</text><text x="64" y="354">40</text><text x="64" y="394">0</text>
+    </g>
+    <g class="ui dim sm" text-anchor="middle">
+      <text x="72" y="408">13:52</text><text x="404" y="408">14:00</text><text x="736" y="408">14:07</text>
+    </g>
+    <line x1="430" y1="226" x2="430" y2="390" stroke="#2f8f5f" stroke-dasharray="4 4"/>
+    <text class="ui sm" x="436" y="384" fill="#2f8f5f">v42 rollout starts</text>
+    <polyline fill="none" stroke="#9aa3b2" stroke-width="2.5" points="72,294 110,286 150,298 190,280 230,290 270,284 310,296 350,288 390,300 430,292 470,302 510,296 550,300 590,306 630,310"/>
+    <polyline fill="none" stroke="#2f8f5f" stroke-width="2.5" points="430,330 470,326 510,334 550,322 590,328 630,324 670,330 710,326 736,328"/>
+    <!-- legend, with "v42" selected -->
+    <line x1="520" y1="246" x2="540" y2="246" stroke="#9aa3b2" stroke-width="2.5"/>
+    <text class="ui sm" x="546" y="250" fill="#1d2330">v41</text>
+    <line x1="588" y1="246" x2="608" y2="246" stroke="#2f8f5f" stroke-width="2.5"/>
+    <rect x="612" y="236" width="26" height="18" rx="3" fill="#b9d4ff"/>
+    <text class="ui sm" x="614" y="250" fill="#1d2330">v42</text>
+    <g class="ui" font-size="12">
+      <rect x="616" y="258" width="140" height="78" rx="6" fill="#ffffff" stroke="#8d99ad"/>
+      <text x="630" y="279" fill="#1d2330">Copy</text>
+      <text x="630" y="302" fill="#1d2330">Search transcript</text>
+      <text x="630" y="325" fill="#1d2330">Open release v42</text>
+    </g>
+
+    <!-- placement map -->
+    <text class="mono txt" x="32" y="446"><tspan class="dim">%</tspan> placement shop/production</text>
+    <g class="ui">
+      <rect x="32" y="460" width="164" height="96" rx="6" fill="#f1f4f8" stroke="#c5ccd8"/>
+      <text x="46" y="482" font-size="13" font-weight="600" fill="#2a3242">pi-01</text>
+      <circle cx="54" cy="506" r="7" fill="#ffffff" stroke="#b56d00" stroke-width="2"/><text x="68" y="510" font-size="12" fill="#1d2330">web.1 v41</text>
+      <circle cx="54" cy="530" r="7" class="new"/><text x="68" y="534" font-size="12" fill="#1d2330">web.2 v42</text>
+
+      <rect x="212" y="460" width="164" height="96" rx="6" fill="#f1f4f8" stroke="#c5ccd8"/>
+      <text x="226" y="482" font-size="13" font-weight="600" fill="#2a3242">pi-02</text>
+      <circle cx="234" cy="506" r="7" class="new"/><text x="248" y="510" font-size="12" fill="#1d2330">web.3 v42</text>
+      <circle cx="234" cy="530" r="7" class="new"/><text x="248" y="534" font-size="12" fill="#1d2330">worker.1 v42</text>
+
+      <rect x="392" y="460" width="164" height="96" rx="6" fill="#e8f1ff" stroke="#6f9be0"/>
+      <text x="406" y="482" font-size="13" font-weight="600" fill="#2a3242">pi-03 (this node)</text>
+      <circle cx="414" cy="506" r="7" class="old"/><text x="428" y="510" font-size="12" fill="#1d2330">web.4 v41</text>
+      <circle cx="414" cy="530" r="7" class="new"/><text x="428" y="534" font-size="12" fill="#1d2330">web.5 v42</text>
+
+      <rect x="572" y="460" width="164" height="96" rx="6" fill="#f1f4f8" stroke="#c5ccd8"/>
+      <text x="586" y="482" font-size="13" font-weight="600" fill="#2a3242">pi-04</text>
+      <circle cx="594" cy="506" r="7" class="new"/><text x="608" y="510" font-size="12" fill="#1d2330">web.6 v42</text>
+      <circle cx="594" cy="530" r="7" class="new"/><text x="608" y="534" font-size="12" fill="#1d2330">worker.2 v42</text>
+    </g>
+
+    <text class="mono txt" x="32" y="592"><tspan class="dim">%</tspan> head -3 //example.org/sys/sql/shop/orders</text>
+    <g class="mono txt">
+      <text x="32" y="614" class="dim">order,customer,total,placed</text>
+      <text x="32" y="634">88213,c-4410,42.50,14:05:12</text>
+      <text x="32" y="654">88214,c-0932,17.00,14:05:40</text>
+    </g>
+    <text class="mono txt" x="32" y="690"><tspan class="dim">%</tspan> </text>
+    <rect x="50" y="678" width="8" height="16" fill="#1d2330"/>
+    <text class="ui dim sm" x="752" y="752" text-anchor="end">transcript kept from process birth · text in the charts is selectable</text>
+  </g>
+
+  <!-- Window 2: a live log tail -->
+  <g>
+    <rect class="win" x="784" y="46" width="480" height="330" rx="8"/>
+    <path class="bar" d="M784 74 V54 a8 8 0 0 1 8 -8 H1256 a8 8 0 0 1 8 8 V74 Z"/>
+    <text class="ui ttl" x="798" y="65">shop/production · log (live)</text>
+    <text class="ui dim sm" x="800" y="100">requests/s</text>
+    <polyline fill="none" stroke="#3a6fc4" stroke-width="2" points="868,102 892,96 916,99 940,92 964,95 988,88 1012,93 1036,90 1060,86 1084,91 1108,87 1132,84 1156,89 1180,85 1204,88 1228,83 1248,86"/>
+    <g class="mono" font-size="12" fill="#1d2330">
+      <text x="800" y="132">14:06:51  web.3 v42   GET /cart 200 · 41 ms</text>
+      <text x="800" y="156">14:06:52  web.5 v42   GET /checkout 200 · 63 ms</text>
+      <text x="800" y="180" class="warn">14:06:52  web.1 v41   stop notice, deadline 30 s</text>
+      <text x="800" y="204">14:06:53  worker.2 v42  job 1187 done</text>
+      <text x="800" y="228">14:06:54  web.2 v42   GET /cart 200 · 38 ms</text>
+      <text x="800" y="252" class="warn">14:06:55  web.1 v41   stopped after 1.8 s</text>
+      <text x="800" y="276">14:06:56  web.6 v42   GET / 200 · 22 ms</text>
+      <text x="800" y="300">14:06:57  web.3 v42   GET /cart 200 · 44 ms</text>
+    </g>
+    <text class="ui dim sm" x="1248" y="364" text-anchor="end">following · one stream for every instance of the deploy</text>
+  </g>
+
+  <!-- Window 3: the catalog browser -->
+  <g>
+    <rect class="win" x="784" y="392" width="480" height="372" rx="8"/>
+    <path class="bar" d="M784 420 V400 a8 8 0 0 1 8 -8 H1256 a8 8 0 0 1 8 8 V420 Z"/>
+    <text class="ui ttl" x="798" y="411">Catalog · example.org</text>
+    <rect x="800" y="432" width="448" height="30" rx="6" fill="#ffffff" stroke="#b8c0cc"/>
+    <circle cx="817" cy="445" r="6" fill="none" stroke="#7a8496" stroke-width="2"/>
+    <line x1="821" y1="449" x2="826" y2="454" stroke="#7a8496" stroke-width="2"/>
+    <text class="ui txt" x="834" y="452">sql</text>
+
+    <g class="ui">
+      <!-- database interface -->
+      <ellipse cx="814" cy="488" rx="10" ry="4" fill="#dce7f7" stroke="#3a6fc4"/>
+      <path d="M804 488 v16 a10 4 0 0 0 20 0 v-16" fill="#dce7f7" stroke="#3a6fc4"/>
+      <text class="mono" x="836" y="492" font-size="13" font-weight="700" fill="#1d2330">org.example.sql.database</text>
+      <rect x="1180" y="478" width="64" height="18" rx="9" fill="#e3f2ea" stroke="#2f8f5f"/>
+      <text x="1212" y="491" font-size="11" fill="#2f8f5f" text-anchor="middle">default</text>
+      <text x="836" y="512" font-size="12" fill="#5c6678">interface 1.4 · publisher Example Data</text>
+      <text class="mono" x="836" y="532" font-size="12" fill="#5c6678">mounted at //example.org/sys/sql</text>
+      <line x1="800" y1="548" x2="1248" y2="548" stroke="#e2e6ed"/>
+
+      <!-- table type -->
+      <rect x="804" y="566" width="20" height="16" rx="2" fill="#ffffff" stroke="#3a6fc4"/>
+      <line x1="804" y1="572" x2="824" y2="572" stroke="#3a6fc4"/><line x1="814" y1="566" x2="814" y2="582" stroke="#3a6fc4"/>
+      <text class="mono" x="836" y="578" font-size="13" font-weight="700" fill="#1d2330">org.example.sql.table</text>
+      <text x="836" y="598" font-size="12" fill="#5c6678">type · reads as CSV through aspis.io · publisher Example Data</text>
+      <line x1="800" y1="614" x2="1248" y2="614" stroke="#e2e6ed"/>
+
+      <!-- a system interface -->
+      <rect x="804" y="632" width="20" height="16" rx="3" fill="#eef0f4" stroke="#7a8496"/>
+      <text x="814" y="644" font-size="9" fill="#5c6678" text-anchor="middle">io</text>
+      <text class="mono" x="836" y="644" font-size="13" font-weight="700" fill="#1d2330">aspis.io</text>
+      <text x="836" y="664" font-size="12" fill="#5c6678">interface 1.2 · ASPIS system interface</text>
+    </g>
+    <text class="ui dim sm" x="1248" y="752" text-anchor="end">3 entries you may discover · updated live</text>
+  </g>
+</svg>
