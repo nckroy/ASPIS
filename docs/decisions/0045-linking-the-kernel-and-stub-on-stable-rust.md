@@ -3,7 +3,7 @@
 
 # 0045. Linking the kernel and the stub on stable Rust
 
-- **Status:** Proposed. Would amend [0035](0035-toolchain-image-linkage-and-esp-layout.md) (rules 2 and 3).
+- **Status:** Accepted. Amends [0035](0035-toolchain-image-linkage-and-esp-layout.md) (rules 2 and 3).
 - **Date:** 2026-11-25
 
 ## Context

@@ -3,7 +3,7 @@
 
 # 0041. The boot ABI: entry state, boot information and kernel arguments
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by [0044](0044-stub-undoes-grubs-command-line.md) (rule 5).
 - **Date:** 2026-11-25
 
 ## Context

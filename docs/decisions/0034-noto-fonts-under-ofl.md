@@ -3,7 +3,7 @@
 
 # 0034. Fonts: Noto, under the SIL Open Font License, with atlases at 16, 24 and 32 pixels
 
-- **Status:** Accepted. Amends [0008](0008-mpl-2.0-license.md) (rule 4).
+- **Status:** Accepted. Amends [0008](0008-mpl-2.0-license.md) (rule 4). Amended by [0046](0046-fallback-fonts-for-wgl4-symbols.md) (rules 1 and 4).
 - **Date:** 2026-11-25
 
 ## Context

@@ -1195,7 +1195,7 @@ The reading phase collected the open items and the conflicts between the documen
 
 ### By the records accepted on 2026-11-25
 
-On 2026-11-25 the project owner accepted twelve records. Each settled or narrowed these items:
+On 2026-11-25 the project owner accepted sixteen records. Each settled or narrowed these items:
 
 - **[0029](../decisions/0029-founding-node-self-signed-certificate.md), the founding node's initial certificate.** Settles D78. Amends [0020](../decisions/0020-realm-certificate-authority.md), rules 4 and 6. The ceremony and the genesis state stay in D79.
 - **[0031](../decisions/0031-abnf-is-not-a-command-language.md), ABNF is not a command language.** Settles D102's question whether to accept it. Amends [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rules 2 and 5. The native interpreter stays in D102, and dm's command language in D103.
@@ -1209,6 +1209,10 @@ On 2026-11-25 the project owner accepted twelve records. Each settled or narrowe
 - **[0040](../decisions/0040-the-stub-checks-the-initial-image.md), the stub checks the initial image.** Settles D08: a SHA-512 digest embedded in the signed `aspis.efi`, and a PCR 9 measurement where a TPM exists. Narrows D144 and D146 (the two images are updated together).
 - **[0041](../decisions/0041-boot-abi.md), the boot ABI.** Settles D09: the kernel's entry state, tagged boot-information records, the kernel-argument grammar and the order the stub searches for the initial image. Narrows D42 (the seed comes in a page of its own, which the kernel never reads), D144 (a record reserved for the TPM event log), D11, D32, D40 and D94.
 - **[0042](../decisions/0042-log-ring-and-panic-path.md), the log ring and the panic path.** Settles D10: the ring's record format, reading by capability, and the boot framebuffer's Kernel, Adopted and Retired states. Narrows D55 (the import source and how the kernel stops drawing), D40 (the root server alone gets the ring's capability), D57 and D84.
+- **[0043](../decisions/0043-qemu-boots-with-acpi-off.md), ACPI off on QEMU.** Amends [0036](../decisions/0036-qemu-configuration-and-test-builds.md), rule 2: EDK2 passes ACPI or the device tree, never both, so QEMU runs with `acpi=off` until ACPI support comes (C65).
+- **[0044](../decisions/0044-stub-undoes-grubs-command-line.md), GRUB's command line.** Amends [0041](../decisions/0041-boot-abi.md), rule 5: the stub drops GRUB's `BOOT_IMAGE=` word and undoes its escaping and quoting.
+- **[0045](../decisions/0045-linking-the-kernel-and-stub-on-stable-rust.md), linking on stable Rust.** Amends [0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rules 2 and 3: the kernel links as a static PIE with `-z notext`, and the stub with `/DEBUG:NONE`.
+- **[0046](../decisions/0046-fallback-fonts-for-wgl4-symbols.md), fallback fonts.** Amends [0034](../decisions/0034-noto-fonts-under-ofl.md), rules 1 and 4: Noto Sans Math and Noto Sans Symbols supply the 18 WGL4 symbols Noto Sans Mono lacks, and the ligatures and private-use code points leave the atlases' set.
 
 ### By rules already accepted
 

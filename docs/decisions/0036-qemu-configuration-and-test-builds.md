@@ -3,7 +3,7 @@
 
 # 0036. QEMU configuration, the test framework and test builds
 
-- **Status:** Accepted
+- **Status:** Accepted. Amended by [0043](0043-qemu-boots-with-acpi-off.md) (rule 2).
 - **Date:** 2026-11-25
 
 ## Context

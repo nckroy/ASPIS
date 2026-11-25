@@ -3,7 +3,7 @@
 
 # 0046. Fallback Noto fonts for the WGL4 symbols Noto Sans Mono lacks
 
-- **Status:** Proposed. Would amend [0034](0034-noto-fonts-under-ofl.md) (rules 1 and 4).
+- **Status:** Accepted. Amends [0034](0034-noto-fonts-under-ofl.md) (rules 1 and 4).
 - **Date:** 2026-11-25
 
 ## Context

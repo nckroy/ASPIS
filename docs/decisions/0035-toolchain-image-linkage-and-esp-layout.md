@@ -3,7 +3,7 @@
 
 # 0035. Toolchain, image linkage and the ESP layout
 
-- **Status:** Accepted. Amends [0006](0006-uefi-boot-image.md) (rule 3).
+- **Status:** Accepted. Amends [0006](0006-uefi-boot-image.md) (rule 3). Amended by [0045](0045-linking-the-kernel-and-stub-on-stable-rust.md) (rules 2 and 3).
 - **Date:** 2026-11-25
 
 ## Context
