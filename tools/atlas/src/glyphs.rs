@@ -1,9 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Nicole Roy
 // SPDX-License-Identifier: MPL-2.0
 
-//! The characters each atlas covers (ADR 0034, rule 4, as amended by
-//! ADR 0046, rule 4): WGL4 less the ligatures and two private-use code
-//! points, the box-drawing characters, the block elements and U+FFFD.
+//! The characters each atlas covers (ADR 0034, rule 4): WGL4 less the
+//! ligatures and two private-use code points, the box-drawing characters,
+//! the block elements and U+FFFD.
 
 /// Windows Glyph List 4, as Microsoft's OpenType specification lists it:
 /// "WGL4.0 Character Set", OpenType 1.5 and later,
@@ -70,7 +70,7 @@ pub const WGL4: [u32; 657] = [
     0x2663, 0x2665, 0x2666, 0x266A, 0x266B, 0xF001, 0xF002, 0xFB01, 0xFB02,
 ];
 
-/// The WGL4 code points the atlases leave out (ADR 0046, rule 3): the fi
+/// The WGL4 code points the atlases leave out (ADR 0046, rule 2): the fi
 /// and fl ligatures, which a monospace console never forms, and their
 /// private-use duplicates, which have no standard meaning. The console
 /// draws them as U+FFFD.
@@ -112,7 +112,7 @@ pub fn glyph_set() -> Vec<char> {
 
 /// The character whose glyph draws `c`. A console shows the characters
 /// it's given, so the soft hyphen is drawn as a hyphen (ADR 0046,
-/// rule 2). Every other character is drawn as itself.
+/// rule 1). Every other character is drawn as itself.
 #[must_use]
 pub const fn drawn_as(c: char) -> char {
     if c == SOFT_HYPHEN { '-' } else { c }

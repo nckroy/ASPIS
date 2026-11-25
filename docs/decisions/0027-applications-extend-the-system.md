@@ -3,8 +3,8 @@
 
 # 0027. Applications extend the system through objects and versioned interfaces
 
-- **Status:** Accepted. Amends [0025](0025-twelve-factor-app-contract.md) (rules 2 and 7) and [0026](0026-realm-as-cloud-provider.md) (rule 7).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -36,17 +36,16 @@ Precedents (details and sources in the [design note](../design/extensibility-and
 - **Kubernetes.** Custom resources appear and disappear in a running cluster through dynamic registration, and are used like built-in ones. Many core functions are built as custom resources.
 - **Fuchsia.** Components declare what they `expose`.
 
-**What conflicts.**
-- [0025](0025-twelve-factor-app-contract.md) rule 7 lets a native process offer services on a listener endpoint.
-- [0026](0026-realm-as-cloud-provider.md) rule 7 has one deploy reach another through an internal route.
+**What conflicted.**
+- [0025](0025-twelve-factor-app-contract.md) rule 7, as first accepted, let a native process offer services on a listener endpoint.
+- [0026](0026-realm-as-cloud-provider.md) rule 7, as first accepted, had one deploy reach another through an internal route.
 
-Both would let a native application offer functionality outside the object model.
+Both would have let a native application offer functionality outside the object model.
 
 ## Decision
 
 1. **Objects and interfaces are how a native application offers functionality**, whether to other programs, to the system or to the realm.
-   - Its listener endpoints serve only routes: browsers, clients outside ASPIS, and POSIX callers.
-   - This amends [0025](0025-twelve-factor-app-contract.md), rule 7.
+   - Its listener endpoints serve only routes: browsers, clients outside ASPIS, and POSIX callers ([0025](0025-twelve-factor-app-contract.md), rule 7).
 2. **One interface standard, for ASPIS and applications alike.** An application's interfaces meet the standard that ASPIS's own interfaces meet:
    - they are defined in the IDL, with ABNF generated and published ([0013](0013-abnf-for-protocols-and-calls.md));
    - they are objects with IDs, versioned major.minor under the DCE rule, with stable method numbers ([0014](0014-versioned-object-apis.md));
@@ -81,7 +80,7 @@ Both would let a native application offer functionality outside the object model
    - The location service ([0004](0004-network-transparency-and-failure.md), rule 5) resolves the authority to the deploy's ready instances. A bind to any of the application's objects therefore reaches it from anywhere in the realm, as a bind to a system object does.
    - A manager that shards its objects across instances can register finer-grained locations.
 6. **Exports are declared.**
-   - An application's manifest declares the interfaces, types and published objects it exports. This amends [0025](0025-twelve-factor-app-contract.md), rule 2.
+   - An application's manifest declares the interfaces, types and published objects it exports ([0025](0025-twelve-factor-app-contract.md), rule 2).
    - When a release goes live, the platform registers the exports in the catalog for the deploy, so the platform attests every registration.
    - A native service that runs outside the app platform registers through its own service principal.
    - Registration is an authorized call.
@@ -96,7 +95,7 @@ Both would let a native application offer functionality outside the object model
 
    The catalog still shows who provides the service. An interface mounted as a realm function follows the realm's deprecation policy, as ASPIS's own interfaces do.
 9. **Binding between applications.**
-   - A native deploy binds directly to another application's published objects, with grants in the authorization tree ([0025](0025-twelve-factor-app-contract.md), rule 5). Internal routes remain for POSIX apps. This amends [0026](0026-realm-as-cloud-provider.md), rule 7.
+   - A native deploy binds directly to another application's published objects, with grants in the authorization tree ([0025](0025-twelve-factor-app-contract.md), rule 5). Internal routes remain for POSIX apps ([0026](0026-realm-as-cloud-provider.md), rule 7).
    - A binding may name an interface rather than an object. The platform resolves it through the catalog when it creates the release, and the release pins the object it resolved to ([0026](0026-realm-as-cloud-provider.md), rule 2).
 10. **HTTPS bindings.**
     - Any interface may also be offered over HTTPS, through a binding the IDL compiler generates, as the App API and AuthZEN already are.

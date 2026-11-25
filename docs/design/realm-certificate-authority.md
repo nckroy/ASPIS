@@ -3,7 +3,7 @@
 
 # The realm as its own certificate authority
 
-*2026-11-24. Input to the design session. The decisions it led to are recorded in [ADR 0020](../decisions/0020-realm-certificate-authority.md).*
+*2026-11-24, updated 2026-11-25. Input to the design session. The decisions it led to are recorded in [ADR 0020](../decisions/0020-realm-certificate-authority.md).*
 
 1. [The tenet](#1-the-tenet)
 2. [Standards status](#2-standards-status-november-2026)
@@ -137,7 +137,7 @@ Every certificate:
 
 Only CA certificates carry CRL distribution points.
 
-**The founding node's initial certificate** is the one certificate in force that no CA issues. During the realm-creation ceremony no decision point runs yet, so the RPC CA can't certify the founding node. The node instead signs its initial certificate with its own genesis key. The certified key is its operational TLS key. Like a node certificate, it has one URI subjectAltName, the node's identity URI, uses `id-MLDSA65-Ed25519-SHA512` and lives seven days at most. The ceremony records it in the authorization tree's genesis state. Only the founding node uses it, since it doesn't chain to the realm's root. Once its decision point runs, the node renews with the RPC CA, before any other node enrolls, and the initial certificate is revoked in the tree. Decided: [0029](../decisions/0029-founding-node-self-signed-certificate.md), rules 1–5, which amend [0020](../decisions/0020-realm-certificate-authority.md), rules 4 and 6.
+**The founding node's initial certificate** is the one certificate in force that no CA issues. During the realm-creation ceremony no decision point runs yet, so the RPC CA can't certify the founding node. The node instead signs its initial certificate with its own genesis key. The certified key is its operational TLS key. Like a node certificate, it has one URI subjectAltName, the node's identity URI, uses `id-MLDSA65-Ed25519-SHA512` and lives seven days at most. The ceremony records it in the authorization tree's genesis state. Only the founding node uses it, since it doesn't chain to the realm's root. Once its decision point runs, the node renews with the RPC CA, before any other node enrolls, and the initial certificate is revoked in the tree. Decided: [0029](../decisions/0029-founding-node-self-signed-certificate.md), rules 1–5; [0020](../decisions/0020-realm-certificate-authority.md), rules 4 and 6.
 
 **Identity URIs.** A node's or workload's identity URI is a SPIFFE ID, which is also a WIMSE identifier ([0022](../decisions/0022-spiffe-and-wimse-workload-identity.md)). Its trust domain is the realm's DNS name, and its path carries the principal's object ID ([0001](../decisions/0001-object-identifiers.md)) in the text form that [0013](../decisions/0013-abnf-for-protocols-and-calls.md) defines in ABNF. The path layout below was a placeholder for the design session to settle. Decided: [0022](../decisions/0022-spiffe-and-wimse-workload-identity.md), rule 2:
 
@@ -270,10 +270,10 @@ sequenceDiagram
    - **Resolution:** address-validation tokens (`NEW_TOKEN`) from earlier connections, long-lived connections, and resumption. All three apply between a realm's nodes.
 3. **SHA-3 versus the hashes standards fix.**
    - 0003 rule 3 chooses SHA-3. TLS 1.3's key schedule uses SHA-256 or SHA-384, depending on the cipher suite. `id-MLDSA65-Ed25519-SHA512` pre-hashes with SHA-512, and Ed25519 uses SHA-512 internally.
-   - **Resolution:** amend 0003 rule 3. SHA-3 is the rule for constructs ASPIS defines; standard protocols keep their own hashes. The JOSE composite in [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md) already relies on SHA-512 through Ed25519. Decided: [0020](../decisions/0020-realm-certificate-authority.md), rule 12.
+   - **Resolution:** SHA-3 is the rule for constructs ASPIS defines; standard protocols keep their own hashes. The JOSE composite in [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md) already relies on SHA-512 through Ed25519. Decided: [0003](../decisions/0003-hybrid-post-quantum-cryptography.md), rule 3; [0020](../decisions/0020-realm-certificate-authority.md), rule 3.
 4. **ABNF versus ASN.1 and TLS's presentation language.**
    - [0013](../decisions/0013-abnf-for-protocols-and-calls.md) rule 2 puts every network protocol message in ABNF, including the secure transport's handshake.
-   - **Resolution:** amend 0013 rule 2. TLS, QUIC, X.509, PKCS #10 and CMS keep their own normative notations. ABNF covers what ASPIS defines within them: identity URIs, the ALPN identifier, and every RPC message. Decided: [0020](../decisions/0020-realm-certificate-authority.md), rule 12.
+   - **Resolution:** TLS, QUIC, X.509, PKCS #10 and CMS keep their own normative notations. ABNF covers what ASPIS defines within them: identity URIs, the ALPN identifier, and every RPC message. Decided: [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2.
 5. **Composite signatures in TLS have no codepoint yet.**
    - A composite key can't sign with the `mldsa65` scheme, because its components must never be used alone. ML-DSA alone is therefore no fallback while certificates hold composite keys.
    - **Resolution:**
@@ -288,7 +288,7 @@ sequenceDiagram
      - No OCSP.
 7. **Public browsers can't use hybrid certificates.**
    - **Resolution:**
-     - Endpoints facing the public in the realm's domain hold two chains, one hybrid and one from the Web PKI. App routes on custom domains outside it hold Web PKI certificates only ([0026](../decisions/0026-realm-as-cloud-provider.md), rule 14).
+     - Endpoints facing the public in the realm's domain hold two chains, one hybrid and one from the Web PKI. App routes on custom domains outside it hold Web PKI certificates only ([0020](../decisions/0020-realm-certificate-authority.md), rule 11).
      - ASPIS clients accept only the realm's root, or a cross-certified path, for names in the realm's domain ([0020](../decisions/0020-realm-certificate-authority.md), rule 11).
      - The edge moves to Merkle Tree Certificates when they arrive.
 8. **Self-certifying node names versus names asserted by a CA.**

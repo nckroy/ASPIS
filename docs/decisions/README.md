@@ -3,7 +3,9 @@
 
 # Architecture decision records
 
-Each record captures one decision: its context, what was decided, and the consequences. Records are numbered in order and never renumbered. A record that is replaced keeps its file, with its status changed to "Superseded by NNNN".
+Each record captures one decision: its context, what was decided, and the consequences. Records are numbered in order and never renumbered.
+
+During the build phase, records are edited in place, so each one always says what is in force. A change to an accepted record is proposed as an edit in a pull request, and merging it accepts the change. Git history records what changed and when. A record's `Date` line is the date it was first written. When a record is edited on a later day than its date, its Date line adds "updated" and that day, as 2026-11-24, updated 2026-11-26. The index copies each record's Date line. A record that no longer applies keeps its file and its number, with its status changed to "Superseded by NNNN" or "Withdrawn".
 
 ## Founding requirements
 
@@ -34,37 +36,37 @@ These come from the project brief and aren't re-decided here:
 
 | # | Decision | Status | Date |
 |---|---|---|---|
-| [0001](0001-object-identifiers.md) | Object identifiers: 256 bits, self-certifying, no clock | Accepted | 2026-11-24 |
-| [0002](0002-capability-security-model.md) | Capabilities in the kernel; object IDs are names | Accepted | 2026-11-24 |
-| [0003](0003-hybrid-post-quantum-cryptography.md) | Hybrid post-quantum cryptography | Accepted | 2026-11-24 |
+| [0001](0001-object-identifiers.md) | Object identifiers: 256 bits, self-certifying, no clock | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0002](0002-capability-security-model.md) | Capabilities in the kernel; object IDs are names | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0003](0003-hybrid-post-quantum-cryptography.md) | Hybrid post-quantum cryptography | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0004](0004-network-transparency-and-failure.md) | Network transparency: scope and failure semantics | Accepted | 2026-11-24 |
 | [0005](0005-single-level-store.md) | Single-level store as the primary I/O model | Accepted | 2026-11-24 |
-| [0006](0006-uefi-boot-image.md) | Boot: a UEFI PE32+ image loaded by GRUB | Accepted | 2026-11-24 |
+| [0006](0006-uefi-boot-image.md) | Boot: a UEFI PE32+ image loaded by GRUB | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0007](0007-initial-hardware-targets.md) | Initial hardware targets: QEMU `virt`, then Raspberry Pi 4 | Accepted | 2026-11-24 |
-| [0008](0008-mpl-2.0-license.md) | License: MPL-2.0 | Accepted | 2026-11-24 |
+| [0008](0008-mpl-2.0-license.md) | License: MPL-2.0 | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0009](0009-text-as-graphics-console.md) | Console: text as graphics from the first kernel message | Accepted | 2026-11-24 |
 | [0010](0010-svg-core-primitive.md) | SVG as a core primitive: the native SVG layer and Display SVG | Accepted | 2026-11-24 |
 | [0011](0011-dm-window-system.md) | dm: the window system, built on Display SVG | Accepted | 2026-11-24 |
 | [0012](0012-posix-compatibility-layer.md) | POSIX compatibility: a user-space personality on ASPIS APIs | Accepted | 2026-11-24 |
-| [0013](0013-abnf-for-protocols-and-calls.md) | ABNF for protocols, formats, and every RPC and IPC call | Accepted | 2026-11-24 |
-| [0014](0014-versioned-object-apis.md) | Versioned object APIs | Accepted | 2026-11-24 |
-| [0015](0015-jwt-tokens-and-oidc-identity.md) | Security tokens: JWTs, with OpenID Connect for user and workload identity | Accepted | 2026-11-24 |
-| [0016](0016-authorization-sparse-merkle-tree.md) | Authorization store: a sparse Merkle tree, revoked by branch | Accepted | 2026-11-24 |
-| [0017](0017-openid-federation-membership.md) | Joining OpenID Federation topologies | Accepted | 2026-11-24 |
-| [0018](0018-cedar-policy-language.md) | Cedar as the realm's policy language and engine | Accepted | 2026-11-24 |
-| [0019](0019-authzen-decision-protocol.md) | AuthZEN for requesting and receiving authorization decisions | Accepted | 2026-11-24 |
-| [0020](0020-realm-certificate-authority.md) | The realm as its own certificate authority, with hybrid post-quantum certificates | Accepted | 2026-11-24 |
+| [0013](0013-abnf-for-protocols-and-calls.md) | ABNF for protocols, formats, and every RPC and IPC call | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0014](0014-versioned-object-apis.md) | Versioned object APIs | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0015](0015-jwt-tokens-and-oidc-identity.md) | Security tokens: JWTs, with OpenID Connect for user and workload identity | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0016](0016-authorization-sparse-merkle-tree.md) | Authorization store: a sparse Merkle tree, revoked by branch | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0017](0017-openid-federation-membership.md) | Joining OpenID Federation topologies | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0018](0018-cedar-policy-language.md) | Cedar as the realm's policy language and engine | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0019](0019-authzen-decision-protocol.md) | AuthZEN for requesting and receiving authorization decisions | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0020](0020-realm-certificate-authority.md) | The realm as its own certificate authority, with hybrid post-quantum certificates | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0021](0021-entropy-before-keys.md) | Entropy: no key before the generator is seeded | Accepted | 2026-11-24 |
-| [0022](0022-spiffe-and-wimse-workload-identity.md) | Workload identity that conforms to SPIFFE and WIMSE | Accepted | 2026-11-24 |
-| [0023](0023-copyright-notices.md) | Copyright notices | Accepted | 2026-11-24 |
+| [0022](0022-spiffe-and-wimse-workload-identity.md) | Workload identity that conforms to SPIFFE and WIMSE | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0023](0023-copyright-notices.md) | Copyright notices | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0024](0024-diagrams-mermaid-and-c4.md) | Diagrams: Mermaid, with the C4 model for context diagrams | Accepted | 2026-11-24 |
-| [0025](0025-twelve-factor-app-contract.md) | Twelve-factor apps: the app's contract as native APIs | Accepted | 2026-11-24 |
-| [0026](0026-realm-as-cloud-provider.md) | The realm as a virtual cloud provider for twelve-factor apps | Accepted | 2026-11-24 |
-| [0027](0027-applications-extend-the-system.md) | Applications extend the system through objects and versioned interfaces | Accepted | 2026-11-24 |
-| [0028](0028-discovery-and-realm-catalog.md) | Discovery: a realm catalog of interfaces, types and objects, updated in real time | Accepted | 2026-11-24 |
-| [0029](0029-founding-node-self-signed-certificate.md) | The founding node's initial certificate is self-signed | Accepted | 2026-11-24 |
-| [0030](0030-bind-tokens-sessions-and-group-memberships.md) | What managers accept, when sessions end, and where group memberships come from | Accepted | 2026-11-24 |
-| [0031](0031-abnf-is-not-a-command-language.md) | ABNF specifies protocols and formats, not the command interpreter | Accepted | 2026-11-24 |
+| [0025](0025-twelve-factor-app-contract.md) | Twelve-factor apps: the app's contract as native APIs | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0026](0026-realm-as-cloud-provider.md) | The realm as a virtual cloud provider for twelve-factor apps | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0027](0027-applications-extend-the-system.md) | Applications extend the system through objects and versioned interfaces | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0028](0028-discovery-and-realm-catalog.md) | Discovery: a realm catalog of interfaces, types and objects, updated in real time | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0029](0029-founding-node-self-signed-certificate.md) | The founding node's initial certificate is self-signed | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0030](0030-bind-tokens-sessions-and-group-memberships.md) | What managers accept, when sessions end, and where group memberships come from | Superseded by [0015](0015-jwt-tokens-and-oidc-identity.md) and [0018](0018-cedar-policy-language.md) | 2026-11-24 |
+| [0031](0031-abnf-is-not-a-command-language.md) | ABNF specifies protocols and formats, not the command interpreter | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0032](0032-stateful-services-run-as-platform-deploys.md) | Stateful services run as platform deploys | Accepted | 2026-11-24 |
 | [0033](0033-contributions-docs-license-and-notice-years.md) | Contributions under the DCO, documents under CC BY 4.0, and year ranges in notices | Accepted | 2026-11-25 |
 | [0034](0034-noto-fonts-under-ofl.md) | Fonts: Noto, under the SIL Open Font License, with atlases at 16, 24 and 32 pixels | Accepted | 2026-11-25 |
@@ -76,7 +78,7 @@ These come from the project brief and aren't re-decided here:
 | [0040](0040-the-stub-checks-the-initial-image.md) | The stub checks the initial image against a digest in `aspis.efi` | Accepted | 2026-11-25 |
 | [0041](0041-boot-abi.md) | The boot ABI: entry state, boot information and kernel arguments | Accepted | 2026-11-25 |
 | [0042](0042-log-ring-and-panic-path.md) | The kernel log ring and the panic path | Accepted | 2026-11-25 |
-| [0043](0043-qemu-boots-with-acpi-off.md) | QEMU configurations turn ACPI off, so the firmware passes the device tree | Accepted | 2026-11-25 |
-| [0044](0044-stub-undoes-grubs-command-line.md) | The stub undoes GRUB's rewriting of the command line | Accepted | 2026-11-25 |
-| [0045](0045-linking-the-kernel-and-stub-on-stable-rust.md) | Linking the kernel and the stub on stable Rust | Accepted | 2026-11-25 |
+| [0043](0043-qemu-boots-with-acpi-off.md) | QEMU configurations turn ACPI off, so the firmware passes the device tree | Superseded by [0036](0036-qemu-configuration-and-test-builds.md) | 2026-11-25 |
+| [0044](0044-stub-undoes-grubs-command-line.md) | The stub undoes GRUB's rewriting of the command line | Superseded by [0041](0041-boot-abi.md) | 2026-11-25 |
+| [0045](0045-linking-the-kernel-and-stub-on-stable-rust.md) | Linking the kernel and the stub on stable Rust | Superseded by [0035](0035-toolchain-image-linkage-and-esp-layout.md) | 2026-11-25 |
 | [0046](0046-fallback-fonts-for-wgl4-symbols.md) | Fallback Noto fonts for the WGL4 symbols Noto Sans Mono lacks | Accepted | 2026-11-25 |

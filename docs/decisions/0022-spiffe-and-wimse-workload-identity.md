@@ -3,8 +3,8 @@
 
 # 0022. Workload identity that conforms to SPIFFE and WIMSE
 
-- **Status:** Accepted. Amends [0015](0015-jwt-tokens-and-oidc-identity.md) (rule 2) and [0020](0020-realm-certificate-authority.md) (rule 5).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -25,7 +25,7 @@ The analysis finds the two compatible with ASPIS, given the rules below.
 ## Decision
 
 1. **The realm is a SPIFFE and WIMSE trust domain**, named by its DNS name in lower case.
-2. **Identity URIs use the `spiffe` scheme.** This amends [0020](0020-realm-certificate-authority.md) rule 5, which left the scheme open.
+2. **Identity URIs use the `spiffe` scheme.** Node and workload certificates carry the identity URI as their URI subjectAltName ([0020](0020-realm-certificate-authority.md), rule 5).
    - A principal's identity URI is `spiffe://<realm-domain>/<object-id-text>`. The same URI is both a SPIFFE ID and a WIMSE identifier.
    - The URI renders the principal's object ID, and the registry keeps the principal's metadata.
    - The object ID's text form ([0001](0001-object-identifiers.md), [0013](0013-abnf-for-protocols-and-calls.md)) uses only SPIFFE path characters.
@@ -38,7 +38,7 @@ The analysis finds the two compatible with ASPIS, given the rules below.
      - `sub` is the identity URI;
      - `cnf` holds the process's key.
    - Proofs of possession at bind time take the WPT form. ASPIS defines an RPC binding for them, in which `aud` names the object, interface and version being bound ([0014](0014-versioned-object-apis.md)).
-   - **This amends [0015](0015-jwt-tokens-and-oidc-identity.md) rule 2 for WITs:** their `sub` is the identity URI. Access tokens keep the object ID.
+   - Access tokens keep the object ID as their `sub` ([0015](0015-jwt-tokens-and-oidc-identity.md), rule 2).
 5. **Signatures.**
    - Inside ASPIS, WITs and proofs use the composite algorithm ([0015](0015-jwt-tokens-and-oidc-identity.md), rule 3).
    - For peers outside ASPIS, the realm signs with a separate key: ML-DSA-65 where the peer accepts it, as JWT-SVID and WIT-SVID do, and a classical algorithm otherwise.

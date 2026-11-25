@@ -3,7 +3,7 @@
 
 # 0044. The stub undoes GRUB's rewriting of the command line
 
-- **Status:** Accepted. Amends [0041](0041-boot-abi.md) (rule 5).
+- **Status:** Superseded by [0041](0041-boot-abi.md)
 - **Date:** 2026-11-25
 
 ## Context

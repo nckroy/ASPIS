@@ -3,8 +3,8 @@
 
 # 0014. Versioned object APIs
 
-- **Status:** Accepted. Amended by [0028](0028-discovery-and-realm-catalog.md) (rule 5).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -30,7 +30,7 @@ Precedents:
    - Minor versions only add methods or optional fields. Anything incompatible needs a new major version.
    - A manager can serve several major versions at once.
 4. **Binding.** A client binds to an object, an interface ID, a major version and a minimum minor version. The manager replies with the version it will speak and a capability or session ([0002](0002-capability-security-model.md), [0015](0015-jwt-tokens-and-oidc-identity.md)). Method numbers stay stable within a major version.
-5. **Every object implements a base interface for discovery.** It reports which interfaces and versions the object supports, its type, and its attributes. AEGIS's trait lookup and COM's `QueryInterface` did the same job.
+5. **Every object implements a base interface for discovery.** It reports which interfaces and versions the object supports, its type, its attributes and its publisher, and the object's catalog entry if it has one ([0028](0028-discovery-and-realm-catalog.md)). AEGIS's trait lookup and COM's `QueryInterface` did the same job.
 6. **The kernel is versioned too.** Programs reach system calls only through a kernel interface library mapped into every process, as with Fuchsia's vDSO. The library exposes versioned interfaces for kernel objects, and the raw system-call ABI can change underneath it.
 7. **Deprecation.** A major version stays available for a declared support period after its successor ships. The design session sets that period in the API policy.
 

@@ -3,8 +3,8 @@
 
 # 0026. The realm as a virtual cloud provider for twelve-factor apps
 
-- **Status:** Accepted. Amends [0020](0020-realm-certificate-authority.md) (rule 11). Amended by [0027](0027-applications-extend-the-system.md) (rule 7) and [0028](0028-discovery-and-realm-catalog.md) (rule 7).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -93,17 +93,19 @@ Much of what a cloud provider runs, a realm already runs:
      - It spreads requests across ready instances, without session affinity.
      - It carries each connection to its instance over the realm's RPC channel: TLS 1.3 over QUIC, mutually authenticated between nodes ([0020](0020-realm-certificate-authority.md), rule 3).
    - **Public routes** map a hostname, and optionally a path prefix, to a deploy's `web` processes.
-     - Hostnames in the realm's domain hold an HTTPS CA certificate, plus a Web PKI certificate for clients that need one (rule 14).
-     - Custom domains hold Web PKI certificates only.
+     - Hostnames in the realm's domain hold an HTTPS CA certificate, plus a Web PKI certificate for clients that need one ([0020](0020-realm-certificate-authority.md), rule 11).
+     - Custom domains hold Web PKI certificates only ([0020](0020-realm-certificate-authority.md), rule 11).
    - **Internal routes** are reachable only by deploys bound to them.
      - The router is their enforcement point ([0019](0019-authzen-decision-protocol.md)).
      - The network server on the caller's node vouches for which process opened the connection. The router checks that the caller's deploy holds the binding's grant.
 7. **Backing services.**
-   - The service broker keeps a catalog of service types and plans. It provisions, binds, unbinds and deprovisions instances, on the Open Service Broker API's model. Third-party brokers can be registered with it.
+   - The service broker provisions, binds, unbinds and deprovisions instances, on the Open Service Broker API's model. Third-party brokers can be registered with it.
+   - The broker's service types and plans are part of the realm catalog ([0028](0028-discovery-and-realm-catalog.md), rule 3).
    - **Binding grants; unbinding revokes.** A binding grants the deploy's principals access to the service through the authorization tree ([0016](0016-authorization-sparse-merkle-tree.md)). Unbinding revokes the grant's branch.
    - **Kinds of service:**
      - External services are bound as user-provided instances: a locator, plus credentials held in the secret store.
-     - A deploy binds to another deploy through that deploy's internal route.
+     - A native deploy binds directly to another application's published objects, with grants in the authorization tree ([0025](0025-twelve-factor-app-contract.md), rule 5; [0027](0027-applications-extend-the-system.md), rule 9).
+     - Internal routes remain for POSIX apps ([0027](0027-applications-extend-the-system.md), rule 9).
      - The realm offers storage on the single-level store as a service.
 8. **Config and secrets.**
    - A deploy's config vars belong to the deploy. Setting one is an authorized call, and creates a release.
@@ -143,10 +145,6 @@ Much of what a cloud provider runs, a realm already runs:
     - **Across realms.**
       - A release can be promoted from one realm to another when the target trusts the source realm's builder through ASPIS-native federation ([0017](0017-openid-federation-membership.md); [0020](0020-realm-certificate-authority.md), rule 10).
       - A deploy may bind services in a federated realm ([0004](0004-network-transparency-and-failure.md), rule 1).
-14. **Amends [0020](0020-realm-certificate-authority.md), rule 11.**
-    - App routes join the edge endpoints that rule 11 lists. A public route in the realm's domain also holds a Web PKI certificate, obtained with ACME.
-    - A custom domain outside the realm's domain holds Web PKI certificates only, because the HTTPS CA's name constraints confine it to the realm's domain ([0020](0020-realm-certificate-authority.md), rules 1 and 5).
-    - ASPIS clients still never accept a Web PKI certificate for a name in the realm's domain.
 
 ## Consequences
 

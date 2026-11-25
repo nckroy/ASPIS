@@ -3,8 +3,8 @@
 
 # 0018. Cedar as the realm's policy language and engine
 
-- **Status:** Accepted. Amends [0016](0016-authorization-sparse-merkle-tree.md), rule 1. Amended by [0030](0030-bind-tokens-sessions-and-group-memberships.md) (rule 3).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -20,7 +20,7 @@ Cedar is an open-source authorization language. Its model is a principal perform
 
 The engine is written in Rust. The project keeps a definitional model of the language in Lean and tests the engine against it. Cedar became a CNCF Sandbox project in October 2025 ([design note](../design/policy-and-decisions.md)).
 
-[0016](0016-authorization-sparse-merkle-tree.md) stores permissions in each realm's authorization tree and revokes them by branch, but it leaves open what a permission *is*. Cedar answers that.
+[0016](0016-authorization-sparse-merkle-tree.md) stores permissions in each realm's authorization tree and revokes them by branch. This record decides what a permission *is*: a Cedar policy.
 
 ## Decision
 
@@ -29,12 +29,12 @@ The engine is written in Rust. The project keeps a definitional model of the lan
    - per-object grants;
    - rules for principals from external federations ([0017](0017-openid-federation-membership.md));
    - the rules behind POSIX permissions ([0012](0012-posix-compatibility-layer.md)).
-2. **Policies live in the authorization tree.** This amends [0016](0016-authorization-sparse-merkle-tree.md), rule 1.
+2. **Policies live in the authorization tree** ([0016](0016-authorization-sparse-merkle-tree.md), rule 1).
    - **Grants** are template-linked policies: a template (a fixed set of actions) linked to one principal and one resource. They sit at grant leaves under the object's branch.
    - **Realm-wide policies** (static policies and templates) sit under a reserved realm-policy branch.
    - The signed root therefore commits to every policy in force.
 3. **Entities come from trusted sources.**
-   - **Principals** and their group memberships come from the principal tree and the realm registry.
+   - **Principals'** attributes and group memberships come from the principal tree alone. The realm registry still holds principals ([0002](0002-capability-security-model.md), rule 4), but a decision point reads what it needs about them only from its node's replica of the tree ([0019](0019-authzen-decision-protocol.md), rule 5).
    - **Resources**, with their attributes and parent (such as the containing directory), come from the object's manager.
    - **Context** comes from verified token claims ([0015](0015-jwt-tokens-and-oidc-identity.md)), including issuer, assurance, federation topology and trust marks, together with the tree's epoch and the calling channel.
 4. **The schema comes from the IDL.** The IDL compiler ([0013](0013-abnf-for-protocols-and-calls.md)) emits a Cedar schema fragment for each interface version ([0014](0014-versioned-object-apis.md)):
@@ -53,6 +53,8 @@ The engine is written in Rust. The project keeps a definitional model of the lan
 - Directory-inherited access, group membership and assurance-based rules come from Cedar's entity model rather than from code inside each manager.
 - **IDL-derived schema.** Interface versions now carry policy schema, so a new major version needs its policies reviewed.
 - **Fixed action sets.** Templates can't take an action slot, so each grant template fixes its own set of actions.
+- **Group memberships must be recorded in the principal tree,** not only in the registry (rule 3). How the registry's changes reach the tree is part of the tree's write path, which is still to be designed.
+- **Decisions keep working during a partition.** Everything a decision point needs about a principal is in its node's replica ([0019](0019-authzen-decision-protocol.md), rule 3).
 - **Std dependency.** The Cedar engine depends on Rust's standard library, so decision points arrive after the Rust `std` port ([0012](0012-posix-compatibility-layer.md)).
 
 ## References

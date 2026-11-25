@@ -383,7 +383,7 @@ fn command_line() -> Result<String, &'static str> {
     }
     // GRUB's arm64 `linux` command puts `BOOT_IMAGE=<path>` first, escapes
     // `\`, `'` and `"`, and quotes whole words that hold a space. Undo that,
-    // so the kernel gets the grammar's own form (ADR 0044).
+    // so the kernel gets the grammar's own form (ADR 0041, rule 5).
     if kargs::is_grub(out.as_bytes()) {
         let mut converted = alloc::vec![0u8; out.len() * 2 + 16];
         let mut word = alloc::vec![0u8; out.len() + 1];

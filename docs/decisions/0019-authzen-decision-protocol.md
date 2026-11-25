@@ -3,8 +3,8 @@
 
 # 0019. AuthZEN for requesting and receiving authorization decisions
 
-- **Status:** Accepted. Amends [0015](0015-jwt-tokens-and-oidc-identity.md), rule 3, and [0016](0016-authorization-sparse-merkle-tree.md), rule 6.
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -51,9 +51,9 @@ See the [design note](../design/policy-and-decisions.md).
    - step-up hints such as `acr_values`.
 
    An enforcement point rejects a permit whose context it doesn't understand, as the spec allows. Decisions sent across nodes are signed with the node's key.
-8. **Revocation tracking. This amends [0015](0015-jwt-tokens-and-oidc-identity.md) rule 3 and [0016](0016-authorization-sparse-merkle-tree.md) rule 6.**
-   - Managers tag each session and capability with the determining policies from the decision, instead of the grant keys named in tokens. When a new root revokes any of those branches, the session ends.
-   - Token scopes become an upper bound, enforced by a realm-wide Cedar `forbid` rule: no decision ever exceeds the token's scopes.
+8. **Revocation tracking.**
+   - Managers tag each session and capability with the determining policies from the decision, not with grant keys named in tokens. When a new root revokes any of those branches, the session ends ([0016](0016-authorization-sparse-merkle-tree.md), rule 6).
+   - Token scopes are an upper bound, enforced by a realm-wide Cedar `forbid` rule: no decision ever exceeds the token's scopes ([0015](0015-jwt-tokens-and-oidc-identity.md), rule 3).
 9. **Search.** Subject and action search come first, because they can be answered from an object's branch. Resource search follows once a per-principal index exists.
 
 ## Consequences

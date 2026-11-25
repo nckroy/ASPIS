@@ -3,8 +3,8 @@
 
 # 0020. The realm as its own certificate authority, with hybrid post-quantum certificates
 
-- **Status:** Accepted. Amends [0003](0003-hybrid-post-quantum-cryptography.md) (rule 3 and its first consequence), [0013](0013-abnf-for-protocols-and-calls.md) (rule 2) and [0017](0017-openid-federation-membership.md) (rules 8 and 9). Amended by [0022](0022-spiffe-and-wimse-workload-identity.md) (rule 5), [0026](0026-realm-as-cloud-provider.md) (rule 11) and [0029](0029-founding-node-self-signed-certificate.md) (rules 4 and 6).
-- **Date:** 2026-11-24
+- **Status:** Accepted
+- **Date:** 2026-11-24, updated 2026-11-25
 
 ## Context
 
@@ -48,20 +48,23 @@ Facts this decision relies on (details and sources in the [design note](../desig
    - **Mutual authentication.** Both network servers present node certificates.
    - **HTTPS** inside the realm uses the same TLS stack.
    - **Cipher suites** follow [0003](0003-hybrid-post-quantum-cryptography.md) rule 4: `TLS_CHACHA20_POLY1305_SHA256` by default, and `TLS_AES_256_GCM_SHA384` where hardware AES exists.
+   - **Hashes.** TLS 1.3's key schedule keeps SHA-256 or SHA-384, and RFC 10073 pre-hashes with SHA-512. [0003](0003-hybrid-post-quantum-cryptography.md), rule 3 admits the hashes a standard protocol specifies.
    - **Certificates replace no token.** Certificates authenticate nodes and servers. Principals still authenticate with tokens when they bind ([0015](0015-jwt-tokens-and-oidc-identity.md)).
 4. **What the realm certifies.**
    - **Nodes.** The registry enrolls a node once it proves that it holds its genesis key ([0001](0001-object-identifiers.md)). The RPC CA then certifies an operational TLS key that the genesis key has certified, and never the genesis key itself.
+   - **The founding node** is the one exception. The RPC CA doesn't issue its initial certificate: the node signs that certificate with its own genesis key, during the realm-creation ceremony ([0029](0029-founding-node-self-signed-certificate.md)).
    - **Workloads** that need mutual TLS with parties outside ASPIS, such as RFC 8705 client authentication, get an RPC CA certificate for a key they hold.
    - **Servers.** Each HTTPS endpoint in the realm's domain gets an HTTPS CA certificate.
    - Certificates for people are out of scope.
 5. **Every name can be constrained.**
-   - **Node and workload certificates** carry exactly one URI subjectAltName. It is a WIMSE workload identifier: its trust domain is the realm's DNS name, and its path is the principal's object ID in the ABNF text form ([0013](0013-abnf-for-protocols-and-calls.md)).
+   - **Node and workload certificates** carry exactly one URI subjectAltName. It is the principal's identity URI, `spiffe://<realm-domain>/<object-id-text>`, which is both a SPIFFE ID and a WIMSE workload identifier ([0022](0022-spiffe-and-wimse-workload-identity.md), rule 2). Its trust domain is the realm's DNS name, and its path is the principal's object ID in the ABNF text form ([0013](0013-abnf-for-protocols-and-calls.md)).
    - **Server certificates** carry DNS names in the realm's domain.
    - Every name therefore falls under the realm's domain, so the realm and any cross-signer can confine an intermediate with RFC 5280 name constraints. A URI without a host can't be constrained that way, so `urn:` forms aren't used.
 6. **Issuing a certificate is an authorized call.**
    - Each CA is an object with a versioned interface ([0014](0014-versioned-object-apis.md)), and enrollment and renewal are calls on it.
    - The CA asks its node's decision point ([0019](0019-authzen-decision-protocol.md)) whether the caller may obtain a certificate for the names it requests. The rules are Cedar policies in the authorization tree ([0018](0018-cedar-policy-language.md)).
    - Renewal authenticates with the current certificate and uses a new key.
+   - No CA issues the founding node's initial certificate, so no decision point is asked for it. Its replacement is an ordinary renewal ([0029](0029-founding-node-self-signed-certificate.md)).
 7. **Short lives, with revocation through the tree.**
    - End-entity certificates live for seven days at most. They renew automatically and carry no revocation pointers.
    - The CA records every certificate it issues in the authorization tree, under a branch for the issuing CA ([0016](0016-authorization-sparse-merkle-tree.md)). The signed root then commits to every certificate in force, which is the realm's equivalent of Certificate Transparency.
@@ -95,19 +98,11 @@ Facts this decision relies on (details and sources in the [design note](../desig
     - When A stops trusting B, A revokes the cross-certificate. If A stops trusting B because it leaves a topology, the revocation happens in the same epoch as the branches that 0017 rule 5 revokes.
 11. **Classical certificates only at the edge.**
     - Some endpoints must be reachable by clients that can only verify classical signatures: the login page that 0017 rule 10's browser opens, external relying parties, and external enforcement points. These endpoints also hold a Web PKI certificate from a public CA, obtained with ACME (RFC 8555).
+    - App routes ([0026](0026-realm-as-cloud-provider.md), rule 6) are edge endpoints too. A public route in the realm's domain also holds a Web PKI certificate, obtained with ACME.
+    - A custom domain outside the realm's domain holds Web PKI certificates only, because the HTTPS CA's name constraints confine it to the realm's domain (rules 1 and 5).
     - The endpoint picks the chain from the client's signature algorithms and trust anchors.
     - ASPIS clients never accept a Web PKI certificate for a name in the realm's domain. Such names validate only through the realm's root or a cross-certified path.
     - When public post-quantum certificates arrive (Merkle Tree Certificates), the edge adopts them.
-12. **Amendments.**
-    - **[0003](0003-hybrid-post-quantum-cryptography.md), rule 3.**
-      - SHA-3 is the rule for constructs ASPIS defines. Standard protocols keep the hashes they specify: TLS 1.3's key schedule uses SHA-256 or SHA-384, and RFC 10073 pre-hashes with SHA-512.
-      - This also replaces 0003's expectation that RPC would authenticate with key exchange (KEMTLS or PQ-Noise style). TLS AuthKEM can be added through crypto agility if it is standardized.
-    - **[0013](0013-abnf-for-protocols-and-calls.md), rule 2.** TLS, QUIC, X.509, PKCS #10 and CMS keep their own normative notations. ABNF covers what ASPIS defines within them: identity URIs, the ALPN identifier and every RPC message.
-    - **[0017](0017-openid-federation-membership.md), rule 8.** In place of bare transport keys, ASPIS-native federation metadata carries:
-      - the realm's root certificate;
-      - its intermediates' CSRs;
-      - the intermediates' current certificates.
-    - **[0017](0017-openid-federation-membership.md), rule 9.** HTTPS endpoints use certificates as rule 11 above describes.
 
 ## Consequences
 

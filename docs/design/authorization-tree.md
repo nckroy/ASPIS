@@ -3,7 +3,7 @@
 
 # Authorization tree: permissions and revocation with a sparse Merkle tree
 
-*2026-11-24. Input to the design session. The decisions it led to are recorded in [ADR 0016](../decisions/0016-authorization-sparse-merkle-tree.md).*
+*2026-11-24, updated 2026-11-25. Input to the design session. The decisions it led to are recorded in [ADR 0016](../decisions/0016-authorization-sparse-merkle-tree.md).*
 
 1. [The tenet](#1-the-tenet)
 2. [Sparse Merkle trees in brief](#2-sparse-merkle-trees-in-brief)
@@ -90,7 +90,7 @@ A principal key is the principal's 256-bit ID ([0001](../decisions/0001-object-i
 A manager checks the following against its replica at its current epoch. It verifies the token itself, and its node's decision point runs Cedar for the rest ([0019](../decisions/0019-authzen-decision-protocol.md), rules 1 and 3):
 
 1. The access token is valid: signature, `iss`, `aud`, `exp` and `cnf` ([0015](../decisions/0015-jwt-tokens-and-oidc-identity.md)).
-2. A grant that applies is present in the grant tree, with no revoked marker on any prefix of it. Cedar finds it itself, so tokens no longer name grant keys ([0019](../decisions/0019-authzen-decision-protocol.md), rule 8).
+2. A grant that applies is present in the grant tree, with no revoked marker on any prefix of it. Cedar finds it itself, so tokens don't name grant keys ([0019](../decisions/0019-authzen-decision-protocol.md), rule 8).
 3. The token's `sub` is present in the principal tree and not under a revoked marker.
 4. The grant's template covers the requested interface, version and methods ([0014](../decisions/0014-versioned-object-apis.md)), and no `forbid` policy applies ([0018](../decisions/0018-cedar-policy-language.md), rule 6), such as the realm rule that caps every decision at the token's scopes ([0019](../decisions/0019-authzen-decision-protocol.md), rule 8).
 
@@ -114,7 +114,7 @@ Revocation replaces the subtree at a prefix with a marker node:
 
 ## 5. How it fits the rest of ASPIS
 
-- **Tokens** ([0015](../decisions/0015-jwt-tokens-and-oidc-identity.md)): access tokens name the epoch they were issued at, but no longer the grant keys they rely on: Cedar finds the applicable policies itself, and token scopes are an upper bound ([0019](../decisions/0019-authzen-decision-protocol.md), rule 8). A client can attach a proof and a signed root, much as OCSP stapling attaches certificate status.
+- **Tokens** ([0015](../decisions/0015-jwt-tokens-and-oidc-identity.md)): access tokens name the epoch they were issued at, but not the grant keys they rely on: Cedar finds the applicable policies itself, and token scopes are an upper bound ([0019](../decisions/0019-authzen-decision-protocol.md), rule 8). A client can attach a proof and a signed root, much as OCSP stapling attaches certificate status.
 - **Capabilities** ([0002](../decisions/0002-capability-security-model.md)): managers tag each session and capability with the determining policies from its decision ([0019](../decisions/0019-authzen-decision-protocol.md), rule 8). When a new root revokes a branch, they end the matching sessions and revoke the matching kernel capabilities.
 - **POSIX** ([0012](../decisions/0012-posix-compatibility-layer.md)): mode bits become a view of the object's grant branch, and `chmod` writes grants.
 - **Federation:** each realm has its own trees. A grant from another realm is checked against that realm's signed roots, whose keys are trusted through OpenID Federation.

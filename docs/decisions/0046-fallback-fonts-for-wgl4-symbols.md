@@ -3,12 +3,12 @@
 
 # 0046. Fallback Noto fonts for the WGL4 symbols Noto Sans Mono lacks
 
-- **Status:** Accepted. Amends [0034](0034-noto-fonts-under-ofl.md) (rules 1 and 4).
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context
 
-[0034](0034-noto-fonts-under-ofl.md), rule 4 has each console atlas cover WGL4, the box-drawing characters, the block elements and U+FFFD. Rule 1 rasterizes the atlases from Noto Sans Mono, and lets other Noto families be added as fallbacks.
+The console's atlases are rasterized from Noto Sans Mono ([0034](0034-noto-fonts-under-ofl.md), rule 1), and were meant to cover all of WGL4, the box-drawing characters, the block elements and U+FFFD.
 
 Generating M1's atlases on 2026-11-25 showed that Noto Sans Mono v2.014 lacks 23 of WGL4's code points:
 
@@ -17,7 +17,7 @@ Generating M1's atlases on 2026-11-25 showed that Noto Sans Mono v2.014 lacks 23
 - **The ligatures ﬁ and ﬂ** (U+FB01, FB02).
 - **Two private-use code points,** U+F001 and U+F002, which some vendors used for the same ligatures.
 
-The atlases draw all 23 as U+FFFD.
+The atlases drew all 23 as U+FFFD.
 
 A check of the other Noto families' character maps on the same day found:
 
@@ -25,14 +25,12 @@ A check of the other Noto families' character maps on the same day found:
 - **Noto Sans Symbols v2.003** has ☺, U+263A.
 - Both are under OFL-1.1, and their license files declare no Reserved Font Name, as [0034](0034-noto-fonts-under-ofl.md), rule 2 requires of any font ASPIS adopts.
 
-The project owner decided on 2026-11-25 to fill the gap from fallback Noto fonts. The rules below spell that decision out.
+The project owner decided on 2026-11-25 to fill the gap from fallback Noto fonts. [0034](0034-noto-fonts-under-ofl.md), rule 1 names them: the atlas generator takes each glyph from Noto Sans Mono when it has one, then from Noto Sans Math, then from Noto Sans Symbols. [0034](0034-noto-fonts-under-ofl.md), rule 4 gives the set each atlas covers. The rules below settle the five code points that no fallback fills.
 
 ## Decision
 
-1. **Two fallback fonts join the atlases.** The atlas generator takes each glyph from Noto Sans Mono when it has one, then from Noto Sans Math, then from Noto Sans Symbols. Each fallback glyph is scaled to fit the monospace cell and placed on the console's baseline. The two fonts are pinned by release and SHA-512, as rule 1 requires, and vendored under OFL-1.1 with Noto's notices. This amends [0034](0034-noto-fonts-under-ofl.md), rule 1.
-2. **The soft hyphen is drawn as a hyphen.** A console shows the characters it's given, so U+00AD gets the glyph of U+002D.
-3. **The ligatures and the private-use code points leave the set.** A monospace console never ligates, and private-use code points have no standard meaning. The kernel draws them as U+FFFD, as it does any character outside its atlases.
-4. **Each atlas covers WGL4 except U+FB01, U+FB02, U+F001 and U+F002,** plus the box-drawing characters, the block elements and U+FFFD. This amends [0034](0034-noto-fonts-under-ofl.md), rule 4.
+1. **The soft hyphen is drawn as a hyphen.** A console shows the characters it's given, so U+00AD gets the glyph of U+002D.
+2. **The ligatures and the private-use code points leave the set.** A monospace console never ligates, and private-use code points have no standard meaning. The kernel draws them as U+FFFD, as it does any character outside its atlases.
 
 ## Consequences
 
@@ -45,4 +43,4 @@ The project owner decided on 2026-11-25 to fill the gap from fallback Noto fonts
 
 - [Noto Sans Math](https://github.com/notofonts/math) (release NotoSansMath-v3.000); [Noto Sans Symbols](https://github.com/notofonts/symbols) (release NotoSansSymbols-v2.003)
 - [WGL4.0 character set](https://learn.microsoft.com/en-us/typography/opentype/otspec150/wgl4)
-- [0034. Fonts: Noto, under the SIL Open Font License](0034-noto-fonts-under-ofl.md)
+- [0034. Fonts: Noto, under the SIL Open Font License, with atlases at 16, 24 and 32 pixels](0034-noto-fonts-under-ofl.md)

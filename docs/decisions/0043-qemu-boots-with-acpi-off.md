@@ -3,7 +3,7 @@
 
 # 0043. QEMU configurations turn ACPI off, so the firmware passes the device tree
 
-- **Status:** Accepted. Amends [0036](0036-qemu-configuration-and-test-builds.md) (rule 2).
+- **Status:** Superseded by [0036](0036-qemu-configuration-and-test-builds.md)
 - **Date:** 2026-11-25
 
 ## Context

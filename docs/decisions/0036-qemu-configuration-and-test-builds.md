@@ -3,7 +3,7 @@
 
 # 0036. QEMU configuration, the test framework and test builds
 
-- **Status:** Accepted. Amended by [0043](0043-qemu-boots-with-acpi-off.md) (rule 2).
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context
@@ -25,6 +25,7 @@ Facts checked on 2026-11-25:
 - **`ramfb`.** EDK2's driver gives a linear framebuffer in XRGB8888, at 800×600 by default, with 640×480 and 1024×768 also offered.
 - **Ending a run.** Under TCG, a guest can end QEMU with an exit status through semihosting `SYS_EXIT`. PSCI `SYSTEM_OFF` ends it with status 0.
 - **Firmware levels.** With `virtualization=off`, EDK2 enters the boot stub at EL1. With `virtualization=on`, it enters at EL2.
+- **ACPI or the device tree.** EDK2's ArmVirtQemu firmware installs either the ACPI tables or the device tree in the UEFI configuration table, never both. `virt` has ACPI on by default, so the firmware withholds the device tree unless the machine sets `acpi=off`. M1's first boot (2026-11-25) found this: the kernel got no device tree, and so no UART ([0043](0043-qemu-boots-with-acpi-off.md)).
 - **Test harnesses.** Rust's `custom_test_frameworks` is unstable.
 
 The project owner decided on 2026-11-25: two configurations on every change and the full matrix nightly. The rules below spell that decision out.
@@ -33,9 +34,11 @@ The project owner decided on 2026-11-25: two configurations on every change and 
 
 1. **The platform is pinned.** CI uses QEMU 11.1.3 with the EDK2 build it bundles, and GRUB 2.14 arm64-efi built from source. Moving to a newer version is a commit of its own.
 2. **Every configuration is `virt` with these devices:**
-   - `-machine virt,iommu=smmuv3` and a selected GIC version;
+   - `-machine virt,iommu=smmuv3,acpi=off` and a selected GIC version;
    - `ramfb`, the PL011 UART and the PL031 real-time clock;
    - `virtio-rng-pci`, `virtio-blk-pci` and `virtio-net-pci`, all on PCIe so that the SMMUv3 covers them. ASPIS uses no virtio-mmio devices.
+
+   With ACPI off, the firmware passes the device tree, which is the only hardware description on QEMU until a decision adds ACPI support (C65). A configuration that tests ACPI then turns ACPI on, and so gets no device tree.
 3. **Every change runs two configurations**, each with 4 cores and 1 GiB:
    - `cortex-a72` with a GICv2, which is close to the Raspberry Pi 4;
    - `max` with a GICv3, which exercises `RNDR` and newer features.
@@ -59,6 +62,9 @@ The project owner decided on 2026-11-25: two configurations on every change and 
 
 - **The Pi 4's GICv2 is tested on every change.** Breakage that only the Pi 4 would see shows up before merging, not a day later.
 - **DMA isolation can be developed from M2.** All devices sit behind the SMMUv3 from the start.
+- **The kernel finds its devices on QEMU.** The device tree reaches the kernel through the stub, as [0041](0041-boot-abi.md), rule 3 expects. ACPI paths aren't exercised on QEMU until C65 adds ACPI, and with it a configuration that runs with ACPI on.
+- **The Pi 4 needs the same setting.** Its firmware defaults to ACPI only, and must be set to pass a device tree before ASPIS can find its devices there (C63).
+- **A missing device tree shows only on screen.** Until it can read ACPI, a kernel that gets no device tree has no UART. It still draws its console, which reports "device tree: no", so a headless node with this fault is silent.
 - **Semihosting works only under TCG**, so in-QEMU tests don't run under KVM or on hardware. Hardware tests (C63) report over the UART instead.
 - **A test seed never reaches a real node.** A production build can't accept one, and CI checks for test code.
 - **The nightly matrix is large**: 24 combinations, plus the EL2 run. Its cost is CI time, not developer time.
@@ -66,6 +72,6 @@ The project owner decided on 2026-11-25: two configurations on every change and 
 ## References
 
 - [QEMU `virt`](https://www.qemu.org/docs/master/system/arm/virt.html); [QEMU Arm CPU features](https://gitlab.com/qemu-project/qemu/-/blob/v11.1.3/docs/system/arm/emulation.rst); [QEMU semihosting](https://gitlab.com/qemu-project/qemu/-/blob/v11.1.3/semihosting/arm-compat-semi.c); [QEMU PSCI](https://gitlab.com/qemu-project/qemu/-/blob/v11.1.3/target/arm/tcg/psci.c)
-- [EDK2 `QemuRamfbDxe`](https://github.com/tianocore/edk2/blob/master/OvmfPkg/QemuRamfbDxe/QemuRamfb.c); [ArmVirtQemu firmware volume](https://github.com/tianocore/edk2/blob/master/ArmVirtPkg/ArmVirtQemuFvMain.fdf.inc)
-- [pftf/RPi4](https://github.com/pftf/RPi4)
-- [0007. Initial hardware targets](0007-initial-hardware-targets.md); [0021. Entropy](0021-entropy-before-keys.md)
+- [EDK2 `QemuRamfbDxe`](https://github.com/tianocore/edk2/blob/master/OvmfPkg/QemuRamfbDxe/QemuRamfb.c); [ArmVirtQemu firmware volume](https://github.com/tianocore/edk2/blob/master/ArmVirtPkg/ArmVirtQemuFvMain.fdf.inc); [EDK2 ArmVirtPkg](https://github.com/tianocore/edk2/tree/master/ArmVirtPkg) (`PlatformHasAcpiDtDxe` installs ACPI or the device tree)
+- [pftf/RPi4](https://github.com/pftf/RPi4) (system table mode)
+- [0007. Initial hardware targets](0007-initial-hardware-targets.md); [0021. Entropy](0021-entropy-before-keys.md); [0043. QEMU configurations turn ACPI off](0043-qemu-boots-with-acpi-off.md)
