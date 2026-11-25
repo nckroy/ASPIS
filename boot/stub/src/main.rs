@@ -381,11 +381,23 @@ fn command_line() -> Result<String, &'static str> {
     if dropped {
         say!("aspis stub: dropped characters outside ASCII from the command line");
     }
-    // GRUB's arm64 `linux` command puts `BOOT_IMAGE=<path>` first. It isn't
-    // a kernel argument, and its key isn't lowercase.
-    let trimmed = out.trim_start();
-    if let Some(rest) = trimmed.strip_prefix("BOOT_IMAGE=") {
-        out = String::from(rest.split_once(' ').map_or("", |(_, r)| r));
+    // GRUB's arm64 `linux` command puts `BOOT_IMAGE=<path>` first, escapes
+    // `\`, `'` and `"`, and quotes whole words that hold a space. Undo that,
+    // so the kernel gets the grammar's own form (ADR 0044).
+    if kargs::is_grub(out.as_bytes()) {
+        let mut converted = alloc::vec![0u8; out.len() * 2 + 16];
+        let mut word = alloc::vec![0u8; out.len() + 1];
+        match kargs::from_grub(out.as_bytes(), &mut converted, &mut word) {
+            Ok(n) => {
+                converted.truncate(n);
+                // ASCII in, ASCII out.
+                out = String::from_utf8(converted).unwrap_or_default();
+            }
+            Err(e) => {
+                say!("aspis stub: can't read GRUB's command line ({e:?}); passing no arguments");
+                out.clear();
+            }
+        }
     }
     if out.len() > MAX_COMMAND_LINE {
         out.truncate(MAX_COMMAND_LINE);

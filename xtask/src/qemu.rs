@@ -22,8 +22,14 @@ pub struct Options {
     pub config: String,
     pub args: String,
     pub expect: Option<String>,
+    /// Fail at once if the UART shows this text.
+    pub reject: Option<String>,
     pub screenshot: Option<PathBuf>,
     pub timeout: u64,
+    /// Cores, memory, and whether the firmware runs at EL2 (ADR 0036, rule 4).
+    pub smp: u32,
+    pub memory: String,
+    pub virtualization: bool,
 }
 
 impl Default for Options {
@@ -34,8 +40,12 @@ impl Default for Options {
             config: "a72-v2".into(),
             args: String::new(),
             expect: None,
+            reject: None,
             screenshot: None,
             timeout: 120,
+            smp: 4,
+            memory: "1G".into(),
+            virtualization: false,
         }
     }
 }
@@ -57,6 +67,9 @@ impl Options {
                 "--args" => o.args = value(),
                 "--expect" => o.expect = Some(value()),
                 "--screenshot" => o.screenshot = Some(PathBuf::from(value())),
+                "--smp" => o.smp = value().parse().unwrap_or_else(|_| fail("bad --smp")),
+                "--memory" => o.memory = value(),
+                "--virtualization" => o.virtualization = true,
                 "--timeout" => {
                     o.timeout = value().parse().unwrap_or_else(|_| fail("bad --timeout"))
                 }
@@ -67,15 +80,24 @@ impl Options {
     }
 }
 
-/// The two configurations every change runs (ADR 0036, rule 3).
+/// A configuration is a CPU and a GIC version: `a72-v2` and `max-v3` run
+/// on every change (ADR 0036, rule 3), and `a72-v3` and `max-v2` join them
+/// nightly (rule 4).
 fn machine(config: &str) -> (&'static str, &'static str) {
-    match config {
-        "a72-v2" => ("cortex-a72", "2"),
-        "max-v3" => ("max", "3"),
-        other => fail(format!(
-            "unknown configuration {other}; use a72-v2 or max-v3"
+    let (cpu, gic) = config.split_once("-v").unwrap_or(("", ""));
+    let cpu = match cpu {
+        "a72" => "cortex-a72",
+        "max" => "max",
+        _ => fail(format!(
+            "unknown configuration {config}; use a72-v2, a72-v3, max-v2 or max-v3"
         )),
-    }
+    };
+    let gic = match gic {
+        "2" => "2",
+        "3" => "3",
+        _ => fail(format!("unknown GIC version in {config}")),
+    };
+    (cpu, gic)
 }
 
 /// QEMU's bundled EDK2 firmware (ADR 0036, rule 1).
@@ -101,7 +123,14 @@ fn firmware_dir() -> PathBuf {
 /// expected text appears.
 pub fn run(o: &Options) -> i32 {
     let images = o.flavor.out();
-    let work = build_dir().join(format!("run-{}-{}", o.flavor.name(), o.config));
+    let work = build_dir().join(format!(
+        "run-{}-{}-{}c-{}{}",
+        o.flavor.name(),
+        o.config,
+        o.smp,
+        o.memory,
+        if o.virtualization { "-el2" } else { "" }
+    ));
     fs::create_dir_all(&work).unwrap();
     let esp_img = work.join("esp.img");
     if o.direct {
@@ -123,9 +152,13 @@ pub fn run(o: &Options) -> i32 {
     let mut cmd = Command::new("qemu-system-aarch64");
     cmd.args([
         "-machine",
-        &format!("virt,gic-version={gic},iommu=smmuv3,acpi=off"),
+        &format!(
+            "virt,gic-version={gic},iommu=smmuv3,acpi=off,virtualization={}",
+            if o.virtualization { "on" } else { "off" }
+        ),
     ])
-    .args(["-cpu", cpu, "-smp", "4", "-m", "1G"])
+    .args(["-cpu", cpu])
+    .args(["-smp", &o.smp.to_string(), "-m", &o.memory])
     .arg("-drive")
     .arg(format!(
         "if=pflash,format=raw,unit=0,readonly=on,file={}",
@@ -199,6 +232,14 @@ pub fn run(o: &Options) -> i32 {
         }
         while let Ok(line) = rx.try_recv() {
             seen.push_str(&line);
+        }
+        if let Some(r) = &o.reject
+            && seen.contains(r.as_str())
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            eprintln!("xtask: saw \"{r}\", which fails the run");
+            break 1;
         }
         if let Some(e) = &o.expect
             && seen.contains(e.as_str())

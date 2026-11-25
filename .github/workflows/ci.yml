@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+# Every change (C68; ADRs 0013, 0033, 0036 and 0038).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  docs:
+    name: Licenses, sign-offs, grammars and diagrams
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: REUSE (ADR 0033, rule 3)
+        run: pipx run --spec 'reuse[charset-normalizer]==6.3.0' reuse lint
+
+      - name: Sign-offs (ADR 0033, rule 1)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: sh tools/ci/check-dco.sh "$BASE" "$HEAD"
+
+      - name: Grammars and their vectors (ADR 0013, rule 6)
+        run: |
+          python3 -m venv "$RUNNER_TEMP/abnf"
+          "$RUNNER_TEMP/abnf/bin/pip" install --quiet abnf==2.9.1
+          "$RUNNER_TEMP/abnf/bin/python" -I tools/ci/check-grammars.py grammars
+
+      - name: Diagrams render with the newest Mermaid (ADR 0024)
+        run: |
+          npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/mermaid" mermaid@latest puppeteer-core@25
+          git ls-files -z '*.md' | NODE_PATH="$RUNNER_TEMP/mermaid/node_modules" xargs -0 node tools/ci/check-mermaid.js
+
+  lint:
+    name: rustfmt and clippy
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          qemu: "false"
+      - run: cargo xtask lint
+
+  test:
+    name: Host and QEMU tests
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      # Host tests, the production-image check, the in-QEMU tests on the two
+      # per-change configurations, a boot through GRUB on each, and a
+      # forced panic (ADR 0036, rules 3 and 8).
+      - run: mkdir -p build && cargo xtask test 2>&1 | tee build/test.log
+        shell: bash -o pipefail {0}
+      - name: Screens and logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qemu-screens
+          path: |
+            build/screen-*.png
+            build/test.log
+          if-no-files-found: ignore
+
+  reproducible:
+    name: Reproducible images
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          qemu: "false"
+      # Two builds, in different directories and as different users, must
+      # give the same aspis.efi and initfs.img (ADR 0038, rule 1).
+      - run: sh tools/ci/reproducible.sh

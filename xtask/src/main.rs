@@ -8,6 +8,8 @@
 //! cargo xtask run [options]                 boot in QEMU
 //! cargo xtask test                          host tests, then QEMU tests
 //! cargo xtask check-production              no test code in production images
+//! cargo xtask matrix                        the nightly QEMU matrix
+//! cargo xtask lint                          rustfmt and clippy, every target
 //! cargo xtask grub                          GRUB 2.14 arm64-efi, in Docker
 //! ```
 //!
@@ -21,6 +23,9 @@
 //! --expect "<text>"       stop with success once the UART shows <text>
 //! --screenshot <file>     save the screen (PNG) when --expect matches
 //! --timeout <seconds>     give up after this long (default 120)
+//! --smp <n>               cores (default 4)
+//! --memory <size>         memory (default 1G)
+//! --virtualization        the firmware runs at EL2
 //! ```
 
 mod esp;
@@ -115,6 +120,8 @@ fn main() {
         "grub" => {
             grub();
         }
+        "matrix" => matrix(),
+        "lint" => lint(),
         other => fail(format!("unknown command {other}")),
     }
 }
@@ -167,15 +174,42 @@ fn cargo(flavor: Flavor) -> Command {
     c
 }
 
-/// The glyph atlases, from the pinned font (ADR 0034).
+/// The glyph atlases, from the pinned font (ADR 0034), and the logo.
 fn atlases() -> PathBuf {
     let out = build_dir().join("atlas");
     fs::create_dir_all(&out).unwrap();
     run_cmd(
         Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
             .current_dir(root())
-            .args(["run", "--quiet", "--release", "-p", "atlas", "--", "--font"])
+            .args([
+                "run",
+                "--locked",
+                "--quiet",
+                "--release",
+                "-p",
+                "atlas",
+                "--",
+                "--font",
+            ])
             .arg(root().join("assets/fonts/NotoSansMono-Regular.ttf"))
+            .arg("--out")
+            .arg(&out),
+    );
+    // The boot logo, at the size of each atlas (ADR 0009, rule 3).
+    run_cmd(
+        Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+            .current_dir(root())
+            .args([
+                "run",
+                "--locked",
+                "--quiet",
+                "--release",
+                "-p",
+                "logo",
+                "--",
+                "--svg",
+            ])
+            .arg(root().join("assets/logo/aspis-boot.svg"))
             .arg("--out")
             .arg(&out),
     );
@@ -206,7 +240,7 @@ pub fn build(flavor: Flavor) -> PathBuf {
     // 1. The kernel (ADR 0035, rule 2).
     run_cmd(
         cargo(flavor)
-            .args(["build", "--release", "-p", "aspis-kernel"])
+            .args(["build", "--locked", "--release", "-p", "aspis-kernel"])
             .args(["--target", "aarch64-unknown-none"])
             .env("ASPIS_ATLAS_DIR", &atlas),
     );
@@ -223,7 +257,7 @@ pub fn build(flavor: Flavor) -> PathBuf {
     // 3. The stub, which embeds both, then signing (not yet: C64).
     run_cmd(
         cargo(flavor)
-            .args(["build", "--release", "-p", "aspis-stub"])
+            .args(["build", "--locked", "--release", "-p", "aspis-stub"])
             .args(["--target", "aarch64-unknown-uefi"])
             .env("ASPIS_KERNEL_ELF", out.join("kernel.elf"))
             .env("ASPIS_INITFS_DIGEST", out.join("initfs.sha512")),
@@ -243,7 +277,11 @@ pub fn build(flavor: Flavor) -> PathBuf {
 }
 
 /// GRUB 2.14 arm64-efi, built in Docker (ADR 0036, rule 1).
+/// `ASPIS_GRUB_EFI` names a `BOOTAA64.EFI` built elsewhere, as CI does.
 pub fn grub() -> PathBuf {
+    if let Ok(path) = env::var("ASPIS_GRUB_EFI") {
+        return PathBuf::from(path);
+    }
     let out = build_dir().join("grub/BOOTAA64.EFI");
     if out.exists() {
         return out;
@@ -291,7 +329,7 @@ fn test() {
     run_cmd(
         Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
             .current_dir(root())
-            .args(["test", "--quiet"])
+            .args(["test", "--locked", "--quiet"])
             .args([
                 "-p",
                 "bootinfo",
@@ -303,6 +341,8 @@ fn test() {
                 "glyph-atlas",
                 "-p",
                 "atlas",
+                "-p",
+                "logo",
             ]),
     );
     build(Flavor::Production);
@@ -335,6 +375,20 @@ fn test() {
             failed.push(format!("production boot on {config}"));
         }
     }
+    // A quoted value in a GRUB menu entry reaches the kernel intact
+    // (ADR 0044): GRUB rewrites it, and the stub undoes that.
+    let opts = qemu::Options {
+        flavor: Flavor::Production,
+        config: "a72-v2".into(),
+        args: "root.name=\"two words\" log.level=debug".into(),
+        expect: Some("root.name is for the root server".into()),
+        reject: Some("error at byte".into()),
+        ..qemu::Options::default()
+    };
+    eprintln!("xtask: quoted kernel arguments through GRUB");
+    if qemu::run(&opts) != 0 {
+        failed.push("quoted kernel arguments".into());
+    }
     // A forced panic reaches the UART and the framebuffer (M1's outcome).
     let opts = qemu::Options {
         flavor: Flavor::Test,
@@ -353,4 +407,126 @@ fn test() {
     } else {
         fail(format!("failed: {}", failed.join(", ")));
     }
+}
+
+/// The nightly matrix (ADR 0036, rule 4): each CPU with each GIC, at 1, 4
+/// and 8 cores and 1 and 3 GiB, running the in-QEMU tests; then one run
+/// with the firmware at EL2, which tests the stub's path from EL2 to EL1.
+fn matrix() {
+    build(Flavor::Test);
+    let mut runs = Vec::new();
+    for config in ["a72-v2", "a72-v3", "max-v2", "max-v3"] {
+        for smp in [1, 4, 8] {
+            for memory in ["1G", "3G"] {
+                runs.push(qemu::Options {
+                    flavor: Flavor::Test,
+                    config: config.into(),
+                    smp,
+                    memory: memory.into(),
+                    timeout: 300,
+                    ..qemu::Options::default()
+                });
+            }
+        }
+    }
+    runs.push(qemu::Options {
+        flavor: Flavor::Test,
+        config: "max-v3".into(),
+        virtualization: true,
+        timeout: 300,
+        ..qemu::Options::default()
+    });
+    let mut failed = Vec::new();
+    for (i, o) in runs.iter().enumerate() {
+        let name = format!(
+            "{}, {} cores, {}{}",
+            o.config,
+            o.smp,
+            o.memory,
+            if o.virtualization { ", EL2" } else { "" }
+        );
+        eprintln!("xtask: matrix {}/{}: {name}", i + 1, runs.len());
+        if qemu::run(o) != 0 {
+            failed.push(name);
+        }
+    }
+    if failed.is_empty() {
+        eprintln!("xtask: all {} matrix runs passed", runs.len());
+    } else {
+        fail(format!("matrix runs failed: {}", failed.join("; ")));
+    }
+}
+
+/// rustfmt and clippy over every crate, each for the target it builds for.
+fn lint() {
+    let cargo = || {
+        let mut c = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+        c.current_dir(root());
+        c
+    };
+    run_cmd(cargo().args(["fmt", "--all", "--check"]));
+    run_cmd(cargo().args(["clippy", "--locked", "--all-targets"]).args([
+        "-p",
+        "bootinfo",
+        "-p",
+        "kargs",
+        "-p",
+        "initfs",
+        "-p",
+        "glyph-atlas",
+        "-p",
+        "atlas",
+        "-p",
+        "logo",
+        "-p",
+        "xtask",
+        "--",
+        "-D",
+        "warnings",
+    ]));
+    // The kernel and the stub need the build's inputs: lint against them.
+    let out = build(Flavor::Production);
+    let atlas = build_dir().join("atlas");
+    for flavor in [Flavor::Production, Flavor::Test] {
+        run_cmd(
+            cargo()
+                .args([
+                    "clippy",
+                    "--locked",
+                    "-p",
+                    "aspis-kernel",
+                    "--target",
+                    "aarch64-unknown-none",
+                ])
+                .args(["--", "-D", "warnings"])
+                .env("ASPIS_ATLAS_DIR", &atlas)
+                .env(
+                    "CARGO_TARGET_DIR",
+                    build_dir().join(format!("target-clippy-{}", flavor.name())),
+                )
+                .env(
+                    "CARGO_TARGET_AARCH64_UNKNOWN_NONE_RUSTFLAGS",
+                    rustflags(flavor, true),
+                ),
+        );
+    }
+    run_cmd(
+        cargo()
+            .args([
+                "clippy",
+                "--locked",
+                "-p",
+                "aspis-stub",
+                "--target",
+                "aarch64-unknown-uefi",
+            ])
+            .args(["--", "-D", "warnings"])
+            .env("ASPIS_KERNEL_ELF", out.join("kernel.elf"))
+            .env("ASPIS_INITFS_DIGEST", out.join("initfs.sha512"))
+            .env(
+                "CARGO_TARGET_DIR",
+                build_dir().join("target-clippy-production"),
+            ),
+    );
+    eprintln!("xtask: lint clean");
 }

@@ -45,7 +45,9 @@ SECTIONS
 
     . = ALIGN(4096);
     .bss (NOLOAD) : {
+        __boot_pt_start = .;
         *(.bss.boot_pt)
+        __boot_pt_end = .;
         *(.bss .bss.*)
         *(COMMON)
     }

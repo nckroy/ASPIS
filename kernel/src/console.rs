@@ -16,6 +16,15 @@ static ATLAS_16: &[u8] = include_bytes!(concat!(env!("ASPIS_ATLAS_DIR"), "/atlas
 static ATLAS_24: &[u8] = include_bytes!(concat!(env!("ASPIS_ATLAS_DIR"), "/atlas-24.bin"));
 static ATLAS_32: &[u8] = include_bytes!(concat!(env!("ASPIS_ATLAS_DIR"), "/atlas-32.bin"));
 
+/// The boot logo, rasterized at build time four rows high for each atlas
+/// (ADR 0009, rule 3: the kernel holds no SVG code).
+static LOGO_16: &[u8] = include_bytes!(concat!(env!("ASPIS_ATLAS_DIR"), "/logo-16.bin"));
+static LOGO_24: &[u8] = include_bytes!(concat!(env!("ASPIS_ATLAS_DIR"), "/logo-24.bin"));
+static LOGO_32: &[u8] = include_bytes!(concat!(env!("ASPIS_ATLAS_DIR"), "/logo-32.bin"));
+
+/// The logo's ink: white, as drawn.
+pub const LOGO_INK: Rgb = Rgb(0xff, 0xff, 0xff);
+
 /// The boot framebuffer's states (ADR 0042, rule 6). They only go forward.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -84,7 +93,15 @@ impl Console {
     /// below 1280, 24 below 2560, 32 from there, falling back to smaller
     /// ones until the console has at least 80 columns and 25 rows.
     pub fn new(fb: Framebuffer, cell: Option<u16>) -> Option<Self> {
-        if fb.width == 0 || fb.height == 0 || fb.stride < fb.width {
+        // The framebuffer must hold every pixel the console may touch.
+        let needed = (fb.stride as u64)
+            .checked_mul(fb.height as u64)
+            .and_then(|p| p.checked_mul(4));
+        if fb.width == 0
+            || fb.height == 0
+            || fb.stride < fb.width
+            || needed.is_none_or(|n| n > fb.size)
+        {
             return None;
         }
         let atlases = [(16u16, ATLAS_16), (24, ATLAS_24), (32, ATLAS_32)];
@@ -130,7 +147,10 @@ impl Console {
             bg: BACKGROUND,
             shift,
         };
-        c.fill_rect(0, 0, fb.width, fb.height, BACKGROUND);
+        // A title row and at least one text row, or no console.
+        if c.rows < 3 {
+            return None;
+        }
         Some(c)
     }
 
@@ -199,6 +219,40 @@ impl Console {
         self.bitmap((col * cw, row * chh), (cw, chh), g, fg, bg);
     }
 
+    /// Draws the boot logo below the title bar, left-aligned with the text,
+    /// and moves the text area below it. Does nothing if the logo wouldn't
+    /// leave room for text.
+    pub fn logo(&mut self) {
+        let (cw, ch) = self.cell();
+        let bytes = match ch {
+            0..=19 => LOGO_16,
+            20..=27 => LOGO_24,
+            _ => LOGO_32,
+        };
+        let Ok(logo) = glyph_atlas::bitmap::Bitmap::parse(bytes) else {
+            return;
+        };
+        let (w, h) = (logo.width() as u32, logo.height() as u32);
+        let rows = h.div_ceil(ch) + 1;
+        if cw + w > self.fb.width || self.top + rows + 3 > self.rows {
+            return;
+        }
+        self.bitmap(
+            (cw, self.top * ch),
+            (w, h),
+            logo.coverage(),
+            LOGO_INK,
+            BACKGROUND,
+        );
+        self.top += rows;
+        self.row = self.row.max(self.top);
+    }
+
+    /// Clears the whole screen to the console's background.
+    pub fn clear(&self) {
+        self.fill_rect(0, 0, self.fb.width, self.fb.height, BACKGROUND);
+    }
+
     /// A title bar across the top row, which text never scrolls over.
     pub fn title(&mut self, left: &str, right: &str) {
         let (cw, ch) = self.cell();
@@ -236,7 +290,7 @@ impl Console {
         let (_, ch) = self.cell();
         let line = self.fb.stride as usize * 4 * ch as usize;
         let first = (self.top * ch) as usize * self.fb.stride as usize * 4;
-        let count = (self.rows - self.top - 1) as usize * line;
+        let count = self.rows.saturating_sub(self.top + 1) as usize * line;
         // SAFETY: both ranges lie inside the framebuffer.
         unsafe {
             core::ptr::copy(

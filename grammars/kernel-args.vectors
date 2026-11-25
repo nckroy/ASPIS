@@ -12,6 +12,10 @@
 # are written as \x20 so editors don't strip them.
 # Every other byte stands for itself, so a raw UTF-8 character is allowed.
 # Lines starting with "#", and empty lines, are ignored.
+#
+# Directives for tools/ci/check-grammars.py:
+# rule: kernel-args
+# max-length: 4096
 
 # Empty lines and spaces (kernel-args).
 ok	

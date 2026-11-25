@@ -353,3 +353,5 @@ impl<'a> Atlas<'a> {
 
 #[cfg(test)]
 mod tests;
+
+pub mod bitmap;

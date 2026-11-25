@@ -33,6 +33,7 @@ fn main() {
     });
     for size in [16, 24, 32] {
         println!("cargo:rerun-if-changed={atlas}/atlas-{size}.bin");
+        println!("cargo:rerun-if-changed={atlas}/logo-{size}.bin");
     }
     println!("cargo:rustc-env=ASPIS_ATLAS_DIR={atlas}");
 }

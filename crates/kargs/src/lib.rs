@@ -441,6 +441,9 @@ pub struct Lookup<'a> {
     pub count: usize,
 }
 
+mod grub;
+pub use grub::{GrubError, from_grub, is_grub};
+
 /// Finds `key` in a command line. The last occurrence counts, and only
 /// arguments before the first error are searched (ADR 0041, rule 5).
 pub fn lookup<'a>(line: &'a [u8], key: &str) -> Lookup<'a> {

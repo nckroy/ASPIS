@@ -114,15 +114,22 @@ pub extern "C" fn kernel_main(boot_info_phys: u64) -> ! {
     }
 
     // The console, from the first message (ADR 0009, rule 1).
-    if s.console_fb
-        && let Some(fb) = info.framebuffer()
-    {
+    // There is a console whenever there is a framebuffer, so a panic can
+    // reach it even with `console=uart` (ADR 0042, rule 7). The kernel
+    // draws its log there only if `console` includes `fb`.
+    if let Some(fb) = info.framebuffer() {
         // SAFETY: one CPU; nothing else holds the slot yet.
         unsafe { *CONSOLE.0.get() = Console::new(fb, s.cell) };
     }
-    let mut title = log::Line::new();
-    let _ = write!(title, "ASPIS {VERSION}");
-    with_console(|c| c.title(title.as_str(), "first light"));
+    if s.console_fb {
+        let mut title = log::Line::new();
+        let _ = write!(title, "ASPIS {VERSION}");
+        with_console(|c| {
+            c.clear();
+            c.title(title.as_str(), "first light");
+            c.logo();
+        });
+    }
 
     klog!(Notice, "kernel", "ASPIS {VERSION}: first light");
     report_boot(&info, &s, fdt.is_some());

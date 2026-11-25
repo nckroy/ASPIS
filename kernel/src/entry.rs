@@ -65,6 +65,7 @@ global_asm!(
     ".section .text.boot, \"ax\"",
     ".global _start",
     "_start:",
+    "    msr spsel, #1",
     "    mov x19, x0",
     // FP and SIMD: Rust code may use them.
     "    mov x1, #(3 << 20)",
@@ -111,6 +112,25 @@ global_asm!(
     "    add x11, x11, #1",
     "    cmp x11, #16",
     "    b.lo 1b",
+    // The tables were written with the MMU off, straight to memory, but the
+    // walker will read them through the cache. Invalidate any line of them
+    // the cache may hold from before, as Linux's head.S does.
+    "    mrs x12, ctr_el0",
+    "    ubfx x12, x12, #16, #4",
+    "    mov x13, #4",
+    "    lsl x12, x13, x12",
+    "    adrp x13, __boot_pt_start",
+    "    add x13, x13, :lo12:__boot_pt_start",
+    "    adrp x14, __boot_pt_end",
+    "    add x14, x14, :lo12:__boot_pt_end",
+    "    sub x15, x12, #1",
+    "    bic x13, x13, x15",
+    "2:",
+    "    dc ivac, x13",
+    "    add x13, x13, x12",
+    "    cmp x13, x14",
+    "    b.lo 2b",
+    "    dsb sy",
     // MAIR: attr0 device-nGnRE, attr1 normal write-back, attr2 non-cacheable.
     "    movz x7, #0xff04",
     "    movk x7, #0x0044, lsl #16",

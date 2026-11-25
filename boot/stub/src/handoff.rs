@@ -73,11 +73,17 @@ global_asm!(
     "    tlbi vmalle1",
     "    dsb nsh",
     "    isb",
+    // Enter through an exception return, so PSTATE is known: EL1h, which
+    // uses SP_EL1, with DAIF masked (ADR 0041, rule 1).
+    "    mov x3, #0x3c5",
+    "    msr spsr_el1, x3",
+    "    msr elr_el1, x19",
     "    mov x0, x20",
     "    mov x1, xzr",
     "    mov x2, xzr",
     "    mov x3, xzr",
-    "    br x19",
+    "    isb",
+    "    eret",
     // EL2: turn off EL2's MMU and caches, make EL1 AArch64 with no traps
     // the kernel would trip over, and drop to EL1h with DAIF masked.
     "2:",
@@ -94,12 +100,21 @@ global_asm!(
     // HCR_EL2: RW (EL1 is AArch64), nothing else; this also clears E2H.
     "    movz x3, #0x8000, lsl #16",
     "    msr hcr_el2, x3",
+    // The layout of the registers below depends on HCR_EL2.E2H.
+    "    isb",
     // EL1 may use the physical counter and timer.
     "    mov x3, #3",
     "    msr cnthctl_el2, x3",
     "    msr cntvoff_el2, xzr",
-    // No traps of FP, SIMD or system registers to EL2.
-    "    mov x3, #0x33ff",
+    // CPTR_EL2: only its RES1 bits, so FP, SIMD and SVE don't trap to EL2.
+    // Bit 12 (TSM) is RES1 without SME and traps SME with it: clear it
+    // when the CPU has SME.
+    "    mov x3, #0x32ff",
+    "    mrs x4, id_aa64pfr1_el1",
+    "    ubfx x4, x4, #24, #4",
+    "    cbz x4, 3f",
+    "    bic x3, x3, #0x1000",
+    "3:",
     "    msr cptr_el2, x3",
     "    msr hstr_el2, xzr",
     "    msr vttbr_el2, xzr",

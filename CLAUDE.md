@@ -15,8 +15,10 @@ ASPIS is an open-source microkernel operating system, written in Rust for ARM64 
 - `kernel/`: the kernel, a static PIE for `aarch64-unknown-none`, with its linker script.
 - `crates/`: `no_std` libraries shared by the stub, the kernel and the tools: `bootinfo` ([0041](docs/decisions/0041-boot-abi.md)), `kargs` (the kernel-argument grammar), `initfs` ([0037](docs/decisions/0037-initial-image-format-and-contents.md)) and `glyph-atlas` ([0034](docs/decisions/0034-noto-fonts-under-ofl.md)).
 - `grammars/`: ABNF grammars and their test vectors ([0013](docs/decisions/0013-abnf-for-protocols-and-calls.md), rule 6).
-- `tools/`: the glyph atlas generator, and the Dockerfile that builds GRUB. `xtask/`: the build tool (`cargo xtask build|run|test|check-production|grub`).
+- `tools/`: the glyph atlas generator, the logo rasterizer, the Dockerfile that builds GRUB, and `tools/ci/`, the scripts CI runs. `xtask/`: the build tool (`cargo xtask build|run|test|matrix|lint|check-production|grub`).
+- `.github/`: CI (C68). `ci.yml` runs on every change: REUSE, sign-offs on pull requests, the grammars and their vectors, the Mermaid render check, rustfmt and clippy, the host and QEMU tests, and the reproducibility check. `nightly.yml` runs the full QEMU matrix. Actions are pinned to commit SHAs.
 - `assets/fonts/`: Noto Sans Mono, vendored and pinned by hash, under OFL-1.1 (`REUSE.toml` covers it).
+- `assets/logo/`: the boot logo, `aspis-boot.svg`. The build rasterizes it into coverage bitmaps for the kernel console, which holds no SVG code ([0009](docs/decisions/0009-text-as-graphics-console.md), rule 3).
 - `docs/design/`: design notes and architecture views.
   - The design notes fed the ADRs, and each names the records it led to. Examples: [authorization-tree.md](docs/design/authorization-tree.md), [security-tokens.md](docs/design/security-tokens.md), [twelve-factor-apps.md](docs/design/twelve-factor-apps.md).
   - [system-context.md](docs/design/system-context.md) is the C4 system context: an ASPIS realm, the people who use it and the systems around it.

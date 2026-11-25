@@ -76,3 +76,7 @@ These come from the project brief and aren't re-decided here:
 | [0040](0040-the-stub-checks-the-initial-image.md) | The stub checks the initial image against a digest in `aspis.efi` | Accepted | 2026-11-25 |
 | [0041](0041-boot-abi.md) | The boot ABI: entry state, boot information and kernel arguments | Accepted | 2026-11-25 |
 | [0042](0042-log-ring-and-panic-path.md) | The kernel log ring and the panic path | Accepted | 2026-11-25 |
+| [0043](0043-qemu-boots-with-acpi-off.md) | QEMU configurations turn ACPI off, so the firmware passes the device tree | Proposed | 2026-11-25 |
+| [0044](0044-stub-undoes-grubs-command-line.md) | The stub undoes GRUB's rewriting of the command line | Proposed | 2026-11-25 |
+| [0045](0045-linking-the-kernel-and-stub-on-stable-rust.md) | Linking the kernel and the stub on stable Rust | Proposed | 2026-11-25 |
+| [0046](0046-fallback-fonts-for-wgl4-symbols.md) | Fallback Noto fonts for the WGL4 symbols Noto Sans Mono lacks | Proposed | 2026-11-25 |

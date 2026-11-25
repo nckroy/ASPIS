@@ -1,6 +1,8 @@
 <!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
 <!-- SPDX-License-Identifier: CC-BY-4.0 -->
 
+<img src="assets/logo/aspis-boot.svg" width="480" alt="The ASPIS logo, white on black: a hoplite in a crested Corinthian helmet lunging forward behind his round shield, the aspis, with a spear behind it and his head thrown back, shouting at the sky; beside him, the word &quot;aspis&quot; in lowercase geometric letters, in the style of the Apollo wordmark.">
+
 # ASPIS
 
 > In Greek myth the *aegis* was the shield of the gods: Zeus's, carried by Athena and, in the *Iliad*, by Apollo. The *aspis* was the shield of mortals, the round shield each hoplite carried in the phalanx to cover both themselves and the soldier beside them. Apollo's AEGIS was one company's operating system; ASPIS is the open one that anyone can carry.
@@ -18,7 +20,7 @@ What sets it apart is what it changes and adds. Every object is named by an ID w
 ASPIS is in its design phase, and its first code is starting. This repository holds research notes, architecture decision records (ADRs), design documents, and the code for the first milestone, M1 "First light": a UEFI boot stub and a kernel that boots on QEMU and prints to its text-as-graphics console.
 
 - **Process.** Research and discussion come first, then a design session, then code. The design session is under way, and M1's decisions are settled, so M1's code has begun ([build plan](docs/design/build-plan.md#m1-first-light)).
-- **Building.** `cargo xtask build` builds `aspis.efi` and `initfs.img`; `cargo xtask run` boots them on QEMU through GRUB; `cargo xtask test` runs the host tests and the QEMU tests. It needs Rust (the version in `rust-toolchain.toml`), QEMU, mtools, and Docker to build GRUB.
+- **Building.** `cargo xtask build` builds `aspis.efi` and `initfs.img`; `cargo xtask run` boots them on QEMU through GRUB; `cargo xtask test` runs the host tests and the QEMU tests. It needs Rust (the version in `rust-toolchain.toml`), QEMU, mtools, and Docker to build GRUB. CI runs the same commands on every change, and the full QEMU matrix nightly.
 - **Decisions.** All 42 ADRs are accepted. The latest, [0033](docs/decisions/0033-contributions-docs-license-and-notice-years.md) to [0042](docs/decisions/0042-log-ring-and-panic-path.md), settle the licensing questions and what the first milestone needs to build and boot. The [decision index](docs/decisions/README.md) gives each record's status.
 - **Design.** Zooming in from the system context, the design session has drawn views of a realm, a node and the kernel, and ten key flows.
 - **Still open.** The ADRs leave many details to the design session, such as the ID format specification, the cryptography library, the coherence protocol for shared remote objects and the kernel specification. Each record says what it leaves open.

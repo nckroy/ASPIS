@@ -11,6 +11,7 @@ members = [
     "crates/initfs",
     "crates/glyph-atlas",
     "tools/atlas",
+    "tools/logo",
     "xtask",
 ]
 

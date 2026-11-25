@@ -15,6 +15,8 @@ const DT_RELA: u64 = 7;
 const DT_RELASZ: u64 = 8;
 const DT_RELAENT: u64 = 9;
 const DT_RELR: u64 = 36;
+const DT_REL: u64 = 17;
+const DT_JMPREL: u64 = 23;
 const R_AARCH64_RELATIVE: u32 = 1027;
 const EM_AARCH64: u16 = 183;
 const ET_DYN: u16 = 3;
@@ -178,7 +180,11 @@ impl<'a> Kernel<'a> {
                 DT_RELA => rela = Some(val),
                 DT_RELASZ => relasz = val,
                 DT_RELAENT => relaent = val,
+                // Only RELA relocations are applied, so any other kind of
+                // table is refused rather than ignored (ADR 0045).
                 DT_RELR => return Err(Error::Unsupported("DT_RELR relocations")),
+                DT_REL => return Err(Error::Unsupported("DT_REL relocations")),
+                DT_JMPREL => return Err(Error::Unsupported("PLT relocations")),
                 _ => {}
             }
             at += 16;

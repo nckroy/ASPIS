@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+# The nightly QEMU matrix (C68; ADR 0036, rule 4): each CPU with each GIC,
+# at 1, 4 and 8 cores and 1 and 3 GiB, plus a run with the firmware at EL2.
+
+name: Nightly
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  matrix:
+    name: QEMU matrix
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - run: cargo xtask matrix
