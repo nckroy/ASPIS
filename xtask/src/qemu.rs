@@ -30,6 +30,11 @@ pub struct Options {
     pub smp: u32,
     pub memory: String,
     pub virtualization: bool,
+    /// A video mode for GRUB to set, such as `1024x768`. QEMU's ramfb
+    /// under EDK2 offers 640x480, 800x600 (the default) and 1024x768.
+    pub resolution: Option<String>,
+    /// Show the screen in a window, not only through `--screenshot`.
+    pub window: bool,
 }
 
 impl Default for Options {
@@ -46,6 +51,8 @@ impl Default for Options {
             smp: 4,
             memory: "1G".into(),
             virtualization: false,
+            resolution: None,
+            window: false,
         }
     }
 }
@@ -70,6 +77,20 @@ impl Options {
                 "--smp" => o.smp = value().parse().unwrap_or_else(|_| fail("bad --smp")),
                 "--memory" => o.memory = value(),
                 "--virtualization" => o.virtualization = true,
+                "--resolution" => {
+                    let r = value();
+                    let ok = r.split_once('x').is_some_and(|(w, h)| {
+                        w.parse::<u32>().is_ok_and(|w| w > 0)
+                            && h.parse::<u32>().is_ok_and(|h| h > 0)
+                    });
+                    if !ok {
+                        fail(format!(
+                            "bad --resolution {r}; use <width>x<height>, such as 1024x768"
+                        ));
+                    }
+                    o.resolution = Some(r);
+                }
+                "--window" => o.window = true,
                 "--timeout" => {
                     o.timeout = value().parse().unwrap_or_else(|_| fail("bad --timeout"))
                 }
@@ -137,10 +158,13 @@ pub fn run(o: &Options) -> i32 {
         if !o.args.is_empty() {
             fail("--direct boots without GRUB, so it can't pass --args");
         }
+        if o.resolution.is_some() {
+            fail("--direct boots without GRUB, so it can't set --resolution");
+        }
         esp::direct(&esp_img, &images);
     } else {
         let grub = crate::grub();
-        esp::grub(&esp_img, &images, &grub, &o.args);
+        esp::grub(&esp_img, &images, &grub, &o.args, o.resolution.as_deref());
     }
     let fw = firmware_dir();
     let vars = work.join("vars.fd");
@@ -179,7 +203,19 @@ pub fn run(o: &Options) -> i32 {
     .args(["-device", "virtio-rng-pci"])
     .args(["-netdev", "user,id=net0"])
     .args(["-device", "virtio-net-pci,netdev=net0,romfile="])
-    .args(["-nodefaults", "-display", "none"])
+    .args([
+        "-nodefaults",
+        "-display",
+        // `default` takes no options; Cocoa and GTK both scale the screen
+        // to the window.
+        if o.window && cfg!(target_os = "macos") {
+            "cocoa,zoom-to-fit=on"
+        } else if o.window {
+            "gtk,zoom-to-fit=on"
+        } else {
+            "none"
+        },
+    ])
     .args([
         "-chardev",
         "stdio,id=uart,signal=off",

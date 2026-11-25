@@ -27,6 +27,8 @@ RUN ./configure --with-platform=efi --target=aarch64 --disable-werror --prefix=/
  && make install
 
 COPY early.cfg /early.cfg
+# gfxterm (with the video and font modules it needs) lets the menu set the
+# firmware's video mode, which the stub keeps: `cargo xtask run --resolution`.
 RUN /opt/grub/bin/grub-mkimage -O arm64-efi -o /BOOTAA64.EFI -p /aspis -c /early.cfg \
       part_gpt part_msdos fat normal linux chain configfile echo search search_fs_file \
-      efi_gop test ls cat sleep reboot halt
+      efi_gop gfxterm videoinfo test ls cat sleep reboot halt

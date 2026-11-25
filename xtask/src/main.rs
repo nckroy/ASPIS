@@ -26,6 +26,8 @@
 //! --smp <n>               cores (default 4)
 //! --memory <size>         memory (default 1G)
 //! --virtualization        the firmware runs at EL2
+//! --resolution <w>x<h>    GRUB sets this video mode (ramfb: up to 1024x768)
+//! --window                show the screen in a window
 //! ```
 
 mod esp;

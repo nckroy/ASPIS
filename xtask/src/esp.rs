@@ -40,8 +40,11 @@ fn blank(img: &Path) {
     run_cmd(mtools("mformat", img).args(["-F", "-v", "ASPIS", "::"]));
 }
 
-/// The ESP with GRUB and slot `a`, booting with `args`.
-pub fn grub(img: &Path, images: &Path, grub: &Path, args: &str) {
+/// The ESP with GRUB and slot `a`, booting with `args`. With a
+/// `resolution` such as `1024x768`, GRUB sets that video mode through
+/// gfxterm before it boots, and the stub keeps it (ADR 0009: the resolution
+/// is whatever was set before the kernel).
+pub fn grub(img: &Path, images: &Path, grub: &Path, args: &str, resolution: Option<&str>) {
     blank(img);
     mkdirs(
         img,
@@ -49,10 +52,15 @@ pub fn grub(img: &Path, images: &Path, grub: &Path, args: &str) {
     );
     copy(img, grub, "/EFI/BOOT/BOOTAA64.EFI");
     let cfg = images.join("grub.cfg");
+    // gfxterm stays the terminal through the boot, or GRUB would put the
+    // firmware's mode back. Its own lines then show only on the screen.
+    let video = resolution.map_or(String::new(), |r| {
+        format!("set gfxmode={r}\nset gfxpayload=keep\nterminal_output gfxterm\n")
+    });
     fs::write(
         &cfg,
         format!(
-            "set timeout=0\nset default=0\n\nmenuentry \"ASPIS\" {{\n    linux  /aspis/a/aspis.efi {args}\n    initrd /aspis/a/initfs.img\n}}\n"
+            "set timeout=0\nset default=0\n{video}\nmenuentry \"ASPIS\" {{\n    linux  /aspis/a/aspis.efi {args}\n    initrd /aspis/a/initfs.img\n}}\n"
         ),
     )
     .unwrap();
