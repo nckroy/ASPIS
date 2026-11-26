@@ -1,0 +1,159 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+#
+# Test vectors for json.abnf: compact JSON as the canonical call text
+# writes it (ADR 0063, rule 9; ADR 0067, rule 8).
+#
+# Each vector is one line: "ok" or "err", "@" and the rule it tests, a
+# tab, then the text, with \t, \\, \" and \xHH escapes. Lines starting
+# with "#", and empty lines, are ignored.
+
+# ---- Values -------------------------------------------------------------
+ok@json-value	true
+ok@json-value	false
+ok@json-value	null
+err@json-value	True
+err@json-value	nul
+ok@json-value	0
+ok@json-value	-0
+ok@json-value	12
+ok@json-value	-1.5e+10
+ok@json-value	1E5
+ok@json-value	0.25
+err@json-value	01
+err@json-value	+1
+err@json-value	.5
+err@json-value	1.
+err@json-value	1e
+ok@json-value	"a"
+ok@json-value	[]
+ok@json-value	[1,"a",null,{}]
+ok@json-embedded	[1,"a",null,{}]
+ok@json-embedded	{"a":null}
+ok@json-embedded	"null"
+ok@json-embedded	false
+err@json-embedded	null
+err@json-value	[1,]
+err@json-value	[1, 2]
+err@json-value	\x20true
+ok@json-object	{}
+ok@json-object	{"a":1}
+ok@json-object	{"a":{"b":[true,false]},"c":"d"}
+err@json-object	{"a":1,}
+err@json-object	{"a" :1}
+err@json-object	{a:1}
+err@json-object	[]
+
+# ---- Any RFC 8259 string, as embedded JSON may hold ---------------------
+ok@json-any-string	""
+ok@json-any-string	"\\/"
+ok@json-any-string	"\\u00E9"
+ok@json-any-string	"\\u0000"
+ok@json-any-string	"\\ud83d\\ude00"
+err@json-any-string	"\\x"
+err@json-any-string	"\\u12"
+err@json-any-string	"\x0a"
+err@json-any-string	"\x80"
+
+# ---- Strings as the mapping writes them (RFC 8785) ----------------------
+ok@json-string	""
+ok@json-string	"plain text"
+ok@json-string	"\\"\\\\"
+ok@json-string	"\\b\\f\\n\\r\\t"
+ok@json-string	"\\u0001\\u0007\\u000b\\u000e\\u000f\\u0010\\u001f"
+ok@json-string	"\x7f"
+ok@json-string	"\xc3\xa9"
+ok@json-string	"\xf0\x9f\x98\x80"
+ok@json-string	"/"
+err@json-string	"\\/"
+err@json-string	"\\u0008"
+err@json-string	"\\u000a"
+err@json-string	"\\u000B"
+err@json-string	"\\u0020"
+err@json-string	"\\u0000"
+err@json-string	"\\u00e9"
+err@json-string	"\x09"
+err@json-string	"\x1f"
+err@json-string	"\xc0\x80"
+err@json-string	"\xed\xa0\x80"
+err@json-string	"
+err@json-string	"\\"
+
+# ---- Integers ------------------------------------------------------------
+ok@json-uint	0
+ok@json-uint	7
+ok@json-uint	18446744073709551616
+err@json-uint	07
+err@json-uint	-1
+err@json-uint	
+err@json-uint-nz	0
+ok@json-u64	"18446744073709551615"
+ok@json-u64	"0"
+err@json-u64	18446744073709551615
+err@json-u64	"01"
+ok@json-i64	"-9223372036854775808"
+ok@json-i64	"12"
+err@json-i64	"-0"
+err@json-i64	"+1"
+err@json-i64	-1
+
+# ---- Literals ------------------------------------------------------------
+ok@json-null	null
+err@json-null	Null
+ok@json-bool	true
+ok@json-bool	false
+err@json-bool	TRUE
+
+# ---- Floats: ECMAScript's shapes -----------------------------------------
+ok@json-float	0
+ok@json-float	-0
+ok@json-float	1.5
+ok@json-float	0.1
+ok@json-float	0.000001
+ok@json-float	1e-7
+ok@json-float	1e+21
+ok@json-float	5e-324
+ok@json-float	1.7976931348623157e+308
+ok@json-float	123000000000000000000
+ok@json-float	"NaN"
+ok@json-float	"Infinity"
+ok@json-float	"-Infinity"
+err@json-float	NaN
+err@json-float	1e21
+err@json-float	1E+21
+err@json-float	1.50
+err@json-float	1.
+err@json-float	.5
+err@json-float	0.0000001
+err@json-float	01
+err@json-float	1.5e+0x
+err@json-float	"nan"
+
+# ---- IDs and UUIDs -------------------------------------------------------
+ok@json-id	"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+err@json-id	"0123456789ABCDEF0123456789abcdef0123456789abcdef0123456789abcdef"
+err@json-id	"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"
+ok@json-uuid	"f81d4fae-7dec-11d0-a765-00a0c91e6bf6"
+err@json-uuid	"F81D4FAE-7DEC-11D0-A765-00A0C91E6BF6"
+err@json-uuid	"f81d4fae7dec11d0a76500a0c91e6bf6"
+
+# ---- Bytes: unpadded base64url --------------------------------------------
+ok@json-bytes	""
+ok@json-bytes	"AA"
+ok@json-bytes	"_w"
+ok@json-bytes	"AAE"
+ok@json-bytes	"AAEC"
+ok@json-bytes	"-_-_AQ"
+err@json-bytes	"A"
+err@json-bytes	"AB"
+err@json-bytes	"AAF"
+err@json-bytes	"AA=="
+err@json-bytes	"+/+/"
+err@json-bytes	"AAAAA"
+
+# ---- Capabilities ---------------------------------------------------------
+ok@json-cap	{"cap":0}
+ok@json-cap	{"cap":2}
+err@json-cap	{"cap":3}
+err@json-cap	{"cap":"0"}
+err@json-cap	{ "cap":0}

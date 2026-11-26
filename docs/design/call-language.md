@@ -3,7 +3,7 @@
 
 # The call language
 
-*2026-11-25. The call-language specification: the grammars, octet layouts, tables and worked examples behind the M2 call-language records. It follows ADRs 0062 to 0068.*
+*2026-11-25, updated 2026-11-26. The call-language specification: the grammars, octet layouts, tables and worked examples behind the M2 call-language records. It follows ADRs 0062 to 0068.*
 
 This note is the detail that the call-language records cite. The records say what is decided, what is guaranteed, and why. This note says exactly how: every octet layout, grammar, constraint, table and worked example.
 
@@ -204,12 +204,12 @@ Whole-message capability vectors (a repeated index, an index no capability fills
 
 ### Checkers
 
-- **`tools/ci/check-grammars.py`**, changed by C06. The `; uses:` header line takes a list of shared grammars to preload, such as `; uses: core, names`. A grammar whose header says `; uses: core` is loaded into the same rule class as `core.abnf`, so its rules resolve against the core rules. The checker rejects any grammar that defines a core rule name, in any letter case. `initfs.abnf` and `kernel-args.abnf` don't say `; uses: core`, and are unchanged. The Python checker can't bind a length to a repetition, so it checks the context-free grammar only, and treats `errc` as `ok`. It follows `; uses:` transitively, loading each grammar once, and fails on a cycle or a missing grammar. It turns abnf's redefinition warnings into failures, and fails num-vals above 255, empty ranges, and `=/` on a rule the file hasn't defined. It reads files as octets, so it treats a CR as the Rust checker does, and it checks every escape and directive.
+- **`tools/ci/check-grammars.py`**, changed by C06. The `; uses:` header line takes a list of shared grammars to preload, such as `; uses: core, names`. A grammar whose header says `; uses: core` is loaded into the same rule class as `core.abnf`, so its rules resolve against the core rules. The checker rejects any grammar that defines a core rule name, in any letter case. `initfs.abnf` and `kernel-args.abnf` don't say `; uses: core`, and are unchanged. The Python checker can't bind a length to a repetition, so it checks the context-free grammar only, and treats `errc` as `ok`. It follows `; uses:` transitively, loading each grammar once, and fails on a cycle or a missing grammar. It turns abnf's redefinition warnings into failures, and fails num-vals above 255, empty ranges, and `=/` on a rule the file hasn't defined. It reads files as octets, so it treats a CR as the Rust checker does, and it checks every escape and directive. C07 let it take several roots, each walked for grammars (skipping any path with a space in a component), and `--uses DIR`, where `; uses:` names resolve. CI runs it a second time as `check-grammars.py --uses grammars interfaces crates/idl/tests/data/interfaces`, over the generated grammars.
 - **C06's Rust checker**, `crates/abnf`: `#![no_std]` with `alloc`, `#![forbid(unsafe_code)]`, no dependencies, MPL-2.0. It parses ABNF, matches vectors and enforces the constraint vocabulary. It bounds its time and memory, because the catalog will run it on publishers' grammars ([0027](../decisions/0027-applications-extend-the-system.md), rule 2). It runs the same vector files, and judges `errc` as `err`.
   - It has a hand-written parser and a matcher that works on sets of states, which is exact for ABNF's ambiguity: alternatives are unioned, and nothing is committed early.
   - Its budgets cover grammar size and nesting, input size, steps (linear in the input, with a cap, and charged for constraint work too), the memory its live states hold, recursion depth, and the steps of a whole vector file ([L22](#l22-the-constraint-vocabularys-grammar-and-the-rust-checker)). A run over a budget is reported as exhausted, never as a match or a mismatch.
   - It rejects undefined rule names and left recursion when a grammar loads, and checks that every constraint can apply where it is written ([How constraints bind](#how-constraints-bind)).
-  - `cargo xtask grammars` runs it over `grammars/` in CI's `docs` job, on every change, and checks that `grammars/core.abnf` is the block above, octet for octet. `cargo xtask test` runs it too.
+  - `cargo xtask grammars` runs it over `grammars/` and the generated grammars under `interfaces/` and `crates/idl/tests/data/interfaces/`, in CI's `docs` job, on every change, and checks that `grammars/core.abnf` is the block above, octet for octet. `cargo xtask test` runs it too.
 - **Two checkers, on purpose.** The Python checker stays in CI as an independent implementation. The two are a differential pair for C71 ([Differential tests](#differential-tests)). Some grammars only the Rust checker rejects: undefined names (abnf 2.9.1 fails one only when a vector reaches it), left recursion (which abnf 2.9.1 answers wrongly), prose and prose-vals in strict grammars, misused constraints, and constraint integers out of range. On very deep input, Python's recursion limit gives a parse error where the Rust checker reports exhaustion. So the differential compares only grammars both accept, and only answers both give.
 - **No spaced-hex form.** `\xHH` stays the only vector escape ([L22](#l22-the-constraint-vocabularys-grammar-and-the-rust-checker)).
 
@@ -220,7 +220,7 @@ Whole-message capability vectors (a repeated index, an index no capability fills
 ### Interface and type names
 
 - **One name grammar for interfaces and types.** Names are dotted, reverse-DNS, lowercase ASCII, with at least two labels ([0027](../decisions/0027-applications-extend-the-system.md), rule 7). Labels use `a-z`, digits and `_`, never `-`. Every type name is then a Cedar entity-type path, and every action string is a Cedar string and an OAuth scope-token, with no escaping.
-- **Publishers transliterate DNS names the D-Bus way.** A hyphen becomes `_`. A label that starts with a digit, or that is one of Cedar's reserved words `true false if then else in is like has`, takes a leading `_`. Examples: `org.aspis_os.sql`, `org._7_zip.archive`, `_in.co.example.ledger`. (`.in`, `.is` and `.like` are real top-level domains that are also Cedar reserved words.)
+- **Publishers transliterate DNS names the D-Bus way.** A hyphen becomes `_`. A label that starts with a digit, or that is one of Cedar's reserved words `true false if then else in is like has`, or one of `self`, `super` and `crate`, which Rust can't take as raw identifiers in a module path, takes a leading `_`. Examples: `org.aspis_os.sql`, `org._7_zip.archive`, `_in.co.example.ledger`, `io._crate.registry`. (`.in`, `.is` and `.like` are real top-level domains that are also Cedar reserved words.)
 - **The `aspis.` prefix is reserved** by ASPIS policy, as Fuchsia reserves `fuchsia.`. `aspis` isn't a top-level domain (IANA root zone list, version 2026112402), and no registration is needed. Where the reservation is enforced, and who owns other prefixes, is D110's ([L03](#l03-minting-application-ids-and-prefix-ownership)).
 - **An interface and a type may share a name.** The discovery note's `org.example.sql.table` is both. References tell them apart, because an interface reference carries `/major`.
 - **Limits.** A label is 1 to 63 octets; a name at most 255.
@@ -256,11 +256,12 @@ An interface reference carries a major and an optional minor, as `aspis.catalog/
 
 ### The names grammar
 
-C07 commits this file as `grammars/names.abnf`. It is hand-written, and checked against C07's generator and by CI. `DIGIT` and `SP` are RFC 5234 core rules.
+C07 committed this file as `grammars/names.abnf`. It is hand-written, and `cargo xtask grammars` checks that the file and the block below stay the same, octet for octet. `DIGIT` and `SP` are RFC 5234 core rules. It uses `grammars/json.abnf`, which C07 also wrote: compact RFC 8259 JSON, written from RFC 8259 and RFC 8785 rather than copied, with every rule prefixed `json-`. So `names.abnf` holds no prose-val, and the catalog can load it strictly, with the text grammars that use it.
 
 ```abnf
 ; SPDX-FileCopyrightText: 2026 Nicole Roy
 ; SPDX-License-Identifier: MPL-2.0
+; uses: json
 ;
 ; Names, references, action strings and the canonical call text (ADR 0063).
 ; Literal words use RFC 7405 %s"...": plain ABNF strings are case-insensitive.
@@ -270,7 +271,7 @@ name          = label 1*( "." label )
                 ; constraint: length at most 255
 label         = lc-alpha *lchar / "_" ( lc-alpha / DIGIT ) *lchar
                 ; constraint: length at most 63
-                ; constraint: not word true false if then else in is like has
+                ; constraint: not word true false if then else in is like has self super crate
 lchar         = lc-alpha / DIGIT / "_"
 lc-alpha      = %x61-7A                       ; a-z only
 interface-name = name
@@ -313,10 +314,9 @@ outcome-word  = %s"refused" / %s"failed" / %s"unreachable" / %s"indeterminate"
 reply-results = json-object                   ; per method, generated (ADR 0067)
 request-id-text = 32hex                       ; for log records and spans, not the call text
 hex           = DIGIT / %x61-66               ; 0-9 a-f, lowercase only
-json-object   = <RFC 8259 object, as constrained by the IDL's JSON mapping>
 ```
 
-The last rule is a placeholder. C07 generates, for each method, the exact `call-args` and `reply-results` rules, from RFC 8259's grammar and [the JSON mapping](#the-json-mapping).
+`call-args` and `reply-results` accept any compact JSON object. Each method's text grammar gives the exact form, from RFC 8259's grammar and [the JSON mapping](#the-json-mapping) ([Generated grammars](#generated-grammars)).
 
 Only `interface-ref`, `action-ref` and `error-ref` are ever parsed: by the PDP, the token library and the catalog. An `action-ref` is at most 326 octets.
 
@@ -361,7 +361,7 @@ Kernel interfaces are named under the prefix `aspis.kernel.`, one interface per 
 - **err:** uppercase; a hyphen; a leading digit; a single label; `01` as a major; a member name `query__all` or `query_`; `__cedar` (the grammar can't match it);
 - **errc:** `65536` as a major; a 64-octet label; a 256-octet name; a label `in`, `is` or `like`.
 
-CI also checks, mechanically, that every valid type name parses as a Cedar `Path`, and every `action-ref` as an RFC 6749 `scope-token`. That proves the "no escaping" property.
+CI also checks, mechanically, that every valid type name parses as a Cedar `Path`, and every `action-ref` as an RFC 6749 `scope-token`. That proves the "no escaping" property. C07's check is `crates/idl-rt/tests/names.rs`. It runs hand-written recognizers of Cedar's `Path` (from the Cedar 4.7 grammar) and of RFC 6749 §3.3's `scope-token` over generated names, and checks that `idl-rt`'s parsers of `interface-ref`, `action-ref` and `error-ref` agree with this grammar's vectors and with crates/abnf's constrained matcher. C31 adds the differential against the `cedar-policy` parser itself.
 
 ## The call header and wire encoding
 
@@ -789,6 +789,8 @@ The envelope is itself an open struct ([The struct encoding](#the-struct-encodin
 
 The encoded envelope, causes included, is at most **768 octets**. It always fits one IPC message beside a reply header (8 octets) or a stream end's reason octet, so it never spills. The error key alone (interface, major, code: 36 octets) is the closed struct `aspis.rpc/1.error_key`, which the kernel interfaces use for Fail and the page-unavailable fault.
 
+So an error's detail is at most **708 octets** in the worst case, and the compiler refuses a larger one (C07). That is 768, less the envelope's 46 octets of fixed fields and empty tail (outcome, disposition, the 32-octet interface, major, code, the detail's length and the tail count), less the 14 octets of a `retry_after` (tag, length and u64), which the runtime may add to any error. Causes are what the runtime drops or truncates to stay within 768.
+
 These rules end `grammars/call-header.abnf`:
 
 ```abnf
@@ -811,7 +813,9 @@ error-unknown-tag = u16
 error-key     = object-id u16 error-code   ; 36 octets: Fail and page-unavailable faults
 ```
 
-Every decoder enforces the nesting limit and the 768-octet limit. C06's vocabulary carries the length limit. The nesting depth is a prose constraint in this hand-written grammar, checked by the decoder and its tests.
+Every decoder enforces the nesting limit and the 768-octet limit. The outermost cause is 1 deep, so a chain holds at most four envelopes, and a cause 4 deep is malformed (C07). C06's vocabulary carries the length limit. The nesting depth is a prose constraint in this hand-written grammar, checked by the decoder and its tests.
+
+Every encoder keeps both limits too, so forwarding a valid error never makes a malformed one (C07). The encoder refuses a cause that isn't a valid envelope. It keeps at most three envelopes of the cause's chain, so forwarding a full chain of four drops its innermost envelope. Then, while the whole is over 768 octets, it drops the next innermost. A cause kept whole is copied octet for octet. A truncated one is re-encoded with each kept envelope's own fields and preserved tail.
 
 ### Outcomes
 
@@ -834,11 +838,11 @@ Refused and failed are both ADR 0004's "error". Refused adds the guarantee that 
 
 ### The system errors
 
-The system errors are `aspis.rpc` 1.0. Every method may return any of them, and methods don't list them ([Example: the eventcount interface](#example-the-eventcount-interface)). Detail fields use the IDL's types, and every enum below is open.
+The system errors are `aspis.rpc` 1.0. C07 wrote it as `interfaces/aspis/rpc/v1.idl`, but left 1.0 unpublished, with an empty lock. Its `error_key` struct must refuse code 0, as the envelope's `error-key` rule does ([The error envelope](#the-error-envelope)), and the IDL can't state that constraint yet: the generated `t-error-key` and its binding accept code 0. So `aspis.rpc` stays unpublished until the IDL can state that `error_key`'s code is not 0, or until this note's `error-key` rule changes. C18 publishes 1.0 then. Once 1.0 is published, the codes, detail fields and enum values below are fixed; anything added, such as L23's tuning, comes in a later minor. Every method may return any of them, and methods don't list them ([Example: the eventcount interface](#example-the-eventcount-interface)). Detail fields use the IDL's types, and every enum below is open.
 
 | Code | Name | Outcome | Disposition | Detail fields | Notes and analogs |
 |---|---|---|---|---|---|
-| 1 | `malformed` | refused | 0 | none | A header, frame or body doesn't parse, or breaks a constraint. DCE `nca_proto_error`; gRPC INVALID_ARGUMENT |
+| 1 | `malformed` | refused, or indeterminate (made by the caller's runtime when a reply or error envelope doesn't decode; C07, [Back ends](#back-ends), Stubs) | 0 | none | A header, frame or body doesn't parse, or breaks a constraint. DCE `nca_proto_error`; gRPC INVALID_ARGUMENT |
 | 2 | `too_large` | refused | 0 | `limit: u32` | Over a size limit ([Size limits](#size-limits)). DCE `nca_out_args_too_big` |
 | 3 | `protocol_unsupported` | refused | 0 | `highest: u8` | An unknown protocol version in word 0 |
 | 4 | `version_unsupported` | refused | 0 | `served: seq<version_range, 16>`, where `version_range` is the closed struct `{ major: u16, highest_minor: u16 }` | A bind to a major that isn't served, or a minimum minor above what is served. The detail lets the client choose without another discovery call. |
@@ -859,7 +863,7 @@ The system errors are `aspis.rpc` 1.0. Every method may return any of them, and 
 | 19 | `no_memory` | refused or failed | 1 | none | The server, or the runtime, couldn't get memory for the call within its job's budget ([0058](../decisions/0058-jobs-and-budgets.md)) |
 | 20 | `resource_limit` | refused | 0 | `limit: limit_kind` (`streams_per_session` 1, `imports_per_session` 2, `sessions` 3, `pending_calls` 4, `badges_per_session` 5), `maximum: u32` | A per-session or per-server limit ([Stream limits and rundown](#stream-limits-and-rundown)) |
 | 21 | `capability_not_remotable` | unreachable or failed | 0 | `position: u8` | Unreachable when network server A refuses the whole call before sending it; failed when network server B can't export a capability in a reply, after the method ran ([Translation between nodes](#translation-between-nodes)) |
-| 22 | `capability_rights` | refused | 0 | `position: u8`, `missing: u8` (rights bits) | A received capability lacks the declared rights ([Capability types](#capability-types)) |
+| 22 | `capability_rights` | refused | 0 | `position: u8`, `missing: u8` (rights bits: read 1, write 2, grant 4, grant-reply 8, the kernel's order) | A received capability lacks the declared rights, or isn't of the declared kind ([Capability types](#capability-types)) |
 | 23 | `local_only` | refused | 0 | none | A bind through a network server to an interface declared `[local]` or `[kernel]`, or a call on a remote session to a local method. Refused before the method runs ([Local methods and interfaces](#local-methods-and-interfaces)). |
 | 24 | `stream_expired` | refused | 3 | `oldest: u64?` | A stream opened or pulled `after` a position older than the server keeps: list again ([Local pull with credit](#local-pull-with-credit)) |
 | 25 | `no_such_stream` | refused | 0 | none | `stream_next`, `stream_close` or `stream_ready` names a stream the session doesn't have |
@@ -897,11 +901,11 @@ Kernel interfaces' own failures are typed errors of their `aspis.kernel.*` inter
 ### Errors in bindings and text
 
 - **Rust.** A call returns `Result<Reply, CallError>`. `CallError` holds the outcome, the disposition and a kind. The kind is one of:
-  - `App(E)`, where `E` is a generated `#[non_exhaustive]` enum of the interface's own errors, with an `Unknown { code, detail }` arm;
+  - `App(E)`, where `E` is a generated `#[non_exhaustive]` enum of the interface's own errors, with an `Unknown_ { code, detail }` arm for a code the binding doesn't know, or one newer than the session's minor;
   - `Rpc(RpcError)`, for `aspis.rpc` errors;
-  - `Foreign(RawError)`, for the keys of any other interface.
+  - `Foreign(RawError)`, for the keys of any other interface, and for a known key whose detail doesn't decode.
 
-  Every variant keeps the raw octets, for re-encoding.
+  Every variant keeps the raw octets, for re-encoding. An error the caller's own runtime made, a stub's refusal or a channel's kernel result, has none: its `raw` is empty (C07). `CallError`, `RawError` and the envelope's codec are idl-rt's, so stubs and dispatchers have them; C18 adds the envelope's rules to `call-header.abnf`, with their vectors and fuzz targets.
 - **Canonical text:** an `error-ref` ([The names grammar](#the-names-grammar)), such as `aspis.catalog/1!stream_expired`, or `<id-text>/1!#17` when the name isn't known.
 - **JSON** ([The JSON mapping](#the-json-mapping)): `{"interface":"<id-text>","name":"aspis.rpc","major":1,"code":14,"error":"deadline_passed","outcome":"indeterminate","disposition":1,"detail":{...}}`, with `name` and `error` omitted when they aren't known.
 - **errno** ([POSIX note, §4.19](posix-compatibility.md#419-errors)): D96 maps the outcome and code to errno, and keeps the original envelope retrievable ([L14](#l14-errno-mapping)).
@@ -939,20 +943,23 @@ The rules:
 **Example.** This is the generated grammar for `struct change { seq: u64, kind: change_kind, entry: id, [since(1.1)] publisher: id? }`. Its fields have positions 1 to 4, and tag 4 is the only tail field.
 
 ```abnf
-; aspis.catalog/1.1: struct change
-t-change            = u64 t-change-kind object-id t-change--tail
-t-change--tail      = tail-count *t-change--opt
-                      ; constraint: ascending tags
-                      ; constraint: exactly tail-count t-change--opt elements
-t-change--opt       = t-change--publisher / t-change--unknown
-t-change--publisher = %x00.04 %x00.00.00.20 object-id      ; tag 4, since 1.1
-t-change--unknown   = t-change--unknown-tag octets
-t-change--unknown-tag = u16
-                      ; constraint: at least 5
-t-change-kind       = u8                                   ; open enum change_kind
+; change (interfaces/aspis/catalog/v1.1.abnf)
+t-change = u64 t-change-kind object-id t-change---tail
+t-change--publisher = %x00.04 %x00.00.00.20 object-id     ; tag 4, since 1.1
+t-change---unknown = t-change---unknown-tag octets
+t-change---unknown-tag = %x00 %x05-FF / %x01-FF OCTET     ; 5 and above
+    ; constraint: at least 5
+t-change---tail = tail-count *t-change---opt
+    ; constraint: ascending tags
+    ; constraint: exactly tail-count t-change---opt elements
+t-change---opt = t-change--publisher / t-change---unknown
+
+; change_kind
+t-change-kind = u8                                        ; an open enum
 ```
 
-- **Helper rules are scoped to their struct** (`t-change--...`), so two structs in one file never define the same rule ([Generated grammars](#generated-grammars)).
+- **Helper rules are scoped to their struct** (`t-change---...`), so two structs in one file never define the same rule ([Generated grammars](#generated-grammars)).
+- **A value whose size varies**, such as a tail field `bytes<64>?` or an open union's arm, is `%x<tag> X---len X---body`. `X---len` is a `len32`, constrained `in min..max` when the value can't grow (it holds no open struct or union). `X---body` is always exactly one rule reference, constrained `exactly X---len octets`. Its target is then its whole match, and R is found in the rule that calls it, as `frame-rest` finds `frame-length` ([How constraints bind](#how-constraints-bind)). A value whose size is fixed takes its literal length instead, as `publisher` does (C07).
 - **An unknown tag is bounded below** by the position after the last field known at that minor, so it can never be a required field's position. That keeps one encoding per value, and the decoder and the grammar agree exactly ([The gate for each target](#the-gate-for-each-target), item 3).
 - **At 1.0** the same struct's grammar has no `t-change--publisher`, and its unknown tag is "at least 4". So every 1.1 reply vector still matches the 1.0 grammar, which is what the compatibility check runs.
 - **In a request grammar**, which is strict, the unknown alternative is absent.
@@ -979,7 +986,7 @@ New capability-bearing data comes only with new methods, whose capability counts
 ### Refusing what is too new
 
 - **The bind fixes the minor**, M.s ([0014](../decisions/0014-versioned-object-apis.md), rule 4). The manager records s in its session table, keyed by badge locally ([0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 5) and by session ID at network server B.
-- **The client stub refuses locally, without sending.** A method whose `since` is newer than s returns `no_such_method`, outcome refused. The stub never encodes a field whose `since` is newer than s.
+- **The client stub refuses locally, without sending.** A method whose `since` is newer than s returns `no_such_method`, outcome refused. The stub never encodes a field whose `since` is newer than s: if the caller set one, it returns `field_too_new` with that field's tag, and if the caller set an enum value, flag bit or union arm newer than s, it returns `value_too_new`, both outcome refused, the errors the server would give (C07). It checks with the same `since` walk the decoder uses. A value the binding doesn't know at all, such as a preserved unknown arm, is sent as it is.
 - **The server runtime refuses, as a check before dispatch:**
   - an unknown method number, or one whose `since` is newer than s, gets `no_such_method`;
   - a request field whose tag is unknown or newer than s gets `field_too_new`, with the offending tags;
@@ -1028,7 +1035,14 @@ Everything else is refused, including:
 - changing an error's code or outcome attribute;
 - changing `[idempotent]`, `[readonly]`, `[sensitive]` or `[oneway]`, or an interface's `[local]`.
 
-The check also runs on vectors. Every reply, error-detail and stream-item vector of M.m must match M.(m-1)'s grammar. Every request vector of M.m that uses no method or field newer than m-1 must match it too.
+C07's check follows from these rules in four places:
+
+- **Newer than its container.** The rules for added fields apply to a member whose own `since` is above its container's: the type's, the method's or the error's. Such a field, parameter or result must be optional, and such a field or arm holds no capability. A type or method new in M.m may have required fields and capabilities, since new capability-bearing data comes with new methods.
+- **Error lists.** Edition 2026's `error(...)` list has no `since` per entry. So a minor adds an error to an existing method's list only when that error is new in the same minor; projection drops it from older minors.
+- **Groups exist where a method names them.** Every declared group needs a method, and projection drops a group none of whose methods exists yet. A minor may add a group, never remove one.
+- **Imports only grow.** A name a minor imports keeps its interface and minor for the rest of the major. A later minor may add a name to a line, or add a line. Add a new line last, so the existing lines keep their places (`u<k>` in [Generated grammars](#generated-grammars)): the step check refuses a line of M.(m-1) that isn't at the same place in M.m (C07). Projection drops the imported names a minor doesn't use, so an import added for a later minor changes no earlier minor's canonical form.
+
+The check also runs on vectors. Every reply, error-detail and stream-item vector of M.m must match M.(m-1)'s grammar. Every request vector of M.m that uses no method or field newer than m-1 must match it too. C07's `idlc check` decides which request vectors those are with the decoder at M.(m-1): each request vector must get the same answer from M.(m-1)'s grammar as from that decoder.
 
 ### Evolution vectors
 
@@ -1036,6 +1050,7 @@ Every generated grammar's vector file carries at least:
 
 - **ok:** a reply with an unknown tail field; a reply with an unknown arm of an open union and an unknown value of an open enum; an unknown enum value inside a closed struct;
 - **err or errc:** tail tags out of order or duplicated; tag 0; an unknown tag that is a required field's position (`errc`); error code 0; a cause nested 4 deep; an envelope over 768 octets; a request with a field newer than the minor (in the request grammar); an unknown arm of a closed union;
+- The envelope's cases (error code 0, a cause nested 4 deep, an envelope over 768 octets) belong to C18's `grammars/call-header.vectors`, beside the envelope's grammar. The generated vector files cover the rest ([Generated grammars](#generated-grammars)).
 - **capabilities**, for every method with capability positions, under the matching `# caps:` directive ([Vector files](#vector-files)): each optional capability present and absent (`ok`); an index not less than the count, a repeated index, and a count with a capability no index names (`errc`); and, under `# unwrapped:`, a position delivered unwrapped (`ok`).
 
 ## Capability parameters and server streams
@@ -1054,8 +1069,9 @@ A capability parameter is typed in the IDL: by interface, and for kernel objects
 | `slot<aspis.kernel.eventcount/1, read>` | Kernel interfaces only: a capability address in the caller's own capability space (a u64), not a transfer | none move |
 
 - **Declared rights are a ceiling and a floor.** The sending stub attenuates each capability to exactly the declared rights. It copies it with fewer rights into a scratch slot, sends the copy, and deletes the scratch slot. The receiver's child copy survives the delete, as in seL4.
-- **The receiving stub checks each capability's kind and rights** with the kernel's identify operation, and refuses the call with `capability_rights` if they fall short. [0047](../decisions/0047-the-kernel-follows-sel4.md), rule 3 records identify as a departure from seL4, which offers it only as a debugging aid ([L41](#l41-the-identify-operation)). The kernel can't check that a session capability speaks the declared interface. A mismatch shows as `no_such_method` or `version_unsupported` on first use.
+- **The receiving stub checks each capability's kind and rights** with the kernel's identify operation, and refuses the call with `capability_rights` if they fall short. A kernel object capability must be that kernel interface's object, with the declared rights (and immutable, if declared). A session capability must be an endpoint with write and grant-reply. A capability of the wrong kind lacks all the rights it should have, and `missing` says so (C07). [0047](../decisions/0047-the-kernel-follows-sel4.md), rule 3 records identify as a departure from seL4, which offers it only as a debugging aid ([L41](#l41-the-identify-operation)). The kernel can't check that a session capability speaks the declared interface. A mismatch shows as `no_such_method` or `version_unsupported` on first use.
 - **Any capability type may be optional**, `cap<...>?`. As an open-struct field it is a tail field; elsewhere it is `presence`, then the index.
+- **The interfaces the kernel calls are sessions.** A capability to `aspis.kernel.fault`, `aspis.kernel.pager` or `aspis.kernel.memory_request` is a session capability, like any server interface's: it takes no qualifiers, and it doesn't make a method local. Only the other `aspis.kernel.*` interfaces name kernel objects (C07).
 - **Unwrapped capabilities.** A capability that names the endpoint the message travels through arrives unwrapped, as its badge ([0054](../decisions/0054-ipc-endpoints.md), rule 7). It still occupies its position in the list, and the binding exposes it as `Own(badge)` instead of a received slot.
 
 ### Capability indexes
@@ -1228,13 +1244,18 @@ A server must end every stream of a session, with `session_ended`, when the sess
 ### Files and the interface header
 
 - **One file per interface major version**, UTF-8, extension `.idl`, under a new top-level `interfaces/` directory that mirrors the dotted name: `interfaces/aspis/catalog/v1.idl`. Beside it, committed and checked:
-  - `v1.0.abnf`, `v1.1.abnf`, …: the wire grammar of each minor;
-  - `v1.1.text.abnf`: the canonical-text grammar of each minor;
-  - `v1.1.vectors`: each minor's vectors;
+  - `v1.0.abnf`, `v1.1.abnf`, …: the wire grammar of each minor, except for a `[kernel]` interface, which has no wire form;
+  - `v1.0.vectors`, `v1.1.vectors`, …: each wire grammar's vectors;
+  - `v1.0.text.abnf`, `v1.0.text.vectors`, …: the canonical-text grammar of each minor, and its vectors;
   - `v1.idl.lock` ([The lock and the canonical form](#the-lock-and-the-canonical-form)).
+  - Each generated file starts with the IDL file's own SPDX lines, as `;` or `#` comments, so an application's generated files carry its notice. A line then names the source and says idlc generated it ([Generated grammars](#generated-grammars)).
 - **SPDX tags** are `//` comments on the first two lines. The IDL is code, so it is MPL-2.0.
 - **`edition 2026;`** is the first declaration. Later editions may change defaults without breaking old sources, as protobuf editions do.
 - **Imports.** `use aspis.base/1.{object_info, interface_req};` brings named types of another interface's major into scope. Types are namespaced by interface and major, as `aspis.base/1.object_info`.
+  - The importer reads an imported type at the minor its `use` line names (`.0` if none), never at a later one. So a later minor of the imported interface never changes the importer (C07).
+  - The names are types: structs, unions, enums, flags and aliases. An object type is a Cedar entity type, and no field holds one.
+- **Unpublished interfaces.** A file whose lock has no entries can still change in any way. `aspis.rpc` is one until C18 publishes its 1.0, for the reason [The system errors](#the-system-errors) gives: the IDL can't yet state that `error_key`'s code is not 0. Nothing published imports it, since a published minor may only use published minors ([The lock and the canonical form](#the-lock-and-the-canonical-form)).
+- **Examples.** An interface that only exercises the compiler, such as `aspis.catalog` and `aspis.kernel.eventcount` today, says so in its `//!` comment, with the chunk that replaces it. Examples are never registered with a catalog, so the chunk that replaces one rewrites its lock in the same change. The compiler's own test interfaces live under `crates/idl/tests/data/interfaces/`, a second root with the same layout.
 
 **The header** uses DCE's bracketed attributes:
 
@@ -1246,6 +1267,7 @@ interface eventcount { ... }
 - **`id(...)` is required**, and holds the interface's full dotted name ([Interface and type names](#interface-and-type-names)). Cedar actions, scopes, the call text and `use` lines need the name.
 - **`interface` takes the name's last label**, and the checker requires the two to match. Inside the file, types and members are named relative to it.
 - **`object_id(...)` holds the interface's 32-octet object ID**, which bindings need at build time, since binding always uses IDs ([0027](../decisions/0027-applications-extend-the-system.md), rule 7). Until D34 fixes the ID text form, it is written `reserved(n)` (the reserved authority with the well-known sequence number n, which D35 assigns) or `hex(<64 lowercase hex digits>)`. Who mints an application's interface IDs is D110's. If D110 derives IDs from names, the compiler computes the ID, and the attribute becomes optional ([L03](#l03-minting-application-ids-and-prefix-ownership)).
+  - Until D35, `reserved(n)` stands for the octets C07 chose: ADR 0001's layout with the nil UUID (16 zero octets) in place of the reserved authority, n as the sequence number (u64), version 1, class 0 and a zero random part. One function, `idl::ids::reserved`, holds them. The canonical form keeps `reserved(n)`, not the octets, so D35's authority value changes no lock. A well-known number n that D35 assigns differently is a source edit, made with the lock rewrite for examples.
 - **`version(M.m)`** is the newest minor the file describes. M and m are 0 to 65,535.
 
 ### Types
@@ -1278,9 +1300,9 @@ Integers are big-endian ([Core rules](#core-rules)). Nothing is padded or aligne
 | `alias name = type;` | as the type | | |
 | `[format(json)] string<N>` | `text` | | JSON text carried as a string, such as AuthZEN's ([0019](../decisions/0019-authzen-decision-protocol.md), rule 2). The JSON mapping embeds it as JSON. |
 
-- **Element types** of `seq` and `array` are any type except `cap<...>`, `stream<...>` and an error. Every element is self-delimiting, so a sequence needs only a count.
+- **Element types** of `seq` and `array` are any type except `cap<...>`, `stream<...>` and an error. Every element is self-delimiting, so a sequence needs only a count. An element also encodes to at least one octet, so a decoder's work follows the input's length, never a count the sender picks: the checker refuses an element that can encode to none, such as a closed struct with no fields (C07).
 - **Not in edition 2026:** maps, user-defined generic types, recursive types and interface inheritance. Objects implement several interfaces instead, as AEGIS traits and COM's `QueryInterface` did ([0014](../decisions/0014-versioned-object-apis.md), rule 5).
-- **Limits.** Identifiers are 1 to 63 octets. Type nesting is at most 32 deep. A method's worst-case request and reply are each at most 2^24 octets with the largest header. At most 3 capability positions in each direction, or 2 if the body may spill, judged against the largest header: 704 octets of request body, or 952 of reply or item body ([Spilling](#spilling)).
+- **Limits.** Identifiers are 1 to 63 octets. Type nesting is at most 32 deep, counted through named types, because every encoder, decoder and generator recurses once a level (C07). Each type expression is a level, and a named type adds its own levels: an alias its target's, a struct its deepest field's, a union its deepest arm's. So `seq<u8>` is 2 deep, and a struct whose deepest field is `seq<u8>` is 2 deep too. Each declared type, each method's parameters and results, and each error's detail is at most 32 deep. A method's worst-case request and reply are each at most 2^24 octets with the largest header. So is every declared type's worst case, used or not, since each type has its own rule and vectors: at most 2^24 - 8 octets, the largest reply body. At most 3 capability positions in each direction, or 2 if the body may spill, judged against the largest header: 704 octets of request body, or 952 of reply or item body ([Spilling](#spilling)). A stream method's opening reply carries 12 more octets, the stream ID and the start position, and they count for spilling and for the size limit. A stream item is at most 2^24 - 8 - 4 - 13 octets, so one entry, in a batch of one, fits a message (C07).
 
 ### Object types
 
@@ -1471,6 +1493,8 @@ The attribute set is closed.
 - **Syntax.** `///` documents the item that follows, and `//!` the file. They use a CommonMark subset: paragraphs, lists, code spans, fenced code and links, with cross-references written `[aspis.catalog/1.watch]`.
 - **An error's doc comment is its description** ([The error envelope](#the-error-envelope)).
 - **The compiler emits a doc model.** How dm renders it is the dm design's ([0011](../decisions/0011-dm-window-system.md), rule 6; [L32](#l32-rendering-doc-comments)).
+- **The doc model is `idl::doc`, an API** (C07). It reads each comment into blocks (paragraphs, lists, fenced code) and inlines (text, code spans, links, cross-references), and lists every item of a file with its comment: the interface, each member, and each field, parameter, result, arm and value. A method's single unnamed result is `result`, as in JSON. Syntax it doesn't recognize stays text. It has no file format until dm's renderer needs one. The Rust back end writes comments as rustdoc, with each cross-reference as a code span.
+- **Cross-references.** `[name/major]` names an interface, and `[name/major.member]` or `[name/major.member.part]` something in it. The checker refuses a cross-reference into the file's own interface, or into an interface its `use` lines import, that names nothing. An import is read at the minor its `use` line names, so a reference to a member added later is refused. A reference to any other interface isn't checked, since the compiler doesn't have it (C07).
 - **Docs aren't part of the canonical form**, so fixing one needs no new minor.
 - **Support periods aren't IDL attributes.** A major's support period and deprecation dates are registration data in the catalog (D115), because dates in the source would change the interface's hash and force a new minor. The IDL carries only `[deprecated(M.m)]` ([L17](#l17-registration-documentation-revisions-and-support-periods)).
 
@@ -1484,17 +1508,28 @@ The attribute set is closed.
 
 ### The lock and the canonical form
 
-- **The canonical form** of one minor is the source projected to that minor, with comments and docs removed, every derived number written out (field tags as `@n`), attributes in a fixed order, and fixed whitespace. Its octets are what the lock and the catalog hash ([0028](../decisions/0028-discovery-and-realm-catalog.md), rule 2). Where documentation revisions live, beside that hash, is D111's and D114's.
-- **The lock file**, `v1.idl.lock`, records, for each published minor, the SHA3-256 hash of that minor's canonical form. SHA3-256 is the authorization tree's hash function ([0016](../decisions/0016-authorization-sparse-merkle-tree.md); C27).
+- **The canonical form** of one minor is the source projected to that minor, with comments and docs removed, every derived number written out (field tags as `@n`), attributes in a fixed order, and fixed whitespace. Its octets are what the lock and the catalog hash ([0028](../decisions/0028-discovery-and-realm-catalog.md), rule 2). Where documentation revisions live, beside that hash, is D111's and D114's. C07 fixed its layout (`idl::canon`):
+  - `edition 2026;`, then the `use` lines, then the header attributes and `interface name {` on one line, one member per line, and `}`. LF line ends, no indentation, no blank lines, and a final LF. It is itself a valid `idl-file`, so it parses back.
+  - One space after `,` and `:`, around `=` and `->`, after `]`, between words, and before `{`, `stream<...>` and `error(...)`; none elsewhere. The bodies of structs, unions, enums, flags, errors and objects stay on their member's line, and every field writes its position.
+  - Attributes in the order of [the attribute table](#attributes). Set-valued lists are sorted: `groups`, `group`, `requires`, `parents`, a capability's qualifiers, and a `use` line's names. So reordering a set is no change.
+  - Integers in decimal, `reserved(n)` included; `hex(...)` as written. Interface references always carry their minor (`aspis.kernel.memory/1.0`). Bounds keep a constant's name. An imported type is written by its bare name, which its `use` line brings into scope.
+  - What means the same is written the same. A `since` no later than its container's, `retry(never)`, `[local]` beside `[kernel]` and an empty detail block are left out, and results that are one field named `result` are written as the bare type.
+- **Projection** to M.m drops every item whose `since` is above M.m, every `deprecated(M.k)` with k above m, every entry of an `error(...)` list that names a dropped error, and every declared action group that no remaining method names. It also drops every imported name that nothing left references, and a `use` line left with no names. A method whose results all came later is left with none, as it had before them, never `-> ()`, which isn't IDL (C07). It sets `version(M.m)`. A member's effective `since` is its own, or its container's when it has none; it is never earlier than its container's.
+- **The lock file**, `v1.idl.lock`, records, for each published minor, the SHA3-256 hash of that minor's canonical form. SHA3-256 is the authorization tree's hash function ([0016](../decisions/0016-authorization-sparse-merkle-tree.md); C27). C07 fixed its format, whose grammar is `grammars/idl-lock.abnf` (`idl::lock`):
+  - the IDL file's SPDX lines and a title, as `#` lines, then one line per published minor, `1.0 sha3-256 <64 lowercase hex digits>`;
+  - the entries are minors 0 to p, in order, one each. A lock with no entries means nothing is published;
+  - the file's version is p (every minor published) or p + 1 (one minor in development). Anything else fails;
+  - a published minor's `use` lines name only minors published in the imported file's lock, so a published importer can't change under it.
 - **`idlc check`**, and the catalog on registration, does this for each published minor m-1 below the file's version:
   1. projects the source to m-1, computes the canonical form's hash, and compares it with the lock (or the catalog's stored version). A mismatch means a published minor was edited, and fails;
   2. checks that the step from m-1 to m makes only the changes [The compatibility check](#the-compatibility-check) allows;
   3. runs that section's vector check.
-- **Publishing a minor** adds its hash to the lock, in the same change.
+- **Publishing a minor** adds its hash to the lock, in the same change: `idlc lock FILE` publishes the file's version, after `idlc check` passes, and never rewrites an entry. Changing a published hash is a hand edit, visible in review. `cargo xtask idl` runs `idlc check` over every IDL file the repository holds.
+- **The step check is a structural diff** of two projected files (`idl::compat::step`). It works on two projections of one source, as `idlc check` makes them, and on a stored canonical form parsed back beside a new source, as the catalog will. The hash catches any edit to a published minor; the diff says what m adds, and refuses the rest. It compares what means the same as the canonical form writes it: `[local]` beside `[kernel]` is no change, and a method with no results has an empty list of them, to which a minor may append an optional one (C07).
 
 ### The JSON mapping
 
-One mapping serves the canonical call text (output only, in M2) and the HTTPS bindings and OpenAPI (D116, C52, which add the parsing side). It produces I-JSON (RFC 7493) over RFC 8259.
+One mapping serves the canonical call text (output only, in M2) and the HTTPS bindings and OpenAPI (D116, C52, which add the parsing side). It produces I-JSON (RFC 7493) over RFC 8259, with one exception: a string may hold the Unicode noncharacters (U+FDD0 to U+FDEF, and U+xFFFE and U+xFFFF) that the wire's `text-char` allows, which RFC 7493, §2.1 forbids.
 
 | IDL type | JSON |
 |---|---|
@@ -1519,52 +1554,83 @@ One mapping serves the canonical call text (output only, in M2) and the HTTPS bi
 | a redacted (`[sensitive]`) field | its key, with the value `null` |
 
 - **The call text** uses the mapping's compact form: no whitespace, keys in declaration order, a method's parameters as one object (`call-args`) and its results as another (`reply-results`). A single unnamed result, `-> T`, is the key `result`.
+- **Redaction** never shows whether a value was given: a `[sensitive]` field, and a `slot<...>`, always write their key with `null`, present or absent (C07).
+- **Floats** take ECMAScript's layout: with n the decimal exponent, decimal notation for -6 < n ≤ 21, and exponent notation otherwise, with an explicit sign. So `1e-7` and `1e+21`, but `0.000001` and `100000000000000000000`.
+- **`[format(json)]`** text is embedded when it is an RFC 8259 value that is also I-JSON: no member name twice in one object (compared after unescaping), no unpaired surrogate escape, nesting at most 32 deep, and at most 64 members in any object. It is re-written without insignificant whitespace, its tokens otherwise unchanged. Any other text is written as a JSON string, so the output is always I-JSON. The bare literal `null` is written as the string `"null"` too, since `null` under a key means redacted; its text rule is `json-embedded`, any value but a bare `null`. The member limit bounds the duplicate-name check, so checking the text takes one pass, in time linear in its length (C07).
+- **The writer** is `idl_rt::json::JsonWriter`, `no_std`, into a caller's buffer. `grammars/json.abnf` is the grammar of what it writes, and each method's text grammar gives the exact form ([Generated grammars](#generated-grammars)).
 - **Parsing** (D116): inputs may order keys freely; unknown names are an error, unless they are `"@<tag>"` forms; and `null` for an optional field means absent. D116 settles the rest, including problem details for errors (RFC 9457), and how capabilities and streams appear at the HTTPS edge (D120; [L15](#l15-the-https-binding), [L16](#l16-streams-over-https)).
 - **Cedar** (C31): `u8` to `u32` and the signed types map to Cedar's `Long`. `u64` maps to `Long` only where the value fits in 2^63 - 1, and a value above it makes the decision fail closed. Floats and capabilities have no Cedar mapping, and can't be entity attributes or context. C31 settles the rest ([L12](#l12-cedar-schema-details)).
 
 ### Generated grammars
 
-- **One file per interface version**, such as `v1.1.abnf`, with `; uses: core`. CI regenerates it, and fails if it differs from the committed file.
-- **Rule names are one to one with what they name.** Each name maps `_` to `-`, since RFC 5234 rule names can't contain `_`. A member name never has `__` or a trailing `_` ([Member names](#member-names)), so `--` never comes from a name, and `--` separates a name from what follows it. Every rule carries a prefix, so none collides with the core rules or `call-header.abnf`:
-  - types are `t-<type>`; a struct's field rules `t-<type>--<field>`, its tail `t-<type>--tail`, its tail alternatives `t-<type>--opt`, and its unknown-field rules `t-<type>--unknown` and `t-<type>--unknown-tag`;
-  - method bodies are `m-<method>--req`, `m-<method>--rep` and `m-<method>--item`, with helpers `m-<method>--req--tail` and so on;
-  - error details are `e-<error>`, with helpers `e-<error>--tail` and so on;
-  - an imported type's rules are `u<k>--t-<type>`, where k is the import's position in the file's `use` lines, so two imports never clash.
-- **Every open struct gets its own tail rules**, method requests and replies included: known optional fields as literal-tagged alternatives, and, in reply, item and error-detail grammars, one unknown alternative whose tag is at least the position after the last field known at that minor. Generated grammars never use the core rule `tail`, which can't bound a tag from below.
-- **Bounds become constraints:** `; constraint: at most 255` on a `len32`, `; constraint: at most 256` on a `count32`.
-- **Request grammars are strict**, with no unknown alternative. Reply, error-detail and item grammars carry one per open struct.
-- **Vectors** (`v1.1.vectors`) are golden encodings from the Rust encoder, plus hand-written `err` and `errc` cases.
+C07's ABNF back end (`idl::abnf_gen`) writes these; `idl::vectors` writes their vectors.
 
-For example, for `watch`, with the `change` rules of [The struct encoding](#the-struct-encoding):
+- **Four files per minor**, beside the IDL file: `v1.1.abnf` (the wire grammar, `; uses: core`), `v1.1.text.abnf` (the canonical-text grammar, `; uses: core, names, json`), and a vector file for each. A `[kernel]` interface has no wire grammar. `cargo xtask idl` regenerates them and fails if any committed file differs, or if a generated file names a minor above the file's version. `cargo xtask grammars` and the Python checker run every one ([Checkers](#checkers)).
+- **Only the constraint vocabulary, and no prose.** Both checkers load the generated grammars strictly, as the catalog does. A wire grammar never refers to `call-header.abnf`, so a change to a hand-written grammar never touches a published generated one.
+- **Rule names are one to one with what they name.** Each name maps `_` to `-`, since RFC 5234 rule names can't contain `_`. Every rule carries a prefix, so none collides with the core rules, `names.abnf`, `json.abnf` or `call-header.abnf`:
+  - a type is `t-<type>`, its tolerant form. A type that holds an open struct through members known at the minor also gets `r-<type>`, its strict form, which requests use. Other types have one form, used by both;
+  - method bodies are `m-<method>--req`, `--rep`, `--open` (a stream's opening reply) and `--item`; error details are `e-<error>`;
+  - an imported type's rules are `u<k>--t-<type>`, where k is the import's place, from 1, among the `use` lines of the file projected to the minor. A line the minor doesn't use has no place, and no prefix. An import of an import is `u<k>--u<j>--t-<type>`. An interface minor reached more than one way keeps the first prefix found breadth-first from the root, the root's lines first, in order. So the prefixes depend only on that projection, which the lock's hash covers, and on the imports, each read at its `use` minor. No edit to a later minor's imports can rename a published grammar's rules: not a line added before the others, and not an unused line added or removed, even one that names an interface minor a used line reaches through an import (C07). Imported types are read at the minor their `use` line names, so a later minor of the imported interface never changes a published grammar of the importer ([The compatibility check](#the-compatibility-check));
+  - a field, parameter or arm is `<rule>--<member>`;
+  - helpers take a third hyphen: `---tail`, `---opt`, `---unknown`, `---unknown-tag`, `---len`, `---body`, `---count`, `---elem`, `---value` and `---o<k>` (an octet of closed flags), and in text grammars `---digits`, `---neg`, `---number`, `---bits`, `---unknowns`, `---a<k>` and `---b<k>`. A member name starts with a letter and never holds `__`, so no member name makes a helper's name, and no word is refused for it.
+- **Every open struct gets its own tail rules**, method bodies included: known optional fields as literal-tagged alternatives, and, in tolerant forms, one unknown alternative whose tag is at least the position after the last field known at that minor. Generated grammars never use the core rule `tail`, which can't bound a tag from below.
+- **Tolerant and strict.** Replies, items, error details and the requests the kernel sends use tolerant forms. A client's request uses strict forms, with no unknown tail alternative. An open union's unknown arm, `not one of 0` and its known arms, is in both forms: a request may carry an arm the server doesn't know ([Rules for readers](#rules-for-readers)).
+- **Bounds become constraints**, and repetitions are bounded too. `string<255>` is `X---len *255text-char`, with `; constraint: at most 255` on its `len32` and `exactly X---len octets` on the rule; `seq<id, 256>` is `X---count *256object-id`. A strict tail holds at most one of each known field. An unknown tail tag and an unknown arm tag are also written as octet ranges (`%x00 %x05-FF / %x01-FF OCTET` for "at least 5"), beside the constraint that says the same. The tighter context-free grammar has far fewer readings, which keeps the Python checker, a backtracking parser, fast.
+- **Length-prefixed values** follow [The struct encoding](#the-struct-encoding)'s pattern. The opening reply is `m-<method>--open = m-<method>--open---id u64 m-<method>--rep`, with the stream ID `not 0`.
+
+For example, for `watch`, with the `change` rules of [The struct encoding](#the-struct-encoding), from `interfaces/aspis/catalog/v1.1.abnf`:
 
 ```abnf
-; aspis.catalog/1.1, method 2 "watch"
-m-watch--req          = t-query m-watch--req--tail
-m-watch--req--tail    = tail-count *m-watch--req--after
-                        ; constraint: ascending tags
-                        ; constraint: exactly tail-count m-watch--req--after elements
-m-watch--req--after   = %x00.02 %x00.00.00.08 u64        ; tag 2: after
-m-watch--rep          = u64 m-watch--rep--tail           ; at, then an open tail
-m-watch--rep--tail    = tail-count *m-watch--rep--unknown
-                        ; constraint: ascending tags
-                        ; constraint: exactly tail-count m-watch--rep--unknown elements
-m-watch--rep--unknown = m-watch--rep--unknown-tag octets
-m-watch--rep--unknown-tag = u16
-                        ; constraint: at least 2
-m-watch--open         = stream-open m-watch--rep        ; the opening reply's body
-m-watch--item         = t-change
+; method 2 "watch": the request, strict
+m-watch--req = r-query m-watch--req---tail
+m-watch--req--after = %x00.02 %x00.00.00.08 u64           ; tag 2: after
+m-watch--req---tail = tail-count *1m-watch--req---opt
+    ; constraint: ascending tags
+    ; constraint: exactly tail-count m-watch--req---opt elements
+m-watch--req---opt = m-watch--req--after
 
-; struct query, in this request grammar: strict, so no unknown alternative
-t-query               = t-selector t-query--tail
-t-query--tail         = tail-count *t-query--limit
-                        ; constraint: ascending tags
-                        ; constraint: exactly tail-count t-query--limit elements
-t-query--limit        = %x00.02 %x00.00.00.04 u32        ; tag 2: limit
-t-selector            = arm-tag octets                   ; open union selector;
-                                                         ; arms 1 to 3 not shown
+; method 2 "watch": the reply
+m-watch--rep = u64 m-watch--rep---tail                    ; at, then an open tail
+m-watch--rep---unknown = m-watch--rep---unknown-tag octets
+m-watch--rep---unknown-tag = %x00 %x02-FF / %x01-FF OCTET
+    ; constraint: at least 2
+m-watch--rep---tail = tail-count *m-watch--rep---opt
+    ; constraint: ascending tags
+    ; constraint: exactly tail-count m-watch--rep---opt elements
+m-watch--rep---opt = m-watch--rep---unknown
+
+; method 2 "watch": the opening reply: its stream ID, start position and reply struct
+m-watch--open = m-watch--open---id u64 m-watch--rep
+m-watch--open---id = u32
+    ; constraint: not 0
+
+; method 2 "watch": a stream item
+m-watch--item = t-change
+
+; query, strict: no unknown alternative
+r-query = t-selector r-query---tail
+r-query--limit = %x00.02 %x00.00.00.04 u32                ; tag 2: limit
+r-query---tail = tail-count *1r-query---opt
+    ; constraint: ascending tags
+    ; constraint: exactly tail-count r-query---opt elements
+r-query---opt = r-query--limit
 ```
 
 `t-change-kind` is the type `change_kind`; the field `kind` of struct `change` would be `t-change--kind`, so the two never collide.
+
+**The canonical-text grammar** gives each method's `m-<method>--call` and `m-<method>--reply` (the `call-text` and `reply-text` of [the names grammar](#the-names-grammar), exactly), and the JSON of every body and type, under the same rule names (`m-<method>--args` and `--results` for a method's parameters and results). It uses `grammars/json.abnf`.
+
+- **Shapes and bounds.** Objects have their keys in declaration order, optional members absent or present, `"@<tag>"` members last (in tolerant forms, tags ascending and at least the next position), and `null` under a `[sensitive]` field or a slot. Integers are bounded on rules defined as `json-uint` or `json-uint-nz`, which read as the decimal number they spell: `at most 255`, or a `"-" X---neg / X---digits` split for a signed type; a `u64` or `i64` is the same between quotes. An unknown enum value's number is `not one of` the known ones. Sequence and array lengths, and a byte string's base64url length, are repetition bounds.
+- **What a text grammar doesn't check:** a string's length, which escaping changes; whether a flags type's unknown bits include a known one; and which of ECMAScript's layouts a float takes. The wire grammar holds those.
+
+**Vectors are generated whole**, so CI regenerates each file and compares it octet for octet:
+
+- **ok:** for every rule, a minimal value, one with every optional present and small contents, and one variant per feature: each optional present and absent, each known arm, each enum value and flag bit, integer extremes, strings (empty, ASCII, a 4-octet code point, escapes, at the bound when it is 64 or less), byte strings, sequences of 0, 1 and 2 elements, floats (both zeros, the canonical NaN, the infinities, 1.5). Tolerant rules add an unknown tail field; open types an unknown arm, enum value or flag bit. A capability vector also appears under `# unwrapped: 1`. Each value is encoded with `idl::value`, decoded back, and must re-encode to the same octets.
+- **err and errc:** corruptions of the shortest ok vectors of each rule: truncated and extended; tail tags out of order, repeated, or 0; a tail tag at a required field's position; a field newer than the minor; a length one too long; a count or a string over its bound; an overlong UTF-8 form; `bool` `%x02`; a NaN payload; an open union's tag 0; an unknown arm, value or bit in a closed type; a capability index too high or repeated, or one no index names; a stream ID 0. Each is tagged by crates/abnf's two judgments: `err` when the context-free grammar rejects it, `errc` when only a constraint does. The dynamic decoder must reject exactly what the constrained grammar rejects, or generation fails; a corruption both accept is dropped. Every kind of corruption that applies somewhere is rejected somewhere.
+- **Text vectors** are the same values' JSON in their text rules, call and reply text (with the target `0123…cdef`, or `-` for `[kernel]`; replies with `ok`, the method's own errors, `refused aspis.rpc/1!malformed` and `indeterminate <id>/1!#17`), and corruptions the text grammar rejects: whitespace, case, a `u64` as a number, a value where a redacted `null` belongs, a number over its bound, two keys swapped.
+- **Each file's vectors have one budget** (`idl::vectors::Budget`), shared by all its minors, which `idl::generate::Generator` generates lowest first, as idlc does. The samples of every rule of every minor may make 2^18 values in all (`idl::vectors::FILE_BUDGET`), and each rule's samples at most 65,536 (`idl::vectors::BUDGET`). A value costs what it allocates: itself, each element of a list, and each slot of a struct, whether its field is present or absent. Matching the samples and their corruptions against the grammars may take 2^26 of crates/abnf's steps in all (`idl::vectors::STEPS`), since a value's cost says nothing about its match: an enum of 4096 values is one value, and its rule is an alternation of 4096. A type the checker accepts can still have a huge minimal value, such as an array of 4000 arrays of 4000 octets, or a struct whose two fields are the struct below it, 20 deep. A struct of 4096 optional fields has thousands of variants, each with 4096 slots. And a file may declare 4096 types and methods, each with rules of its own, and 65,536 minors. A rule's samples stop at its budget, and those already complete are kept. Once the file's values or steps run out, the minor being generated keeps the vectors already made, and every later minor gets none. So a rule, or a minor, may get no vectors, and a file's samples cost at most 2^18 values and their matches at most 2^26 steps, whatever minor it declares.
+- **A minor whose projection is the one before's reuses its files.** A projection changes only at a minor that a `since` or `deprecated` names; in between, only the header's version moves. Such a minor gets the minor before's grammars, under its own header lines, or their failure. It gets the minor before's vectors too when the budget still holds what they cost, which is taken from it again; none, when the budget was spent before the minor before began; and otherwise vectors made again from what is left. idlc compares and writes each file as its header lines and the shared rest, holds one minor's files at a time, and runs the step check and the `use` check only at minor 0 and where the projection changes. Its evolution check runs only on a minor whose grammar or vectors are new. It checks that minor's wire vectors with crates/abnf, which repeats the generator's matches, each ok line under `# unwrapped:` once more, and its matches against the minor before's grammar take one allowance for the file, crates/abnf's 500 M steps; it fails if they run out. So beyond the budget, a file costs idlc, for each projection, building its grammars and loading them, the wire grammar twice; for each minor whose vectors are new, at most twice the generator's matches of them; and for every minor, its header lines and the files it reads or writes. `idlc check` also hashes the canonical form of each minor the lock publishes.
+- Lines are at most 4 KiB. The Python checker is a backtracking parser, and a long corrupt line with many readings is slow to rule out, so nested values in a "full" sample stay minimal, and corruptions start from the shortest samples.
 
 ### Back ends
 
@@ -1573,12 +1639,12 @@ In build order:
 | Order | Back end | Chunk | Notes |
 |---|---|---|---|
 | 1 | The front end: parse, resolve, check (types, bounds, worst-case sizes, capability counts, names), project, canonical form, lock, compatibility check | C07 | `crates/idl` |
-| 2 | ABNF: the wire grammar and the canonical-text grammar of each minor, and vector scaffolding | C07 | committed outputs |
+| 2 | ABNF: the wire grammar and the canonical-text grammar of each minor, and their vectors, generated whole | C07 | committed outputs |
 | 3 | Rust `no_std` | C07 | Used by C17 and C18. See below. |
-| 4 | Rust `alloc`: owned types (`String`, `Vec`) for host tools and the later `std` port | C07 | Behind an `alloc` feature of the generated crate. It is a library feature, not test code, so [0036](../decisions/0036-qemu-configuration-and-test-builds.md), rule 6 doesn't apply. |
+| 4 | Rust `alloc`: owned values for host tools and the later `std` port | C07 | Behind an `alloc` feature of the generated crate. It is a library feature, not test code, so [0036](../decisions/0036-qemu-configuration-and-test-builds.md), rule 6 doesn't apply. Owned values are the same types at `'static`: the views gain owned variants, and `idl_rt::view::IntoOwned` converts a decoded value (C07). |
 | 5 | The JSON mapping's encoder, for the call text | C07 | `no_std`, into a buffer |
-| 6 | The doc model | C07 | dm renders it later |
-| 7 | Fuzz support: `arbitrary::Arbitrary` impls under `cfg(fuzzing)`, round-trip tests, and a fuzz-target stub per interface version | C07, with C71 | host only ([The fuzzing gate](#the-fuzzing-gate)) |
+| 6 | The doc model | C07 | `idl::doc`, an API ([Doc comments](#doc-comments)); dm renders it later |
+| 7 | Fuzz support: entry functions per crate and per generated interface, replay tests, and a structured value generator in `crates/idl` | C07, with C71 | No `arbitrary` in product crates, so the product lock file stays free of fuzz dependencies; C71 may wrap the generator in `arbitrary` inside `fuzz/`. Host only ([Fuzz entry points](#fuzz-entry-points)) |
 | 8 | Cedar schema fragments | C31 | |
 | 9 | The HTTPS binding, the JSON decoder, and OpenAPI 3.2.1 | C52 | OpenAPI 3.2.1 (2026-09-10) is a patch release of the 3.2 that [0027](../decisions/0027-applications-extend-the-system.md), rule 10 names. |
 | 10 | C headers and shims | deferred | Until a C consumer exists. relibc is Rust and builds on `aspis-rt` ([0059](../decisions/0059-the-kernel-interface-library.md), rule 8), so M2 to M5 need none ([L30](#l30-the-c-binding)). |
@@ -1590,32 +1656,63 @@ In build order:
 - server traits, with a dispatcher that makes the refusals of [Refusing what is too new](#refusing-what-is-too-new), or, for interfaces the kernel calls, hands unknowns to the handler;
 - error enums, and the outcome and `CallError` types.
 
-Every generated interface crate is `#![forbid(unsafe_code)]`, because it decodes input from across a trust boundary ([What the gate covers](#what-the-gate-covers)). For `[kernel]` interfaces, the `#[repr(C)]` function-table types and the glue that reaches ADR 0059's entry table need `unsafe`. They are emitted into `aspis-rt`, the one crate that knows the entry table ([0059](../decisions/0059-the-kernel-interface-library.md), rule 8), and that glue parses nothing.
+C07 builds it as `idl::rust`, which writes one module per interface major, read at its newest minor:
 
-**Generated Rust names:** types in UpperCamelCase; functions and fields in snake_case, as written. A name that is a Rust keyword is emitted as a raw identifier, such as `r#type`. `self`, `super` and `crate` are refused by the name grammar.
+- **The module.** `aspis.catalog` major 1 is `v1`, which a crate nests by name: `aspis_interfaces::aspis::catalog::v1`. It holds `NAME`, `MAJOR`, `MINOR`, `ID` and `META`, the metadata of [Rights a session needs](#rights-a-session-needs) and [Local methods and interfaces](#local-methods-and-interfaces) (per method: number, `since`, locality, one-way, worst-case sizes, capability counts, may-spill, stream kind and largest entry); `consts`; `types`; `errors`; `methods::<method>` (`NUMBER`, `SINCE`, `ACTION`, `Request`, `Reply`, `Item`, and `call_text` and `reply_text`, which take the request or reply as an `Option`: `None` writes the default form, without arguments or results); `Client` and `trait Server` with `dispatch`; `rule`, the codecs by generated grammar rule name, with `RULES`, their names, and `MODULE`, which the vector tests and the conformance runner drive; and `fuzz::decode`, the module's fuzz-target entry.
+- **Imports.** An imported interface's types sit in `types::u<k>`, at the minor its `use` line names, so a decoder works at one interface's minor ([Generated grammars](#generated-grammars)).
+- **One module, every minor.** Types are generated at the newest minor. A decoder reads at the session's minor, from its context: what is newer is unknown, so the decoder at minor m accepts what grammar m accepts. Test fixtures also get a module per earlier minor, generated from that minor's projection, so a test can read a newer minor's messages with a real older binding.
+- **Types.** Structs are Rust structs, with `unknown_`, the preserved tail, on open ones. Open enums and flags are newtypes over their width with associated constants, so every value is representable and preserved; closed enums are Rust enums; closed flags reject undeclared bits. Unions are Rust enums, with `Unknown_ { tag, octets }` on open ones. Strings, byte strings, sequences and arrays are views (`Str`, `Bytes`, `Seq`, `Array`). A decoded sequence is lazy: decoding checks every element, and iterating reads each again.
+- **Capabilities.** A type that holds a capability is generic over it: `CapRef`, the index, once decoded; `CapArg` to send, which says whether a session capability is moved or shared. The encoder hands each capability to a sink in encoding order, and writes the index the sink returns.
+- **Stubs.** A stub encodes the request once to check it and collect its capabilities, converts each (attenuated for a kernel object, moved, or dup'd for a shared session), then sends. The refusals it makes without sending are in [Refusing what is too new](#refusing-what-is-too-new). If a call that carried a dup'd badge comes back unreachable, the stub closes that badge. A reply that doesn't decode is `malformed`, outcome indeterminate: the method may have run, and no usable answer came (C07).
+- **Badges.** A dispatcher's `Request` carries the badge the runtime read from the IPC receive, and a method sees it in its `Ctx`, as `badge`. The kernel-called server's `unknown_` gets the same `Ctx`, so a fault or pager handler finds the thread or memory object an unknown request is about (C07).
+- **The seams.** `idl_rt::channel` holds what a runtime implements: `Channel` (a client's session: it owns buffers, headers, request IDs, deadlines and spilling, so a stub never sizes a buffer), `Responder` (a server's side of one call, with identify), and `CapOps` (`session_dup`, attenuate, `session_close`, and deleting an unsent copy). C18 implements them over kernel IPC, C29 for proxies, and the tests over an in-memory loopback.
+- **`[kernel]` interfaces** get `trait Calls`, the signatures only. C17 implements it in `aspis-rt`.
+- **`aspis.rpc`** is generated into idl-rt itself, as `crates/idl-rt/src/rpc/v1.rs`, committed, so `CallError` can name the system errors without a build script. idl-rt's `rpc` feature holds it and the call seams; idlc builds idl-rt without it, so a stale binding never stops the regeneration. `cargo xtask idl` checks it, and `--write` regenerates it.
+
+Every generated interface crate is `#![forbid(unsafe_code)]`, because it decodes input from across a trust boundary ([What the gate covers](#what-the-gate-covers)). Each generated module carries `#![forbid(unsafe_code)]` itself too, so a crate made from `idlc rust` output keeps it whatever its own root says (C07). For `[kernel]` interfaces, the `#[repr(C)]` function-table types and the glue that reaches ADR 0059's entry table need `unsafe`. They are emitted into `aspis-rt`, the one crate that knows the entry table ([0059](../decisions/0059-the-kernel-interface-library.md), rule 8), and that glue parses nothing.
+
+**Generated Rust names:** types in UpperCamelCase; functions and fields in snake_case, as written. A name that is a Rust keyword is emitted as a raw identifier, such as `r#type`. `self`, `super` and `crate` can't be raw identifiers, so the name grammar refuses them as member names and as labels of interface names. Two interfaces whose modules would share a path, `x` major 1 and an interface `x.v1`, both at `x::v1`, are refused by `idlc check` while both are under its roots, and a generated tree that holds both renders a `compile_error!`. Generated code names `Option`, `Result` and their variants by full path, such as `::core::option::Option`, so a type named `option` or `result` shadows nothing. The items the generator adds to a member's scope end in `_`: the field `unknown_`, the variants `Unknown_`, and the kernel-called server's `unknown_`. No member name can end in `_`, so none collides with them, and no member word is refused for it (C07).
+
+### The conformance runner
+
+`idl::conformance` checks a binding of one interface major against one minor's generated grammars and vectors ([0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 3; [0067](../decisions/0067-the-aspis-idl.md), rule 9). It is `no_std` with `alloc` and does no I/O, so the catalog can run it on a publisher's grammars and vectors, and an application's compiler run uses the same runner (parity, [0027](../decisions/0027-applications-extend-the-system.md), rule 3). C07 built it.
+
+- **The subject.** A binding is an `idl_rt::conformance::Subject`: it decodes a message as a rule, at a minor, and re-encodes it or writes its JSON. Each generated Rust module is one through its `MODULE`. A binding in another language can implement the trait.
+- **What it checks**, on each wire vector:
+  1. an ok vector decodes and re-encodes to the same octets, and an err or errc vector is refused;
+  2. the verdicts agree on the vector and on 24 deterministic mutations of each ok vector (bit flips, truncations, insertions, deletions, fixed seeds). Decoded, with or without `value_too_new`, means the grammar must accept with its constraints; `malformed` or `field_too_new` means it must reject. crates/idl's dynamic codec must agree too, and an accepted mutation must re-encode to itself;
+  3. an ok vector's JSON is the dynamic codec's, and matches the text grammar in its text rule, both bare and placed in a call (`m-*--call`) or a reply (`m-*--reply ok ...`).
+- **`[kernel]` interfaces** have no wire grammar. The runner feeds the subject the dynamic codec's encodings of the vector generator's samples, checks item 3, and checks item 2 against the dynamic codec alone.
+- **Budgets.** A grammar match that runs out of crates/abnf's budget counts as unjudged, never as a verdict. CI fails if more than 1 percent of the checks are unjudged. A file's runs, at every minor, share one budget (`idl::conformance::budget()`): a `[kernel]` interface's samples take from its 2^18 values, as the vector generator's do, and every grammar match from its 2^28 steps (`idl::conformance::STEPS`). Every match after they run out is unjudged too. So a file's matches take at most 2^28 steps, whatever minor it declares; the rest of a run's work is linear in the vectors it is given, with 24 mutations of each ok one.
+- **Old against new.** The fixtures also have a real binding of each earlier minor, generated from that minor's projection. A test reads every newer minor's tolerant messages with each older binding and re-encodes them byte for byte, and reads every older minor's messages with the newest binding ([Differential tests](#differential-tests), "Old and new minor versions").
 
 ### Crates
 
 | Crate | Kind | Contents | Dependencies |
 |---|---|---|---|
-| `crates/idl` | `#![no_std]` with `alloc`, `#![forbid(unsafe_code)]` | The lexer, a hand-written recursive-descent parser, the resolver, the checker, projection, the canonical form, the compatibility check, and the ABNF and (later) Cedar back ends. The catalog runs it. | `sha3` (RustCrypto, MIT OR Apache-2.0) for SHA3-256, pending D33's choice of crypto crates; nothing else |
-| `crates/idl-rt` | `#![no_std]`, `#![forbid(unsafe_code)]` | The runtime for generated code: core-rule codecs, tails, bounded views, unknown-value carriers, the outcome and error types, the JSON encoder, and the parsers for `interface-ref`, `action-ref` and `error-ref`, which the PDP, the token library and the catalog use | none |
-| `tools/idlc` | a `std` command-line tool | `idlc build`, `check`, `fmt` and `lock`; diagnostics | `annotate-snippets` 0.12 (MIT OR Apache-2.0, as rustc uses) |
+| `crates/idl` | `#![no_std]` with `alloc`, `#![forbid(unsafe_code)]` | The lexer, a hand-written recursive-descent parser, the resolver, the checker, projection, the canonical form, the lock, the compatibility check, the dynamic value model (`idl::value`, the seam for [L33](#l33-dynamic-invocation)), the ABNF and Rust back ends (and later the Cedar one), with vector generation, the doc model (`idl::doc`), the conformance runner (`idl::conformance`), and fuzz entry points with a structured value generator (`idl::fuzz`). The catalog runs it. Imports and shared grammars reach it through resolvers the caller gives, so it does no I/O. | `idl-rt` (the name parsers, the JSON writer); `abnf` (loads each generated grammar and labels its vectors); `sha3` 0.11 (RustCrypto, MIT OR Apache-2.0) for SHA3-256, pending D33's choice of crypto crates |
+| `crates/idl-rt` | `#![no_std]`, `#![forbid(unsafe_code)]`; features `rpc` (default) and `alloc` | The runtime for generated code: core-rule codecs, tails, bounded views, unknown-value carriers, capability indexes, the outcome and error types, the error envelope's codec, interface metadata, the JSON encoder and the call text, the parsers for `interface-ref`, `action-ref` and `error-ref`, which the PDP, the token library and the catalog use, the conformance runner's `Subject`, and the fuzz entries of the name parsers and of any generated module. With `rpc`: `aspis.rpc`'s binding, `CallError` and the call seams. | none |
+| `crates/interfaces` (`aspis-interfaces`) | `#![no_std]`, `#![forbid(unsafe_code)]`; feature `alloc` | The bindings of every interface under `interfaces/`, generated by `build.rs`; `aspis::rpc` re-exports idl-rt's | `idl-rt`; at build time, `idl` |
+| `crates/idl-fixtures` | the same, for tests only | The bindings of the compiler's test fixtures, at every minor | the same |
+| `tools/idlc` | a `std` command-line tool | `idlc check`, `build`, `lock`, `canon` and `rust`; diagnostics as `path:line:col: error: ...`, with the line and a caret. No `idlc fmt` yet: a formatter must keep comments, and nothing needs one. | `idl`, `idl-rt`, `abnf` |
 
 - **Why a hand-written parser.** It builds `no_std`, gives the best diagnostics, adds no dependency churn, and fuzzes well; rustc, fidlc and wit-parser do the same. Parser generators (pest, lalrpop, chumsky, winnow) would put the grammar in two places, and vary in `no_std` support. The normative grammar is `grammars/idl.abnf`. The parser is checked against its vectors, and fuzzed against it ([Differential tests](#differential-tests)).
 - **Generated Rust** is produced at build time by `build.rs`, through `crates/idl`, deterministically ([0038](../decisions/0038-reproducible-builds-and-provenance.md)). Generated grammars and locks are committed. `cargo xtask idl` regenerates and checks them.
-- **Tests** are golden files and round trips: every Rust encoding matches the ABNF and its constraints, and corrupted encodings are rejected. Each test file is declared in `Cargo.toml` (`autotests = false`).
+- **Tests** are golden files and round trips: every Rust encoding matches the ABNF and its constraints, and corrupted encodings are rejected. Each test file is declared in `Cargo.toml` (`autotests = false`). In C07: every generated decoder reads every committed wire vector of every minor, re-encodes the ok ones to the same octets, refuses the rest, and writes the same JSON as `idl::value`; the stubs and dispatchers run over an in-memory loopback; `idlc rust`'s output for the two examples is checked against golden files; the conformance runner runs over every interface and fixture at every minor, with every module that reads it; and the fuzz entry points are replayed over every vector line and mutations ([Fuzz entry points](#fuzz-entry-points)).
 - **Toolchain.** Pinned stable Rust 1.100.0, no nightly feature; MPL-2.0 throughout.
 
 ### The IDL grammar
 
-The IDL is a machine-read text format, so its grammar is ABNF ([0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2; [0031](../decisions/0031-abnf-is-not-a-command-language.md), rule 1). This is a sketch. C07 writes `grammars/idl.abnf` in full, with vectors, and a `; uses: core, names` line that preloads the core grammar (for the UTF-8 rules) and the names grammar ([Checkers](#checkers)). Plain `//` comments are whitespace. `///` and `//!` start doc comments, which the grammar keeps apart.
+The IDL is a machine-read text format, so its grammar is ABNF ([0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2; [0031](../decisions/0031-abnf-is-not-a-command-language.md), rule 1). C07 wrote it as `grammars/idl.abnf`, with vectors in `grammars/idl.vectors`, and a `; uses: core, names` line that preloads the core grammar (for the UTF-8 rules) and the names grammar ([Checkers](#checkers)). The file is normative. `crates/idl`'s parser accepts exactly what it accepts with its constraints, and `crates/idl/tests/grammar.rs` checks that on every vector, every IDL file in the repository, every canonical form, and deterministic mutations of them. The block below is the file's rules. Plain `//` comments are whitespace. `///` and `//!` start doc comments, which the grammar keeps apart.
 
 ```abnf
+; ---- Files ------------------------------------------------------------
 idl-file     = s edition [ file-docs ] s *( use-decl s ) interface s
 edition      = %s"edition" w "2026" s ";"
 use-decl     = %s"use" w interface-ref ".{" s decl-name *( s "," s decl-name ) s "}" s ";"
 interface    = [ docs s ] attrs s %s"interface" w label s "{" *( s member ) s "}"
+
+; ---- Members ------------------------------------------------------------
 member       = [ docs s ] [ attrs s ] ( const-decl / alias-decl / struct-decl
                / union-decl / enum-decl / error-decl / object-decl / method
                / reserved-method )
@@ -1629,16 +1726,24 @@ enum-decl    = ( %s"enum" / %s"flags" ) w decl-name s ":" s uint-type s "{" s
                [ value *( s "," s value ) [ s "," ] ] s "}"
 error-decl   = %s"error" w member-name s "=" s int-lit [ s field-block ] s ";"
 method       = "@" ordinal w member-name s "(" s [ field *( s "," s field ) [ s "," ] ] s ")"
-               [ s "->" s results ] [ s %s"error" s "(" s member-name *( s "," s member-name ) s ")" ] s ";"
-results      = type [ w stream-type ] / "(" s field *( s "," s field ) [ s "," ] s ")" [ w stream-type ]
-               / stream-type
+               [ s "->" s results ] [ w %s"error" s "(" s member-name *( s "," s member-name ) s ")" ] s ";"
+               ; "w" before "error": with "s", a result type such as u64 could
+               ; run into it, as "u64error(e)"
+results      = type [ w stream-type ]
+             / "(" s field *( s "," s field ) [ s "," ] s ")" [ s stream-type ]
+             / stream-type
 stream-type  = %s"stream" "<" s type-ref s ">"
 reserved-method = %s"reserved" w "@" ordinal s ";"         ; interface level: methods only
-field        = [ docs s ] [ attrs s ] member-name s ":" s type
+
+; A field may write its position, "@n", which must equal its position
+; (the canonical form writes every one).
+field        = [ docs s ] [ attrs s ] [ "@" ordinal w ] member-name s ":" s type
 arm          = [ docs s ] [ attrs s ] "@" ordinal w member-name s ":" s type
              / %s"reserved" w "@" ordinal                   ; a retired arm
 value        = [ docs s ] [ attrs s ] member-name s "=" s int-lit
              / %s"reserved" w int-lit                       ; a retired value
+
+; ---- Types ----------------------------------------------------------------
 type         = base-type [ "?" ]
 base-type    = %s"bool" / int-type / %s"f32" / %s"f64" / %s"id" / %s"uuid"
              / ( %s"string" / %s"bytes" ) "<" s bound s ">"
@@ -1652,6 +1757,8 @@ bound        = int-lit / member-name                        ; a const
 type-ref     = decl-name / interface-ref "." decl-name      ; local or imported
 decl-name    = member-name                                  ; a declared type's name
                ; constraint: not word bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 id uuid string bytes seq array cap slot stream
+
+; ---- Attributes and literals ------------------------------------------
 attrs        = "[" s attr *( s "," s attr ) s "]"
 attr         = member-name [ "(" s attr-arg *( s "," s attr-arg ) s ")" ]
 attr-arg     = version-lit / int-lit / interface-name / member-name / id-lit
@@ -1675,7 +1782,16 @@ doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF an
 - **Docs are never whitespace.** `comment` can't start with `///` or `//!`, so `s` and `w` never swallow a doc comment. Every place a doc comment may stand is written `[ docs s ]`, which allows the newline and indentation between a doc comment and the attributes or item it documents, as in the eventcount example's `/// ...` then `[refused]`.
 - **Built-in type names are reserved.** `decl-name` excludes them, so `u64` as a type is only ever the built-in, and no user type can be named `u64`. `type-ref` uses `decl-name`, which removes the ambiguity between `base-type`'s alternatives.
 - **`reserved`** retires a method at interface level (`reserved @n;`), an arm inside a union (`reserved @n`), and a value inside an enum or flags type (`reserved n`).
-- **The checker adds what the grammar doesn't say.** It limits method ordinals to 1 to 65,279 ([Method numbers](#method-numbers)). It requires the label after `interface` to equal the last label of `id(...)`, and the same for `object` and `type(...)`.
+- **C07 changed the sketch in three places.** A field may write its position, `@n`, which must equal it, so the canonical form is itself a valid file. A method's `error(...)` follows `w`, not `s`: with `s`, a result type such as `u64` could run into it, as `u64error(e)`. And `s`, not `w`, may stand between a results list's `)` and `stream<...>`.
+- **The checker adds what the grammar doesn't say** (`idl::check`, C07):
+  - method ordinals of 1 to 65,279 ([Method numbers](#method-numbers)), and every number unique, retired ones included: methods, arms, values and error codes. Enum and flag values fit the width, a flag's value is one bit, an enum is `u8` to `u32`, error codes are 1 to 65,535, and constants fit their type;
+  - the header: `id(...)`, `object_id(...)` and `version(...)` are required, the label after `interface` equals the last label of `id(...)`, and the same for `object` and `type(...)`;
+  - every name unique in its scope (types and imported names; constants; errors; methods; each struct's fields, union's arms and enum's values), and no two names whose generated Rust names collide, such as `foo_1` and `foo1`, which both give `Foo1`;
+  - the attribute table: each attribute only where it may stand, once, with its arguments' shape;
+  - `since` and `deprecated` within the file's major and version, a `since` never before its container's, fields in `since` order, a newer field optional and holding no capability, nothing newer inside a closed type, `deprecated` not before `since`, and nothing used before it exists;
+  - references that resolve to types, bounds of 1 to 2^32 - 1 (arrays 1 to 65,535), no type that contains itself, no optional alias target, and no object type as a field's type;
+  - the rules of [Open and closed types](#open-and-closed-types), [Capability types](#capability-types), [Server streams in the IDL](#server-streams-in-the-idl) and the limits under [Types](#types), against each method's worst case, and an error's detail within [the error envelope](#the-error-envelope)'s bound;
+  - every declared action group with a method, and `error(...)` lists that name the interface's own errors, each once.
 
 ## The fuzzing gate
 
@@ -1697,7 +1813,7 @@ doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF an
 |---|---|---|---|
 | cargo-fuzz | 0.13.x | MIT OR Apache-2.0 | The driver, always with `--sanitizer none` (`-s none`), which adds only stable `-C` flags and `--cfg fuzzing` |
 | libfuzzer-sys | 0.4.x | (MIT OR Apache-2.0) AND NCSA (the bundled LLVM libFuzzer) | The engine. NCSA is a BSD-style permissive license. |
-| arbitrary | 1.5.x | MIT OR Apache-2.0 | Structure-aware inputs. The IDL compiler emits impls ([Back ends](#back-ends)). |
+| arbitrary | 1.5.x | MIT OR Apache-2.0 | Structure-aware inputs, inside `fuzz/` only. C71 wraps `crates/idl`'s structured value generator in it ([Fuzz entry points](#fuzz-entry-points)). |
 | afl.rs | 0.18.x | Apache-2.0 | A fallback only, if libFuzzer on stable fails C71's first check |
 | TLA+ tools (TLC) | v1.7.4, the newest release that isn't a prerelease (v1.8.0 is a prerelease of 2026-11-19) | MIT | Model checking ([Model checking](#model-checking)) |
 | Apalache | 0.63.x | Apache-2.0 | Optional, for inductive invariants |
@@ -1711,7 +1827,7 @@ doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF an
   - Cedar's Lean engine, since Cedar's own differential testing covers the engine;
   - Jepsen (JVM, Clojure, EPL).
 - **C71's first task** is to show that `cargo fuzz build -s none` and `cargo fuzz run` work on Rust 1.100.0, on aarch64 Linux (the CI runner) and on aarch64 macOS. The evidence so far is cargo-fuzz's source and cedar-spec's stable CI job; it hasn't been run. If it fails, afl.rs on stable (without CMPLOG) takes its place, and the gate stays the same ([L35](#l35-fuzzing-on-stable-rust)).
-- **Fuzz-only hooks** in a crate sit behind `cfg(fuzzing)`, never a Cargo feature ([0036](../decisions/0036-qemu-configuration-and-test-builds.md), rule 6). The workspace's `check-cfg` adds `fuzzing` beside `aspis_test_build`.
+- **Fuzz-only hooks** in a crate sit behind `cfg(fuzzing)`, never a Cargo feature ([0036](../decisions/0036-qemu-configuration-and-test-builds.md), rule 6). The workspace's `check-cfg` adds `fuzzing` beside `aspis_test_build`. An entry function that changes no behavior, such as C07's ([Fuzz entry points](#fuzz-entry-points)), isn't a hook: it is a plain public function, which tests call too.
 
 ### Layout
 
@@ -1724,7 +1840,7 @@ doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF an
 - **The growing corpus is never committed, and never in iCloud.** Locally it is `build/fuzz/corpus/<target>` (`build` is a `.nosync` symlink); in CI it is an Actions cache.
 - **Target metadata** is a Cargo table, `[package.metadata.aspis-fuzz.<target>]` in `fuzz/Cargo.toml`: the chunk, the ADR, `max_len`, the timeout, the RSS limit, the grammar and rule (for the differential), and the crates it covers. Cargo's format adds no new text format that would need ABNF.
 - **Commands:** `cargo xtask fuzz list | build | replay | run <target> [--time s] | smoke | coverage | tmin`.
-- **Dictionaries.** C06 emits a libFuzzer dictionary per grammar from its literals, with big-endian "interesting" integers. Little-endian formats (initfs, the boot information) keep little-endian values.
+- **Dictionaries.** `cargo xtask fuzz-dict` writes a libFuzzer dictionary per grammar, `build/fuzz/dict/<grammar>.dict`, from its literals (`abnf::dict`), with big-endian "interesting" integers: 0, 1, and each width's largest value and signed boundaries. Little-endian formats (initfs, the boot information) keep little-endian values. It covers `grammars/` and every generated grammar, named by its path (`aspis.catalog.v1.1.dict`). Literals over libFuzzer's 64 octets are left out. Nothing is committed (C07; C06 deferred it).
 
 ### Trust-boundary parsers
 
@@ -1735,9 +1851,9 @@ Each parser at a trust boundary, and the chunk that owns it:
 | Kernel arguments (`crates/kargs`) | C04, C05 | Already a named target ([0041](../decisions/0041-boot-abi.md), rule 5). `max_len` 4096 + 1024. |
 | The initial image (`crates/initfs`) | C19 | Already a named target ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 2). Little-endian. |
 | The ABNF parser, matcher, constraint checker and vector-file reader (`crates/abnf`) | C06 | Run by the catalog on publishers' grammars, so also bounded in time and memory |
-| The parsers of `interface-ref`, `action-ref` and `error-ref` (`crates/idl-rt`) | C06, C07 | Used by the PDP, the token library and the catalog |
-| The IDL front end, projection and compatibility checker (`crates/idl`) | C07 | Run by the catalog on publishers' IDL |
-| Every IDL-generated decoder | C07 | One target per kernel interface. For other interfaces, one target for the generic decoding runtime, plus a sample of generated interfaces. Applications' generated decoders get the same targets from their compiler run (parity, [0027](../decisions/0027-applications-extend-the-system.md), rule 3). |
+| The parsers of `interface-ref`, `action-ref` and `error-ref` (`crates/idl-rt`) | C06, C07 | Used by the PDP, the token library and the catalog. Entry: `idl_rt::fuzz::names` |
+| The IDL front end, projection and compatibility checker (`crates/idl`) | C07 | Run by the catalog on publishers' IDL. Entry: `idl::fuzz::front_end` |
+| Every IDL-generated decoder | C07 | One target per kernel interface. For other interfaces, one target for the generic decoding runtime, plus a sample of generated interfaces. Applications' generated decoders get the same targets from their compiler run (parity, [0027](../decisions/0027-applications-extend-the-system.md), rule 3). Entries: each module's `fuzz::decode`, and `idl::conformance::differential` |
 | The call header, protocol-method bodies, the error envelope, struct tails and stream entries; the canonical-text and JSON encoders (round trip) | C18 | Every manager and both network servers parse these |
 | QUIC frames and capability descriptors; stream push; the network server's translation | C29 | Input from another node |
 | The object-ID text form | C09 | D34 |
@@ -1754,7 +1870,22 @@ Each parser at a trust boundary, and the chunk that owns it:
 | Every later parser that meets the definition | its chunk | |
 
 - **Trusted inputs.** Boot-information records and the device tree are trusted on the boot path. They are optional targets.
+- **C07's parsers** have fuzz-ready entry functions and replay tests ([Fuzz entry points](#fuzz-entry-points)). Their gate pass, with its CPU-hour and coverage review ([The gate for each target](#the-gate-for-each-target), item 5), is recorded with C71's harness, as for C06's parsers.
 - **Third-party parsers.** For a parser taken from a third-party crate, the chunk fuzzes ASPIS's wrapper at the boundary, and records whether the crate is fuzzed upstream (by OSS-Fuzz or its own CI). If it isn't, ASPIS fuzzes the crate directly ([L39](#l39-third-party-parsers)).
+
+### Fuzz entry points
+
+C07 brings the entry functions of its parsers, and C71's harness wraps each in a libFuzzer target. Each is a plain public function that takes raw input and panics only when a property breaks, so the replay tests run it under `cargo test` with no fuzz engine. None sits behind `cfg(fuzzing)`, and no product crate depends on `arbitrary`, even as a target dependency, since that would enter the product lock file ([0068](../decisions/0068-the-fuzzing-and-differential-testing-gate.md), rule 3).
+
+| Entry | Input | Properties |
+|---|---|---|
+| `idl_rt::fuzz::names` | a reference | No panic. An `interface-ref`, `action-ref` or `error-ref` that parses renders back to the same octets. |
+| `idl::fuzz::front_end` (and `front_end_with`, with a resolver for imports) | an IDL file | No panic. For a file that checks, each visited minor's canonical form parses back, checks, gives itself again, and projects to itself. The doc model, the hash and the step check run too. A projection changes only at a minor that a `since` or `deprecated` names, so it visits minor 0, the file's version and the minor before it, and at most 8 such minors (the 4 lowest and the 4 highest), each with the minor before it (`idl::fuzz::minors`). Its work is then a fixed multiple of the file's, even at `version(1.65535)`, which `grammars/idl.vectors` holds as a seed (C07). |
+| each generated module's `fuzz::decode` (`idl_rt::fuzz::decode`) | octet 1 picks the rule, octet 2 the minor, octet 3 the capability count (0 to 3); the rest is the message, up to 16 KiB | No panic. An accepted message re-encodes to the same octets, and its JSON renders. |
+| `idl::conformance::differential` | a message, for a subject, a schema, a rule and a count | The decoder, the generated grammar with its constraints, and the dynamic codec agree, and an accepted message re-encodes to itself. |
+| `idl::fuzz::generate` | any octets | A structured value of a rule at a minor, if it has one within the limit below, which always encodes to a message the rule accepts. A budget of 256 values keeps it small: past it, every choice is the smallest. Fixed-size arrays and required fields still take their full count, so it stops once it has made 65,536 values, each struct slot counted (`idl::fuzz::MAX_VALUES`). A rule whose smallest value holds more, such as an array of 4000 arrays of 4000 octets, gets none. C71 may wrap it in `arbitrary`. |
+
+The replay tests feed them every line of `grammars/idl.vectors`, `grammars/names.vectors` and every generated wire vector file, every IDL file and canonical form, the generator's values, and mutations of each.
 
 ### The gate for each target
 
@@ -1885,7 +2016,7 @@ What is the text form of an object ID? Call targets, the JSON mapping, Cedar ent
 What is the reserved authority's value, and what are the well-known sequence numbers of `aspis.rpc`, `aspis.catalog`, `aspis.memory` ([0058](../decisions/0058-jobs-and-budgets.md), rule 6) and every `aspis.kernel.*` interface? C17 needs the kernel ones in M2, ahead of D35's milestone. D29 also confirms the list of kernel interfaces.
 
 - **Owner:** D35 (C09, C19), with D29.
-- **Meanwhile:** `reserved(n)` placeholders, such as `0x0103` and `0x0201` in the examples.
+- **Meanwhile:** `reserved(n)` placeholders: `0x0001` for `aspis.rpc`, and `0x0103` and `0x0201` in the examples. C07 gives `reserved(n)` interim octets: the nil UUID as the authority, and n as the sequence number ([Files and the interface header](#files-and-the-interface-header)).
 - **From:** [Kernel interface names](#kernel-interface-names); [The system errors](#the-system-errors); [Example: the eventcount interface](#example-the-eventcount-interface).
 
 ### L03. Minting application IDs, and prefix ownership
@@ -2045,7 +2176,7 @@ The question was: what is the exact ABNF of the constraint vocabulary, how is C0
   - **Budgets.** Loading bounds the grammar text (1 MiB, used grammars included), the rules (16,384), the elements (262,144), the nesting of groups and options (64) and the depth of `; uses:` (8). Each match bounds the input (64 KiB: a vector is one line of text, and whole messages are the generated decoders' to check), the steps (1 M, plus 10,000 an octet, at most 100 M), the memory its live states hold (64 MiB), and the depth of nested calls (768). Each group, repetition and rule call nests one level. 768 levels need about 560 KiB of stack in an optimized build, and about 1.5 MiB without optimization. A linear grammar takes about 20 steps an octet, so a valid 64 KiB input takes about 1.3 M steps. 100 M steps take a few seconds. Constraint work is charged as steps too: each check, each octet of a match read for its value or compared with a `not word` list, each bound, and each caller's frame searched for R. Loading sorts and deduplicates each rule's constraints, and the matcher searches `not one of` and `not word` lists by halves. A vector file has one budget for all its matches (500 M steps), and its check stops at the first vector over any budget. So a publisher's file costs the catalog a bounded time, however many vectors it holds. A state is charged 72 octets, and 48 more for each binding or open frame, so even a state with one binding for every octet of a 64 KiB input stays under 8 MiB. A run over a budget is reported as exhausted, never as a verdict.
   - **Linear work.** A general ABNF matcher can't be linear in its input. The step budget is how this one meets [0068](../decisions/0068-the-fuzzing-and-differential-testing-gate.md), rule 5: work above a linear bound is refused as exhausted.
   - **Capabilities.** A whole body names its indexes in ascending order, each once, and every index below the count. A core rule's vector is a fragment, checked for range and repeats only.
-  - **No spaced-hex vector form.** `\xHH` stays the only escape, so the two vector readers stay the same. C07 may add the form if generated vectors need it.
+  - **No spaced-hex vector form.** `\xHH` stays the only escape, so the two vector readers stay the same. C07's generated vectors didn't need the form, so it stays out.
 - **From:** [The constraint vocabulary](#the-constraint-vocabulary); [Checkers](#checkers).
 
 ### L23. Error size limits and free text
@@ -2121,7 +2252,7 @@ What do async Rust bindings look like, for the network server and the `std` port
 How does dm render doc comments, and how does the catalog browser show definitions?
 
 - **Owner:** the dm design ([0011](../decisions/0011-dm-window-system.md), rule 6).
-- **Meanwhile:** the compiler emits a doc model.
+- **Meanwhile:** the compiler emits a doc model: `idl::doc`, an API with no file format yet (C07; [Doc comments](#doc-comments)).
 - **From:** [Doc comments](#doc-comments).
 
 ### L33. Dynamic invocation
@@ -2129,7 +2260,7 @@ How does dm render doc comments, and how does the catalog browser show definitio
 How do tools call an interface from its IDL, fetched at run time?
 
 - **Owner:** the command-interpreter design ([0031](../decisions/0031-abnf-is-not-a-command-language.md), Consequences).
-- **Meanwhile:** `crates/idl` is `no_std`, so it can be used that way.
+- **Meanwhile:** `crates/idl` is `no_std`, so it can be used that way. `idl::value` is the dynamic codec: it encodes, decodes and writes the JSON of any interface's messages from its checked IDL, and the vector generator and the conformance runner are built on it (C07). Its schema builds each union's arms and each enum's values into tables once, and finds the strict forms in one pass over the types, so its work is linear in the message, however many members a type declares.
 - **From:** [Crates](#crates).
 
 ### L34. Wall-clock times in messages

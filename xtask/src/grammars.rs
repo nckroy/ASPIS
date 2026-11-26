@@ -2,13 +2,16 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! `cargo xtask grammars`: every grammar in `grammars/` and its vectors,
-//! through the Rust checker, `crates/abnf` (ADR 0062, rule 8; ADR 0013,
-//! rule 6). CI runs it on every change, documents included, beside the
-//! Python checker.
+//! and every generated grammar under the interface roots (`interfaces/`
+//! and the IDL compiler's fixtures), through the Rust checker,
+//! `crates/abnf` (ADR 0062, rule 8; ADR 0013, rule 6; ADR 0067, rule 9).
+//! CI runs it on every change, documents included, beside the Python
+//! checker. A generated grammar's `; uses:` names resolve in `grammars/`.
 //!
-//! It also checks that `grammars/core.abnf` is byte for byte the block in
-//! docs/design/call-language.md ("The core grammar"), so the note and the
-//! file can't drift apart.
+//! It also checks that `grammars/core.abnf` and `grammars/names.abnf` are
+//! byte for byte the blocks in docs/design/call-language.md ("The core
+//! grammar" and "The names grammar"), so the note and the files can't
+//! drift apart.
 
 use std::{collections::BTreeSet, fs, process::Command};
 
@@ -16,9 +19,14 @@ use abnf::{Grammar, Kind, LoadOptions, vectors};
 
 use crate::{fail, root};
 
-/// The files under `grammars/`, tracked or new. Listing them with git
-/// skips iCloud's conflict copies, which `.gitignore` excludes.
-fn tracked() -> BTreeSet<String> {
+/// The interface roots: one IDL file per interface major, with its
+/// generated grammars, vectors and lock (ADR 0067, rule 7).
+pub const INTERFACE_ROOTS: [&str; 2] = ["interfaces", "crates/idl/tests/data/interfaces"];
+
+/// The files under `paths`, tracked or new. Listing them with git skips
+/// iCloud's conflict copies, which `.gitignore` excludes, and still sees a
+/// file that isn't committed yet.
+pub fn tracked(paths: &[&str]) -> BTreeSet<String> {
     let out = Command::new("git")
         .args([
             "ls-files",
@@ -27,7 +35,8 @@ fn tracked() -> BTreeSet<String> {
             "--others",
             "--exclude-standard",
         ])
-        .args(["--", "grammars"])
+        .arg("--")
+        .args(paths)
         .current_dir(root())
         .output()
         .unwrap_or_else(|e| fail(format!("git ls-files: {e}")));
@@ -41,12 +50,12 @@ fn tracked() -> BTreeSet<String> {
         .collect()
 }
 
-/// The abnf block under "### The core grammar" in the call-language note.
-fn core_in_note() -> Option<String> {
+/// The first abnf block under a heading of the call-language note.
+fn block_in_note(heading: &str) -> Option<String> {
     let note = fs::read_to_string(root().join("docs/design/call-language.md")).ok()?;
     let mut lines = note
         .lines()
-        .skip_while(|l| *l != "### The core grammar")
+        .skip_while(|l| *l != heading)
         .skip_while(|l| *l != "```abnf")
         .skip(1);
     let mut block = String::new();
@@ -62,21 +71,30 @@ fn core_in_note() -> Option<String> {
 
 /// Checks every grammar and its vectors, and fails if any disagree.
 pub fn check() {
-    let files = tracked();
+    let mut roots = vec!["grammars"];
+    roots.extend(INTERFACE_ROOTS);
+    let files = tracked(&roots);
     let mut failed = false;
 
-    let core = fs::read(root().join("grammars/core.abnf")).unwrap_or_default();
-    match core_in_note() {
-        Some(block) if block.as_bytes() == core => {}
-        Some(_) => {
-            println!(
-                "FAIL grammars/core.abnf: differs from the block in docs/design/call-language.md"
-            );
-            failed = true;
-        }
-        None => {
-            println!("FAIL docs/design/call-language.md: no abnf block under \"The core grammar\"");
-            failed = true;
+    // The files the note gives in full (ADR 0062; ADR 0063, rule 1).
+    for (file, heading) in [
+        ("grammars/core.abnf", "### The core grammar"),
+        ("grammars/names.abnf", "### The names grammar"),
+    ] {
+        let text = fs::read(root().join(file)).unwrap_or_default();
+        match block_in_note(heading) {
+            Some(block) if block.as_bytes() == text => {}
+            Some(_) => {
+                println!("FAIL {file}: differs from the block in docs/design/call-language.md");
+                failed = true;
+            }
+            None => {
+                println!(
+                    "FAIL docs/design/call-language.md: no abnf block under \"{}\"",
+                    heading.trim_start_matches("### ")
+                );
+                failed = true;
+            }
         }
     }
 
@@ -86,11 +104,13 @@ pub fn check() {
     }
     for path in grammars {
         let name = path
-            .trim_start_matches("grammars/")
+            .rsplit('/')
+            .next()
+            .unwrap_or(path)
             .trim_end_matches(".abnf");
         let text = fs::read(root().join(path)).unwrap_or_else(|e| fail(format!("{path}: {e}")));
         let opts = LoadOptions {
-            kind: if name == "core" {
+            kind: if path == "grammars/core.abnf" {
                 Kind::Core
             } else {
                 Kind::Auto
@@ -108,7 +128,7 @@ pub fn check() {
         let g = match Grammar::load(name, &text, &mut resolve, &opts) {
             Ok(g) => g,
             Err(e) => {
-                println!("FAIL grammars/{}.abnf:{}: {}", e.file, e.line, e.kind);
+                println!("FAIL {path} ({}):{}: {}", e.file, e.line, e.kind);
                 failed = true;
                 continue;
             }
@@ -117,7 +137,7 @@ pub fn check() {
             0 => String::new(),
             n => format!(" ({n} prose constraints, not checked)"),
         };
-        let vpath = format!("grammars/{name}.vectors");
+        let vpath = format!("{}.vectors", path.trim_end_matches(".abnf"));
         if !files.contains(&vpath) {
             println!("ok   {path}: loads (no vectors){prose}");
             continue;

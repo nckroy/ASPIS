@@ -9,9 +9,21 @@
 //! cargo xtask test                          host tests, then QEMU tests
 //! cargo xtask check-production              no test code in production images
 //! cargo xtask matrix                        the nightly QEMU matrix
-//! cargo xtask lint                          rustfmt and clippy, every target
+//! cargo xtask lint                          rustfmt and clippy, every target,
+//!                                           and the no_std crates built for
+//!                                           a target without std
 //! cargo xtask grammars                      every grammar and its vectors,
 //!                                           with the Rust checker
+//! cargo xtask idl [--write]                 idlc check over interfaces/:
+//!                                           locks, compatibility, the
+//!                                           generated grammars and vectors,
+//!                                           and idl-rt's aspis.rpc binding
+//!                                           (--write regenerates them;
+//!                                           a stale aspis.rpc binding
+//!                                           never blocks this, since
+//!                                           idlc builds idl-rt without it)
+//! cargo xtask fuzz-dict                     a libFuzzer dictionary per
+//!                                           grammar, in build/fuzz/dict
 //! cargo xtask grub                          GRUB 2.14 arm64-efi, in Docker
 //! ```
 //!
@@ -33,7 +45,9 @@
 //! ```
 
 mod esp;
+mod fuzz_dict;
 mod grammars;
+mod idl;
 mod qemu;
 
 use std::{
@@ -99,7 +113,7 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let Some(cmd) = args.first() else {
         eprintln!(
-            "usage: cargo xtask build|run|test|check-production|matrix|lint|grammars|grub [options]"
+            "usage: cargo xtask build|run|test|check-production|matrix|lint|grammars|idl|fuzz-dict|grub [options]"
         );
         exit(2)
     };
@@ -130,6 +144,8 @@ fn main() {
         "matrix" => matrix(),
         "lint" => lint(),
         "grammars" => grammars::check(),
+        "idl" => idl::check(rest.iter().any(|a| a == "--write")),
+        "fuzz-dict" => fuzz_dict::write(),
         other => fail(format!("unknown command {other}")),
     }
 }
@@ -386,8 +402,10 @@ fn check_production() {
 
 fn test() {
     // The grammars and their vectors, with the Rust checker (ADR 0062,
-    // rule 8).
+    // rule 8), then the interfaces, their locks and generated files (ADR
+    // 0067, rules 7 and 9).
     grammars::check();
+    idl::check(false);
     // Host tests for the crates that build on the host.
     run_cmd(
         Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
@@ -412,7 +430,25 @@ fn test() {
                 "logo",
                 "-p",
                 "abnf",
+                "-p",
+                "idl-rt",
+                "-p",
+                "idl",
+                "-p",
+                "idlc",
+                "-p",
+                "aspis-interfaces",
+                "-p",
+                "idl-fixtures",
             ]),
+    );
+    // Owned values (ADR 0067, rule 10), a library feature of the
+    // generated crates.
+    run_cmd(
+        Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+            .current_dir(root())
+            .args(["test", "--locked", "--quiet", "-p", "aspis-interfaces"])
+            .args(["--features", "alloc"]),
     );
     build(Flavor::Production);
     check_production();
@@ -554,11 +590,59 @@ fn lint() {
         "-p",
         "abnf",
         "-p",
+        "idl-rt",
+        "-p",
+        "idl",
+        "-p",
+        "idlc",
+        "-p",
+        "aspis-interfaces",
+        "-p",
+        "idl-fixtures",
+        "-p",
         "xtask",
         "--",
         "-D",
         "warnings",
     ]));
+    run_cmd(
+        cargo()
+            .args(["clippy", "--locked", "--all-targets"])
+            .args([
+                "-p",
+                "idl-rt",
+                "-p",
+                "aspis-interfaces",
+                "-p",
+                "idl-fixtures",
+            ])
+            .args([
+                "--features",
+                "idl-rt/alloc,aspis-interfaces/alloc,idl-fixtures/alloc",
+            ])
+            .args(["--", "-D", "warnings"]),
+    );
+    // The crates the catalog and generated bindings run are no_std (ADR
+    // 0067, rule 11): build them for a target without std, so a dependency
+    // that pulls std in fails here, not later.
+    run_cmd(
+        cargo()
+            .args(["build", "--locked", "--target", "aarch64-unknown-none"])
+            .args(["-p", "abnf", "-p", "idl-rt", "-p", "idl"])
+            .args([
+                "-p",
+                "aspis-interfaces",
+                "--features",
+                "aspis-interfaces/alloc",
+            ])
+            .env("CARGO_TARGET_DIR", build_dir().join("target-nostd")),
+    );
+    run_cmd(
+        cargo()
+            .args(["build", "--locked", "--target", "aarch64-unknown-none"])
+            .args(["-p", "idl-rt", "-p", "aspis-interfaces"])
+            .env("CARGO_TARGET_DIR", build_dir().join("target-nostd")),
+    );
     // The kernel and the stub need the build's inputs: lint against them.
     let out = build(Flavor::Production);
     let atlas = build_dir().join("atlas");

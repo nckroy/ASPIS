@@ -1,0 +1,60 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "aspis-interfaces"
+description = "The Rust bindings of ASPIS's IDL interfaces, generated at build time (ADR 0067, rule 10)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/vectors 2.rs", would otherwise be built as test targets.
+# Declare each new file in tests/ here.
+autotests = false
+
+[lints]
+workspace = true
+
+[features]
+# Owned values for host tools and the later std port (ADR 0067, rule 10).
+alloc = ["idl-rt/alloc"]
+
+[dependencies]
+idl-rt = { workspace = true, features = ["rpc"] }
+
+[build-dependencies]
+idl.workspace = true
+idl-rt.workspace = true
+
+[dev-dependencies]
+abnf.workspace = true
+idl.workspace = true
+idl-fixtures.workspace = true
+
+[[test]]
+name = "vectors"
+path = "tests/vectors.rs"
+
+[[test]]
+name = "loopback"
+path = "tests/loopback.rs"
+
+[[test]]
+name = "conformance"
+path = "tests/conformance.rs"
+
+[[test]]
+name = "evolution"
+path = "tests/evolution.rs"
+
+[[test]]
+name = "fuzz_entry"
+path = "tests/fuzz_entry.rs"
+
+[[test]]
+name = "alloc"
+path = "tests/alloc.rs"
+required-features = ["alloc"]

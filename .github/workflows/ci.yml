@@ -63,6 +63,9 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/abnf"
           "$RUNNER_TEMP/abnf/bin/pip" install --quiet abnf==2.9.1
           "$RUNNER_TEMP/abnf/bin/python" -I tools/ci/check-grammars.py grammars
+          # The grammars idlc generates beside each IDL file (ADR 0067,
+          # rule 9), with their "; uses:" grammars from grammars/.
+          "$RUNNER_TEMP/abnf/bin/python" -I tools/ci/check-grammars.py --uses grammars interfaces crates/idl/tests/data/interfaces
 
       # The second checker of the differential pair, which also checks that
       # grammars/core.abnf matches the call-language note (ADR 0062, rule 8).
@@ -73,6 +76,9 @@ jobs:
 
       - name: Grammars and their vectors, with the Rust checker (ADR 0062, rule 8)
         run: cargo xtask grammars
+
+      - name: Interfaces, locks and generated grammars (ADR 0067, rules 7 and 9)
+        run: cargo xtask idl
 
       - name: Diagrams render with the newest Mermaid (ADR 0024)
         run: |

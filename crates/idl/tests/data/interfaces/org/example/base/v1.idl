@@ -1,0 +1,40 @@
+// SPDX-FileCopyrightText: 2026 Nicole Roy
+// SPDX-License-Identifier: MPL-2.0
+edition 2026;
+
+//! A test fixture, not an interface of ASPIS: types that
+//! `org.example.kinds` imports, across two minors.
+
+[id(org.example.base), object_id(hex(00000000000000000000000000000000000000000000000000000000000000b1)), version(1.1)]
+interface base {
+    /// A point. `z` came in 1.1.
+    struct point {
+        x: i32,
+        y: i32,
+        [since(1.1)] z: i32?,
+    }
+
+    /// Two numbers, fixed for the life of the major.
+    [closed]
+    struct pair {
+        a: u16,
+        b: u16,
+    }
+
+    /// A color.
+    enum color: u8 {
+        red = 1,
+        green = 2,
+        [since(1.1)] blue = 3,
+    }
+
+    /// New in 1.1.
+    [since(1.1)]
+    struct extra {
+        n: u8,
+        c: color,
+    }
+
+    /// Answers with a number.
+    @1 ping() -> u8;
+}

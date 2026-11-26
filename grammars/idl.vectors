@@ -1,0 +1,298 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+#
+# Test vectors for idl.abnf, the ASPIS IDL (ADR 0067, rule 11).
+#
+# Each vector is one line: "ok", "err" or "errc", an optional "@" and the
+# rule it tests, a tab, then the text, with \t, \\, \" and \xHH
+# escapes; a line feed is \x0a. "errc" marks text that matches the
+# context-free grammar but breaks a constraint. crates/idl's tests run the
+# IDL's own parser over every line too, and it must agree with the
+# constrained judgment. Lines starting with "#", and empty lines, are
+# ignored.
+#
+# rule: idl-file
+
+# ---- Whole files: the repository's interfaces ------------------------------
+ok	// SPDX-FileCopyrightText: 2026 Nicole Roy\x0a// SPDX-License-Identifier: MPL-2.0\x0aedition 2026;\x0a\x0a//! The system errors (ADR 0065, rule 6). Every method may return any of\x0a//! them, and no method lists them. The protocol methods, 0xFF01 to 0xFF08,\x0a//! are defined with the call header, not here: only their text forms use\x0a//! the `aspis.rpc` prefix (docs/design/call-language.md, "The system\x0a//! errors"). C18 publishes 1.0 when its runtime settles L23.\x0a\x0a[id(aspis.rpc), object_id(reserved(0x0001)), version(1.0)]\x0ainterface rpc {\x0a    /// A supported range of minors of one major.\x0a    [closed]\x0a    struct version_range {\x0a        major: u16,\x0a        highest_minor: u16,\x0a    }\x0a\x0a    /// An error's key alone: the interface, its major and the code (36\x0a    /// octets). The kernel interfaces use it for a pager's Fail and the\x0a    /// page-unavailable fault (ADR 0057, rule 7).\x0a    [closed]\x0a    struct error_key {\x0a        interface: id,\x0a        major: u16,\x0a        code: u16,\x0a    }\x0a\x0a    /// Why a token was rejected. The values follow the token profile,\x0a    /// which is D85's (L13).\x0a    enum token_problem: u8 {\x0a        expired = 1,\x0a        bad_proof = 2,\x0a        wrong_audience = 3,\x0a        unknown_issuer = 4,\x0a        other = 5,\x0a    }\x0a\x0a    /// Why a session ended.\x0a    enum session_end: u8 {\x0a        expired = 1,\x0a        revoked = 2,\x0a        closed = 3,\x0a        unknown = 4,\x0a    }\x0a\x0a    /// Why a call was never delivered.\x0a    enum unreachable_cause: u8 {\x0a        no_route = 1,\x0a        location_unknown = 2,\x0a        peer_authentication_failed = 3,\x0a        connection_failed = 4,\x0a        manager_not_running = 5,\x0a    }\x0a\x0a    /// Why no answer came to a call that may have run.\x0a    enum indeterminate_cause: u8 {\x0a        connection_lost = 1,\x0a        server_exited = 2,\x0a        abandoned = 3,\x0a    }\x0a\x0a    /// Which per-session or per-server limit was reached.\x0a    enum limit_kind: u8 {\x0a        streams_per_session = 1,\x0a        imports_per_session = 2,\x0a        sessions = 3,\x0a        pending_calls = 4,\x0a        badges_per_session = 5,\x0a    }\x0a\x0a    /// The header extensions' kinds (docs/design/call-language.md,\x0a    /// "Header extensions"). The layout of tracestate is D84's.\x0a    enum extension_kind: u8 {\x0a        trace_context = 1,\x0a        tracestate = 2,\x0a    }\x0a\x0a    /// A header, frame or body doesn't parse, or breaks a constraint.\x0a    [refused]\x0a    error malformed = 1;\x0a\x0a    /// The message is over a size limit.\x0a    [refused]\x0a    error too_large = 2 { limit: u32 };\x0a\x0a    /// An unknown protocol version in word 0.\x0a    [refused]\x0a    error protocol_unsupported = 3 { highest: u8 };\x0a\x0a    /// A bind to a major that isn't served, or a minimum minor above what\x0a    /// is served. The detail lists what is served.\x0a    [refused]\x0a    error version_unsupported = 4 { served: seq<version_range, 16> };\x0a\x0a    /// The object doesn't implement the interface.\x0a    [refused]\x0a    error no_such_interface = 5;\x0a\x0a    /// An unknown method number, or one newer than the session's minor.\x0a    [refused]\x0a    error no_such_method = 6 { method: u16, session_minor: u16, since_minor: u16? };\x0a\x0a    /// A request field newer than the session's minor.\x0a    [refused]\x0a    error field_too_new = 7 { tags: seq<u16, 8> };\x0a\x0a    /// No such object, or a bind the caller may not make on an object it\x0a    /// may not discover.\x0a    [refused]\x0a    error no_such_object = 8;\x0a\x0a    /// Policy denied a bind the caller may see. The fields are RFC 9470's\x0a    /// step-up hints, present only when the decision context has them.\x0a    [refused]\x0a    error bind_refused = 9 { acr_values: string<255>?, max_age: u64? };\x0a\x0a    /// The token was rejected.\x0a    [refused, retry(rebind)]\x0a    error token_rejected = 10 { reason: token_problem };\x0a\x0a    /// A bind refused because the node's signed root is too old. The\x0a    /// envelope's `retry_after` says when to try again.\x0a    [refused, retry(later)]\x0a    error tree_too_stale = 11;\x0a\x0a    /// The session ended. Refused when the manager answers it; otherwise\x0a    /// the outcome follows the delivery state.\x0a    [refused, retry(rebind)]\x0a    error session_ended = 12 { reason: session_end };\x0a\x0a    /// The method is outside what the bind authorized.\x0a    [refused]\x0a    error method_not_granted = 13;\x0a\x0a    /// The deadline passed: unreachable before delivery, indeterminate\x0a    /// after.\x0a    [retry(later)]\x0a    error deadline_passed = 14;\x0a\x0a    /// The call was canceled: unreachable before delivery, indeterminate\x0a    /// after.\x0a    error canceled = 15;\x0a\x0a    /// The call was never delivered. Made by a runtime or a network\x0a    /// server.\x0a    [retry(later)]\x0a    error unreachable = 16 { cause: unreachable_cause };\x0a\x0a    /// The call may have run, and no answer came. Made by a runtime or a\x0a    /// network server.\x0a    [retry(later)]\x0a    error indeterminate = 17 { cause: indeterminate_cause };\x0a\x0a    /// The server is overloaded. The envelope's `retry_after` says when to\x0a    /// try again.\x0a    [refused, retry(later)]\x0a    error overloaded = 18;\x0a\x0a    /// The server, or the runtime, couldn't get memory for the call within\x0a    /// its job's budget.\x0a    [retry(later)]\x0a    error no_memory = 19;\x0a\x0a    /// A per-session or per-server limit.\x0a    [refused]\x0a    error resource_limit = 20 { limit: limit_kind, maximum: u32 };\x0a\x0a    /// A capability at this position can't cross nodes.\x0a    error capability_not_remotable = 21 { position: u8 };\x0a\x0a    /// A received capability lacks the declared rights.\x0a    [refused]\x0a    error capability_rights = 22 { position: u8, missing: u8 };\x0a\x0a    /// A local interface or method, reached through a network server.\x0a    [refused]\x0a    error local_only = 23;\x0a\x0a    /// A stream opened or pulled after a position older than the server\x0a    /// keeps: list again.\x0a    [refused, retry(higher)]\x0a    error stream_expired = 24 { oldest: u64? };\x0a\x0a    /// The session has no such stream.\x0a    [refused]\x0a    error no_such_stream = 25;\x0a\x0a    /// The same request ID arrived with a different body.\x0a    [refused]\x0a    error request_id_conflict = 26;\x0a\x0a    /// An internal error.\x0a    error internal = 27;\x0a\x0a    /// A request carries an enum value, flag bit or union arm that the\x0a    /// server knows, but that is newer than the session's minor.\x0a    [refused]\x0a    error value_too_new = 28 { since_minor: u16 };\x0a}\x0a
+ok	// SPDX-FileCopyrightText: 2026 Nicole Roy\x0a// SPDX-License-Identifier: MPL-2.0\x0aedition 2026;\x0a\x0a//! The realm catalog (ADR 0028).\x0a//!\x0a//! An example, not final: it is the catalog example of\x0a//! docs/design/call-language.md ("Example: the catalog across two\x0a//! minors"), which exercises the compiler. The catalog's real interface is\x0a//! C51's, with D111 to D114; C51 replaces this file and rewrites its lock.\x0a\x0a[id(aspis.catalog), object_id(reserved(0x0201)), version(1.1), groups(discover, register)]\x0ainterface catalog {\x0a    /// Most entries in one page.\x0a    const max_page: u32 = 256;\x0a\x0a    /// What happened to an entry.\x0a    enum change_kind: u8 {\x0a        registered = 1,\x0a        withdrawn = 2,\x0a        available = 3,\x0a        unavailable = 4,\x0a    }\x0a\x0a    /// One change, at a catalog sequence number.\x0a    struct change {\x0a        seq: u64,\x0a        kind: change_kind,\x0a        entry: id,\x0a        /// The entry's publisher, where it has one.\x0a        [since(1.1)]\x0a        publisher: id?,\x0a    }\x0a\x0a    /// An interface and the versions acceptable.\x0a    [closed]\x0a    struct interface_req {\x0a        interface: id,\x0a        major: u16,\x0a        min_minor: u16,\x0a    }\x0a\x0a    /// What a query selects by.\x0a    union selector {\x0a        @1 by_id: id,\x0a        @2 by_name: string<255>,\x0a        @3 by_interface: interface_req,\x0a    }\x0a\x0a    struct query {\x0a        select: selector,\x0a        limit: u32?,\x0a    }\x0a\x0a    /// The query selects more than one watch may follow.\x0a    error query_too_broad = 1 { limit: u32 };\x0a\x0a    /// That interface version is already registered.\x0a    [refused]\x0a    error already_registered = 2;\x0a\x0a    /// Lists the entries matching `query`, a page at a time, at one sequence number.\x0a    [group(discover), readonly, idempotent]\x0a    @1 list(query: query, page: bytes<64>?)\x0a        -> (at: u64, entries: seq<id, max_page>, next_page: bytes<64>?)\x0a        error(query_too_broad);\x0a\x0a    /// Streams every change matching `query` after `after` (ADR 0028, rule 6).\x0a    [group(discover), readonly]\x0a    @2 watch(query: query, after: u64?) -> (at: u64) stream<change> error(query_too_broad);\x0a\x0a    /// Registers an interface version from its signed definition.\x0a    [group(register)]\x0a    @3 register(\x0a        definition: cap<aspis.kernel.memory/1, read, immutable>,\x0a        length: u32,\x0a        [sensitive] proof: string<8192>,\x0a        [since(1.1)] dry_run: bool?,\x0a    ) -> u64 error(already_registered);\x0a}\x0a
+ok	// SPDX-FileCopyrightText: 2026 Nicole Roy\x0a// SPDX-License-Identifier: MPL-2.0\x0aedition 2026;\x0a\x0a//! Eventcounts: the kernel's asynchronous primitive (ADR 0053).\x0a//!\x0a//! An example, not final: it is the eventcount example of\x0a//! docs/design/call-language.md ("Example: the eventcount interface"),\x0a//! which exercises the compiler. C17 writes the kernel's interfaces in the\x0a//! IDL, replaces this file and rewrites its lock.\x0a\x0a[id(aspis.kernel.eventcount), object_id(reserved(0x0103)), version(1.0), kernel]\x0ainterface eventcount {\x0a    /// The count is already 2^64 - 1, its maximum.\x0a    [refused]\x0a    error overflow = 1;\x0a\x0a    /// Adds one to the count, and wakes every waiter whose target it reaches.\x0a    [requires(write)]\x0a    @1 advance() -> u64 error(overflow);\x0a\x0a    /// Blocks until the count reaches `target`, or until `deadline`,\x0a    /// an absolute value of the node's virtual count (ADR 0051, rule 5).\x0a    [requires(read), readonly]\x0a    @2 wait(target: u64, deadline: u64?) -> u64;\x0a\x0a    /// Returns the count.\x0a    [requires(read), readonly]\x0a    @3 read() -> u64;\x0a}\x0a
+ok	// SPDX-FileCopyrightText: 2026 Nicole Roy\x0a// SPDX-License-Identifier: MPL-2.0\x0aedition 2026;\x0a\x0a//! A test fixture, not an interface of ASPIS: every construct the\x0a//! compiler knows, across three minors, for its tests.\x0a\x0ause org.example.base/1.0.{point, pair};\x0a\x0a/// The fixture's interface.\x0a[id(org.example.kinds), object_id(hex(00000000000000000000000000000000000000000000000000000000000000a1)), version(1.2), groups(read, write, extra)]\x0ainterface kinds {\x0a    /// Most items in a list.\x0a    const max_items: u16 = 4;\x0a    const big: u64 = 0x10;\x0a    const neg: i8 = -1;\x0a\x0a    /// A short name.\x0a    alias name = string<63>;\x0a    [deprecated(1.1)]\x0a    alias label = string<16>;\x0a\x0a    /// Closed flags at u8.\x0a    [closed]\x0a    flags perms: u8 {\x0a        read = 1,\x0a        write = 2,\x0a        reserved 4,\x0a        exec = 8,\x0a    }\x0a\x0a    /// Open flags at u64.\x0a    flags wide: u64 {\x0a        low = 1,\x0a        high = 0x8000000000000000,\x0a        [since(1.1)] mid = 0x100000000,\x0a    }\x0a\x0a    /// An open enum at u16.\x0a    enum level: u16 {\x0a        low = 1,\x0a        high = 2,\x0a        reserved 3,\x0a        [since(1.1)] top = 4,\x0a    }\x0a\x0a    /// A closed enum at u32.\x0a    [closed]\x0a    enum mode: u32 {\x0a        off = 0,\x0a        on = 1,\x0a        auto = 0xffffffff,\x0a    }\x0a\x0a    /// A closed, fixed-size struct, usable in arrays.\x0a    [closed]\x0a    struct cell {\x0a        a: i8,\x0a        b: i16,\x0a        c: i32,\x0a        d: i64,\x0a        e: f32,\x0a        f: f64,\x0a        g: bool,\x0a        h: uuid,\x0a        i: id,\x0a        j: perms,\x0a        k: level,\x0a    }\x0a\x0a    /// A closed struct with optional and variable-size fields.\x0a    [closed]\x0a    struct rec {\x0a        n: name,\x0a        o: u32?,\x0a        p: string<8>?,\x0a        q: array<cell, 2>,\x0a        r: array<string<4>, 2>,\x0a        s: seq<u8?, 3>,\x0a    }\x0a\x0a    /// An open struct with optional fields of every kind.\x0a    struct thing {\x0a        key: u64,\x0a        count: u32,\x0a        tags: seq<name, max_items>,\x0a        blob: bytes<16>?,\x0a        nested: rec?,\x0a        pt: point?,\x0a        [sensitive] secret: string<32>?,\x0a        [since(1.1)] extra: u64?,\x0a        [since(1.2)] more: wide?,\x0a    }\x0a\x0a    /// A closed union.\x0a    [closed]\x0a    union shape {\x0a        @1 circle: u32,\x0a        @2 square: cell,\x0a        reserved @3,\x0a        @4 none: bool?,\x0a    }\x0a\x0a    /// An open union that holds an open struct.\x0a    union event {\x0a        @1 created: thing,\x0a        @2 deleted: id,\x0a        reserved @3,\x0a        [format(json)] @4 note: string<128>,\x0a        [since(1.1)] @5 moved: pair,\x0a    }\x0a\x0a    /// New in 1.1, with required fields and a capability.\x0a    [since(1.1)]\x0a    struct later {\x0a        a: u8,\x0a        b: point,\x0a        type: u8,\x0a        c: cap<org.example.base/1>?,\x0a    }\x0a\x0a    /// An object type.\x0a    [type(org.example.widget), parents(org.example.box)]\x0a    object widget {\x0a        owner: id,\x0a        size: u64,\x0a        [since(1.1)] labels: seq<string<63>, 16>?,\x0a    }\x0a\x0a    /// Nothing under that key.\x0a    error not_found = 1 { key: u64 };\x0a\x0a    /// Try again later.\x0a    [refused, retry(later)]\x0a    error busy = 2;\x0a\x0a    /// It was there, and isn't now.\x0a    [since(1.1)]\x0a    error gone = 3 { at: u64?, why: string<32> };\x0a\x0a    /// Reads one thing.\x0a    [group(read), readonly, idempotent]\x0a    @1 get(key: u64, [sensitive] secret: string<32>?) -> thing error(not_found, gone);\x0a\x0a    /// Writes one thing.\x0a    [group(write)]\x0a    @2 put(item: thing, shape: shape, ev: event) -> (ok: bool, [since(1.1)] at: u64?) error(busy);\x0a\x0a    /// A lossy stream.\x0a    [group(read), readonly, lossy]\x0a    @3 tail(after: u64?, lvl: level?) -> stream<thing>;\x0a\x0a    /// Three capabilities.\x0a    [group(write)]\x0a    @4 give(\x0a        a: cap<org.example.base/1>,\x0a        b: cap<org.example.base/1.1>?,\x0a        c: cap<aspis.kernel.memory/1, read, immutable>,\x0a    ) -> u8;\x0a\x0a    /// Two capabilities, and a body that may spill.\x0a    [group(write)]\x0a    @5 big(a: cap<org.example.base/1>, b: cap<org.example.base/1>, data: bytes<4096>) -> (n: u32);\x0a\x0a    /// Local by inference: an eventcount capability can't cross nodes.\x0a    [group(read)]\x0a    @6 notify(ec: cap<aspis.kernel.eventcount/1, read>);\x0a\x0a    reserved @7;\x0a\x0a    /// New in 1.1.\x0a    [since(1.1), group(extra)]\x0a    @8 later_op(x: later) -> later;\x0a\x0a    /// New in 1.2, and already deprecated.\x0a    [since(1.2), deprecated(1.2), group(read)]\x0a    @9 newest(m: mode, f: perms, w: wide) -> array<cell, max_items>;\x0a}\x0a
+ok	// SPDX-FileCopyrightText: 2026 Nicole Roy\x0a// SPDX-License-Identifier: MPL-2.0\x0aedition 2026;\x0a\x0a//! A test fixture, not an interface of ASPIS: types that\x0a//! `org.example.kinds` imports, across two minors.\x0a\x0a[id(org.example.base), object_id(hex(00000000000000000000000000000000000000000000000000000000000000b1)), version(1.1)]\x0ainterface base {\x0a    /// A point. `z` came in 1.1.\x0a    struct point {\x0a        x: i32,\x0a        y: i32,\x0a        [since(1.1)] z: i32?,\x0a    }\x0a\x0a    /// Two numbers, fixed for the life of the major.\x0a    [closed]\x0a    struct pair {\x0a        a: u16,\x0a        b: u16,\x0a    }\x0a\x0a    /// A color.\x0a    enum color: u8 {\x0a        red = 1,\x0a        green = 2,\x0a        [since(1.1)] blue = 3,\x0a    }\x0a\x0a    /// New in 1.1.\x0a    [since(1.1)]\x0a    struct extra {\x0a        n: u8,\x0a        c: color,\x0a    }\x0a\x0a    /// Answers with a number.\x0a    @1 ping() -> u8;\x0a}\x0a
+ok	// SPDX-FileCopyrightText: 2026 Nicole Roy\x0a// SPDX-License-Identifier: MPL-2.0\x0aedition 2026;\x0a\x0a//! A test fixture, not C15's interface: an interface the kernel calls,\x0a//! recognized by its name (ADR 0063, rule 3). Its requests are read\x0a//! tolerantly, and its dispatcher refuses nothing.\x0a\x0a[id(aspis.kernel.pager), object_id(hex(00000000000000000000000000000000000000000000000000000000000000c1)), version(1.0), local]\x0ainterface pager {\x0a    /// What the kernel asks for.\x0a    enum access: u8 {\x0a        read = 1,\x0a        write = 2,\x0a    }\x0a\x0a    /// A page request: one-way, so it never gets a reply.\x0a    [oneway]\x0a    @1 page_request(offset: u64, length: u32, access: access?);\x0a\x0a    /// A two-way method.\x0a    @2 query(key: u64) -> u64;\x0a}\x0a
+ok	// SPDX-FileCopyrightText: 2026 Nicole Roy\x0d\x0a// SPDX-License-Identifier: MPL-2.0\x0d\x0aedition 2026;\x0d\x0a\x0d\x0a//! The realm catalog (ADR 0028).\x0d\x0a//!\x0d\x0a//! An example, not final: it is the catalog example of\x0d\x0a//! docs/design/call-language.md ("Example: the catalog across two\x0d\x0a//! minors"), which exercises the compiler. The catalog's real interface is\x0d\x0a//! C51's, with D111 to D114; C51 replaces this file and rewrites its lock.\x0d\x0a\x0d\x0a[id(aspis.catalog), object_id(reserved(0x0201)), version(1.1), groups(discover, register)]\x0d\x0ainterface catalog {\x0d\x0a    /// Most entries in one page.\x0d\x0a    const max_page: u32 = 256;\x0d\x0a\x0d\x0a    /// What happened to an entry.\x0d\x0a    enum change_kind: u8 {\x0d\x0a        registered = 1,\x0d\x0a        withdrawn = 2,\x0d\x0a        available = 3,\x0d\x0a        unavailable = 4,\x0d\x0a    }\x0d\x0a\x0d\x0a    /// One change, at a catalog sequence number.\x0d\x0a    struct change {\x0d\x0a        seq: u64,\x0d\x0a        kind: change_kind,\x0d\x0a        entry: id,\x0d\x0a        /// The entry's publisher, where it has one.\x0d\x0a        [since(1.1)]\x0d\x0a        publisher: id?,\x0d\x0a    }\x0d\x0a\x0d\x0a    /// An interface and the versions acceptable.\x0d\x0a    [closed]\x0d\x0a    struct interface_req {\x0d\x0a        interface: id,\x0d\x0a        major: u16,\x0d\x0a        min_minor: u16,\x0d\x0a    }\x0d\x0a\x0d\x0a    /// What a query selects by.\x0d\x0a    union selector {\x0d\x0a        @1 by_id: id,\x0d\x0a        @2 by_name: string<255>,\x0d\x0a        @3 by_interface: interface_req,\x0d\x0a    }\x0d\x0a\x0d\x0a    struct query {\x0d\x0a        select: selector,\x0d\x0a        limit: u32?,\x0d\x0a    }\x0d\x0a\x0d\x0a    /// The query selects more than one watch may follow.\x0d\x0a    error query_too_broad = 1 { limit: u32 };\x0d\x0a\x0d\x0a    /// That interface version is already registered.\x0d\x0a    [refused]\x0d\x0a    error already_registered = 2;\x0d\x0a\x0d\x0a    /// Lists the entries matching `query`, a page at a time, at one sequence number.\x0d\x0a    [group(discover), readonly, idempotent]\x0d\x0a    @1 list(query: query, page: bytes<64>?)\x0d\x0a        -> (at: u64, entries: seq<id, max_page>, next_page: bytes<64>?)\x0d\x0a        error(query_too_broad);\x0d\x0a\x0d\x0a    /// Streams every change matching `query` after `after` (ADR 0028, rule 6).\x0d\x0a    [group(discover), readonly]\x0d\x0a    @2 watch(query: query, after: u64?) -> (at: u64) stream<change> error(query_too_broad);\x0d\x0a\x0d\x0a    /// Registers an interface version from its signed definition.\x0d\x0a    [group(register)]\x0d\x0a    @3 register(\x0d\x0a        definition: cap<aspis.kernel.memory/1, read, immutable>,\x0d\x0a        length: u32,\x0d\x0a        [sensitive] proof: string<8192>,\x0d\x0a        [since(1.1)] dry_run: bool?,\x0d\x0a    ) -> u64 error(already_registered);\x0d\x0a}\x0d\x0a
+
+# ---- Whole files: small ones --------------------------------------------------
+# The highest minor: the front end's fuzz target visits a few minors, not 65,536.
+ok	edition 2026;\x0a[id(org.example.y), object_id(reserved(0x0301)), version(1.65535)]\x0ainterface y {\x0a    @1 m() -> (a: u8);\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b), object_id(reserved(1)), version(1.0)]\x0ainterface b {}\x0a
+ok	edition 2026;\x0a[id(a.b), object_id(reserved(1)), version(1.0)]\x0ainterface b {}
+ok	edition 2026;[id(a.b),object_id(reserved(1)),version(1.0)]interface b{}
+ok	  // c\x0a\x0aedition  2026 ;\x0a//! file\x0a//! docs\x0a/// iface\x0a[id(a.b)]\x0ainterface b { }\x0a// end\x0a
+ok	edition 2026;\x0a/// one\x0a////\x0a/// two\x0a[id(a.b)] interface b {}
+ok	edition 2026;\x0ause a.c/1.{x};\x0ause a.d/1.2.{y, z};\x0a[id(a.b)] interface b {}
+ok	edition 2026;\x0ause a.c/1.{ x , y };[id(a.b)] interface b {}
+err	edition 2026;\x0ause a.c/1.{};\x0a[id(a.b)] interface b {}
+err	edition 2026;\x0ause a.c.{x};\x0a[id(a.b)] interface b {}
+err	edition 2026;\x0ause a.c/1 .{x};\x0a[id(a.b)] interface b {}
+err	edition 2026;\x0a[id(a.b)] interface b {}\x0ause a.c/1.{x};
+err	//! file\x0aedition 2026;\x0a[id(a.b)] interface b {}
+err	edition 2026;\x0a[id(a.b)] interface b {}\x0a// no line end
+ok	edition 2026;\x0a[id(a.b)] interface b {}\x0a//\x0a
+err	EDITION 2026;\x0a[id(a.b)] interface b {}
+err	edition 2027;\x0a[id(a.b)] interface b {}
+err	edition2026;\x0a[id(a.b)] interface b {}
+err	edition 2026\x0a[id(a.b)] interface b {}
+err	edition 2026;\x0a[id(a.b)] Interface b {}
+err	edition 2026;\x0ainterface b {}
+err	edition 2026;\x0a[id(a.b)] interface B {}
+err	edition 2026;\x0a[id(a.b)] interfaceb {}
+ok	edition 2026;\x0a[id(a._7zip)] interface _7zip {}
+errc	edition 2026;\x0a[id(a.in)] interface in {}
+err	edition 2026;\x0a[id(a.b)] interface b { /// dangling\x0a}
+err	edition 2026;\x0a[id(a.b)] interface b {}\x0a/// after
+err	edition 2026;\x0a[id(a.b)] interface b {}\x00
+err	edition 2026;\x0a[id(a.b)] interface b {}\x0a// \x00\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {}\x0a// caf\xc3\xa9 \xf0\x9f\x98\x80\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {}\x0a// \xc0\x80\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {}\x0a// \xed\xa0\x80\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {}\x0a//\tx\x0d\x0a
+ok	edition 2026;\x0d[id(a.b)]\x0dinterface\x0db\x0d{}
+
+# ---- Members ----------------------------------------------------------------
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0aconst max_page: u32 = 256;\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0aconst neg: i8 = -1;\x0aconst h: u64 = 0xffffffffffffffff;\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aconst max_page: u32 = 256\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aconst max_page: string = 256;\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aconst Max: u32 = 1;\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0aalias name = string<63>;\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0aalias name = seq< string<4> , 2 >?;\x0a}\x0a
+errc	edition 2026;\x0a[id(a.b)] interface b {\x0aalias u64 = u32;\x0a}\x0a
+errc	edition 2026;\x0a[id(a.b)] interface b {\x0aalias string = u32;\x0a}\x0a
+errc	edition 2026;\x0a[id(a.b)] interface b {\x0astruct id { a: u8 }\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0astruct u64x { a: u8 }\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s {}\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s { a: u8, }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s { a: u8,, }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s { , }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s { a: u8 };\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s { a u8 }\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s { @1 a: u8, @2 b: u16? }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s { @1a: u8 }\x0a}\x0a
+errc	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s { @0 a: u8 }\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s {\x0a    /// doc\x0a    [since(1.1)]\x0a    a: u8,\x0a    [sensitive] b: string<8>?,\x0a}\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0astruct s { a: u8 /// late\x0a }\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0aobject file { owner: id, size: u64 }\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0aunion u { @1 a: id, @2 b: string<255>, reserved @3, }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aunion u { a: id }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aunion u { reserved@3 }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aunion u { /// doc\x0a reserved @3 }\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0aenum e: u8 { a = 1, reserved 2, b = 0x03 }\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0aflags f: u64 { a = 1, b = 0x8000000000000000 }\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0aenum e: u8 { reserved = 1 }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aenum e: u8 { reserved4 }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aenum e: i8 { a = 1 }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aenum e { a = 1 }\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aenum e: u8 { a }\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0aerror overflow = 1;\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a[refused]\x0aerror query_too_broad = 1 { limit: u32 };\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aerror overflow = 1\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0aerror overflow;\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 advance() -> u64 error(overflow);\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@65535 x();\x0a}\x0a
+errc	edition 2026;\x0a[id(a.b)] interface b {\x0a@65536 x();\x0a}\x0a
+errc	edition 2026;\x0a[id(a.b)] interface b {\x0a@0 x();\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@01 x();\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@ 1 x();\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@1x();\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0areserved @7;\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a/// gone\x0areserved @7;\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0areserved@7;\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0areserved @7\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@2 watch(query: query, after: u64?) -> (at: u64) stream<change> error(query_too_broad);\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@2 watch(after: u64?) -> stream<change>;\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@2 watch(after: u64?) -> u64 stream<change>;\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@2 watch(after: u64?) -> (at: u64)stream<change>;\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@2 watch(after: u64?) -> u64stream<change>;\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@2 watch(after: u64?) -> stream<change> stream<change>;\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@3 register(\x0a    definition: cap<aspis.kernel.memory/1, read, immutable>,\x0a    length: u32,\x0a    [sensitive] proof: string<8192>,\x0a    [since(1.1)] dry_run: bool?,\x0a) -> u64 error(already_registered);\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a[group(discover), readonly, idempotent]\x0a@1 list(query: query, page: bytes<64>?)\x0a    -> (at: u64, entries: seq<id, max_page>, next_page: bytes<64>?)\x0a    error(query_too_broad);\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x() error ( a , b ) ;\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x() error();\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x() -> u64error(e);\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x()error(e);\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x() -> (a: u8) error(e);\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x() -> fooerror error(e);\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x() -> ();\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x()\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x() -> u64 -> u64;\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x(a: aspis.base/1.object_info, b: aspis.base/1.2.object_info);\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x(s: slot<aspis.kernel.eventcount/1, read>);\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x(a: u8) error(e) -> u8;\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 X();\x0a}\x0a
+errc	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 self();\x0a}\x0a
+err	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 x__y();\x0a}\x0a
+errc	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx();\x0a}\x0a
+ok	edition 2026;\x0a[id(a.b)] interface b {\x0a@1 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx();\x0a}\x0a
+
+# ---- Types ------------------------------------------------------------------
+ok@type	bool
+ok@type	u8
+ok@type	u16
+ok@type	u32
+ok@type	u64
+ok@type	i8
+ok@type	i16
+ok@type	i32
+ok@type	i64
+ok@type	f32
+ok@type	f64
+ok@type	id
+ok@type	uuid
+ok@type	u64?
+ok@type	string<255>
+ok@type	bytes<0x10>
+ok@type	string< max >
+ok@type	seq<id, max_page>
+ok@type	seq<u8?, 3>
+ok@type	seq< u8 , 4 >
+ok@type	array<cell, 2>
+ok@type	array<array<u8, 2>, 2>
+ok@type	cap<aspis.kernel.memory/1, read, immutable>
+ok@type	cap<aspis.kernel.memory/1 , read>
+ok@type	cap<org.example.sql.table/1.2>
+ok@type	cap<a.b/1, grant_reply, grant, write>
+ok@type	slot<aspis.kernel.eventcount/1, read>
+ok@type	aspis.base/1.object_info
+ok@type	aspis.base/1.2.object_info
+ok@type	query
+ok@type	u64x
+ok@type	identity
+ok@type	string<-1>
+err@type	U64
+err@type	u64??
+err@type	seq<u8,3,4>
+err@type	string <10>
+err@type	seq <u8, 4>
+err@type	cap<aspis.kernel.memory/1, execute>
+err@type	cap<aspis.kernel.memory, read>
+err@type	cap<aspis.kernel.memory/1,>
+err@type	string<>
+err@type	bytes<0xAB>
+err@type	array<u8>
+err@type	aspis.base.object_info
+err@type	aspis.base/1 .object_info
+err@type	Query
+err@type	stream<x>
+err@type	_x
+errc@type	string
+errc@type	stream
+errc@type	seq
+errc@type	aspis.base/1.u64
+errc@type	cap<aspis.kernel.memory/65536>
+errc@type	self
+
+# ---- Attributes ---------------------------------------------------------------
+ok@attrs	[closed]
+ok@attrs	[id(aspis.catalog), object_id(reserved(0x0201)), version(1.1), groups(discover, register)]
+ok@attrs	[ since( 1.1 ) ]
+ok@attrs	[since(1.1),deprecated(1.2)]
+ok@attrs	[object_id(hex(0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef))]
+ok@attrs	[retry(later)]
+ok@attrs	[x(-1)]
+ok@attrs	[object_id(reserved( 259 ))]
+ok@attrs	[x(reserved)]
+ok@attrs	[x(a.b, c, 1, 1.0)]
+err@attrs	[]
+err@attrs	[Closed]
+err@attrs	[since (1.1)]
+err@attrs	[x(1.)]
+err@attrs	[x(01)]
+err@attrs	[object_id(hex(0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde))]
+err@attrs	[object_id(hex(0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF))]
+err@attrs	[object_id(hex( 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef))]
+err@attrs	[x()]
+err@attrs	[x(1.0.0)]
+err@attrs	[a,]
+err@attrs	[x("s")]
+errc@attrs	[x(1.65536)]
+errc@attrs	[x(65536.0)]
+errc@attrs	[self]
+errc@attrs	[x(a.is)]
+
+# ---- Literals -----------------------------------------------------------------
+ok@int-lit	0
+ok@int-lit	-0
+ok@int-lit	-1
+ok@int-lit	123
+ok@int-lit	0x0103
+ok@int-lit	0xffffffffffffffffff
+ok@int-lit	99999999999999999999999
+err@int-lit	01
+err@int-lit	0X10
+err@int-lit	0xAB
+err@int-lit	0x
+err@int-lit	- 1
+err@int-lit	+1
+err@int-lit	1_000
+err@int-lit	-0x1
+err@int-lit	
+ok@id-lit	reserved(0x0103)
+ok@id-lit	reserved( 259 )
+ok@id-lit	hex(0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef)
+err@id-lit	hex(0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde)
+err@id-lit	hex(0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0)
+err@id-lit	RESERVED(1)
+err@id-lit	reserved (1)
+err@id-lit	hex()
+
+# ---- Results and methods ---------------------------------------------------
+ok@results	u64
+ok@results	(at: u64) stream<change>
+ok@results	(at: u64)stream<change>
+ok@results	u64 stream<change>
+ok@results	stream<change>
+ok@results	(a: u8,)
+ok@results	( a: u8 , b: u16? , )
+ok@results	aspis.base/1.object_info stream<c>
+err@results	()
+err@results	u64stream<change>
+err@results	(a: u8) stream <change>
+err@results	stream<change>?
+err@results	(a: u8) (b: u8)
+errc@results	stream<u64>
+ok@method	@1 list(query: query, page: bytes<64>?) -> (at: u64) error(x);
+ok@method	@65279 x();
+ok@method	@1 x(a: u8, @2 b: u8);
+ok@method	@1 x(\x0a  /// doc\x0a  a: u8,\x0a);
+err@method	@1x();
+err@method	@1 x()
+err@method	@1 x(a: u8) error() ;
+err@method	@1 x(a: u8)->u8 ->u8;
+errc@method	@0 x();
+
+# ---- Comments and doc comments ---------------------------------------------
+ok@comment	//\x0a
+ok@comment	// x\x0a
+ok@comment	//x\x0a
+ok@comment	//\tx\x0a
+ok@comment	//\x0d\x0a
+ok@comment	// caf\xc3\xa9\x0a
+ok@comment	//# x\x0a
+ok@comment	// /// not a doc\x0a
+err@comment	///\x0a
+err@comment	//!\x0a
+err@comment	// x
+err@comment	//\x00\x0a
+err@comment	// \xff\x0a
+err@comment	/ x\x0a
+ok@docs	/// a\x0a
+ok@docs	////\x0a
+ok@docs	/// a\x0a/// b\x0a
+ok@docs	/// a\x0a// c\x0a/// b\x0a
+ok@docs	  /// indented\x0a
+ok@docs	///\x0a
+err@docs	// a\x0a
+err@docs	/// a
+err@docs	//! a\x0a
+err@docs	/// a\x0a//! b\x0a

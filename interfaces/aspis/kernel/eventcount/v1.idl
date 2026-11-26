@@ -1,0 +1,30 @@
+// SPDX-FileCopyrightText: 2026 Nicole Roy
+// SPDX-License-Identifier: MPL-2.0
+edition 2026;
+
+//! Eventcounts: the kernel's asynchronous primitive (ADR 0053).
+//!
+//! An example, not final: it is the eventcount example of
+//! docs/design/call-language.md ("Example: the eventcount interface"),
+//! which exercises the compiler. C17 writes the kernel's interfaces in the
+//! IDL, replaces this file and rewrites its lock.
+
+[id(aspis.kernel.eventcount), object_id(reserved(0x0103)), version(1.0), kernel]
+interface eventcount {
+    /// The count is already 2^64 - 1, its maximum.
+    [refused]
+    error overflow = 1;
+
+    /// Adds one to the count, and wakes every waiter whose target it reaches.
+    [requires(write)]
+    @1 advance() -> u64 error(overflow);
+
+    /// Blocks until the count reaches `target`, or until `deadline`,
+    /// an absolute value of the node's virtual count (ADR 0051, rule 5).
+    [requires(read), readonly]
+    @2 wait(target: u64, deadline: u64?) -> u64;
+
+    /// Returns the count.
+    [requires(read), readonly]
+    @3 read() -> u64;
+}

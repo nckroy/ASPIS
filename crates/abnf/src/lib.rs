@@ -21,6 +21,8 @@
 //! constraint vocabulary's grammar and the Rust checker"), and in "How
 //! constraints bind".
 //!
+//! [`dict`] writes a grammar's libFuzzer dictionary.
+//!
 //! [`Grammar::matches`] reads a grammar as context-free, as the Python
 //! checker does. [`Grammar::matches_constrained`] also enforces every
 //! vocabulary constraint, and [`vectors::check`] judges a vector file with
@@ -32,6 +34,7 @@
 extern crate alloc;
 
 pub mod constraint;
+pub mod dict;
 mod grammar;
 mod matcher;
 mod syntax;

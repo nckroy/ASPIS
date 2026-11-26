@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "idl"
+description = "The ASPIS IDL compiler's no_std front end: parse, check, project, canonical form, compatibility (ADR 0067)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/parse 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+# Loads each generated grammar and labels its vectors (ADR 0062, rule 8).
+abnf.workspace = true
+idl-rt.workspace = true
+# SHA3-256 for the lock (ADR 0067, rule 7), pending D33's choice of crypto
+# crates. MIT OR Apache-2.0.
+sha3 = { version = "0.11", default-features = false }
+
+[[test]]
+name = "parse"
+path = "tests/parse.rs"
+
+[[test]]
+name = "grammar"
+path = "tests/grammar.rs"
+
+[[test]]
+name = "check"
+path = "tests/check.rs"
+
+[[test]]
+name = "project"
+path = "tests/project.rs"
+
+[[test]]
+name = "compat"
+path = "tests/compat.rs"
+
+[[test]]
+name = "value"
+path = "tests/value.rs"
+
+[[test]]
+name = "generate"
+path = "tests/generate.rs"
+
+[[test]]
+name = "doc"
+path = "tests/doc.rs"
+
+[[test]]
+name = "fuzz"
+path = "tests/fuzz.rs"

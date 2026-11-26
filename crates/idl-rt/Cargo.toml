@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "idl-rt"
+description = "The runtime of IDL-generated ASPIS bindings, and the name parsers (ADR 0063, ADR 0067)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/names 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
+
+[lints]
+workspace = true
+
+[features]
+default = ["rpc"]
+# Owned values for host tools and the later std port (ADR 0067, rule 10).
+alloc = []
+# aspis.rpc's generated binding, the call seams and CallError. The IDL
+# compiler builds this crate without it, so a stale committed binding
+# never stops idlc from regenerating it.
+rpc = []
+
+[dev-dependencies]
+abnf.workspace = true
+
+[[test]]
+name = "names"
+path = "tests/names.rs"
+
+[[test]]
+name = "json"
+path = "tests/json.rs"
+
+[[test]]
+name = "codec"
+path = "tests/codec.rs"
+
+[[test]]
+name = "envelope"
+path = "tests/envelope.rs"
+
+[[test]]
+name = "text"
+path = "tests/text.rs"
+
+[[test]]
+name = "fuzz"
+path = "tests/fuzz.rs"

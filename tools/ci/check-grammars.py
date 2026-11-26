@@ -16,13 +16,20 @@ matches the grammar but breaks a constraint) as "ok", and it validates the
 the Rust checker, also enforces the constraints. The two are a differential
 pair (docs/design/call-language.md, "Checkers").
 
-A grammar's header may say "; uses: core, names": those grammars, from the
-same directory, load first into the same rule class, transitively. No
-grammar but core.abnf may define a core rule name, in any letter case, so
-core.abnf must sit beside the grammars.
+A grammar's header may say "; uses: core, names": those grammars load first
+into the same rule class, transitively. They are found in the --uses
+directory, or by default in the grammar's own directory. No grammar but
+core.abnf may define a core rule name, in any letter case, so the --uses
+directory (or the first root) must hold core.abnf.
+
+Each root is walked recursively, so the generated grammars beside the IDL
+files under interfaces/ are checked too (ADR 0067, rule 9). A path with a
+space in any component is one of iCloud's conflict copies, and is skipped.
 
 Vectors are written one per line: a tag, a tab, then the octets with
-C-style escapes: \\t, \\\\, \\" and \\xHH. Usage: check-grammars.py [dir]
+C-style escapes: \\t, \\\\, \\" and \\xHH.
+
+Usage: check-grammars.py [--uses DIR] [ROOT...]   (default root: grammars)
 """
 
 import pathlib
@@ -110,9 +117,10 @@ def uses_of(path: pathlib.Path, text: str) -> list[str]:
     return names
 
 
-def load_order(path: pathlib.Path) -> list[pathlib.Path]:
+def load_order(path: pathlib.Path, uses: pathlib.Path | None) -> list[pathlib.Path]:
     """The grammars that `path` uses, transitively, each before the grammars
-    that use it, and each once. A cycle or a missing grammar fails."""
+    that use it, and each once. A used grammar is in `uses`, or else beside
+    the grammar that names it. A cycle or a missing grammar fails."""
     order: list[pathlib.Path] = []
     done: set[str] = set()
     visiting: list[str] = []
@@ -126,7 +134,7 @@ def load_order(path: pathlib.Path) -> list[pathlib.Path]:
             raise Fail(f"{path}: uses {p.stem}, but there is no {p}")
         visiting.append(p.stem)
         for name in uses_of(p, read_ascii(p)):
-            visit(p.parent / f"{name}.abnf")
+            visit((uses or p.parent) / f"{name}.abnf")
         visiting.pop()
         done.add(p.stem)
         order.append(p)
@@ -143,7 +151,7 @@ def check_text(path: pathlib.Path, text: str, core_names: set[str]) -> None:
         name, op = m.group(1), m.group(2)
         key = name.lower()
         n = text.count("\n", 0, m.start()) + 1
-        if key in core_names and path.name != "core.abnf":
+        if key in core_names and path != CORE:
             raise Fail(f"{path}:{n}: defines core rule name {name} (ADR 0062, rule 3)")
         if op == "=" and key in defined:
             raise Fail(f"{path}:{n}: defines {name} twice")
@@ -188,12 +196,12 @@ def decode(text: str) -> bytes:
     return bytes(out)
 
 
-def check(abnf: pathlib.Path, core_names: set[str]) -> int:
+def check(abnf: pathlib.Path, core_names: set[str], uses: pathlib.Path | None) -> int:
     class Grammar(Rule):
         pass
 
     try:
-        files = load_order(abnf)
+        files = load_order(abnf, uses)
         for f in files:
             check_text(f, read_ascii(f), core_names)
         # A redefinition is an error, not a warning.
@@ -299,23 +307,44 @@ def check(abnf: pathlib.Path, core_names: set[str]) -> int:
     return 1 if bad else 0
 
 
+# core.abnf itself, the one grammar that defines the core rule names.
+CORE: pathlib.Path | None = None
+
+
+def grammars_under(root: pathlib.Path) -> list[pathlib.Path]:
+    """Every *.abnf file under root, sorted, skipping any path with a space
+    in a component (iCloud's conflict copies, such as "initfs 2.abnf")."""
+    return sorted(
+        g
+        for g in root.rglob("*.abnf")
+        if not any(" " in part for part in g.relative_to(root).parts)
+    )
+
+
 def main() -> int:
-    root = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "grammars")
-    # Names with a space are iCloud's conflict copies, such as "initfs 2.abnf".
-    grammars = sorted(g for g in root.glob("*.abnf") if " " not in g.name)
+    global CORE
+    args = sys.argv[1:]
+    uses = None
+    if args[:1] == ["--uses"]:
+        if len(args) < 2:
+            print("usage: check-grammars.py [--uses DIR] [ROOT...]")
+            return 2
+        uses, args = pathlib.Path(args[1]), args[2:]
+    roots = [pathlib.Path(a) for a in args] or [pathlib.Path("grammars")]
+    grammars = [g for root in roots for g in grammars_under(root)]
     if not grammars:
-        print(f"no grammars in {root}")
+        print(f"no grammars in {', '.join(map(str, roots))}")
         return 1
-    core = root / "core.abnf"
-    if not core.exists():
-        print(f"FAIL {core}: missing; it holds the reserved rule names (ADR 0062, rule 3)")
+    CORE = (uses or roots[0]) / "core.abnf"
+    if not CORE.exists():
+        print(f"FAIL {CORE}: missing; it holds the reserved rule names (ADR 0062, rule 3)")
         return 1
     try:
-        core_names = {m.group(1).lower() for m in DEFINITION.finditer(read_ascii(core))}
+        core_names = {m.group(1).lower() for m in DEFINITION.finditer(read_ascii(CORE))}
     except Fail as e:
         print(f"FAIL {e}")
         return 1
-    return 1 if sum(check(g, core_names) for g in grammars) else 0
+    return 1 if sum(check(g, core_names, uses) for g in grammars) else 0
 
 
 if __name__ == "__main__":

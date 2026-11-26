@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+#
+# Test vectors for idl-lock.abnf: the lock file beside an IDL file (ADR
+# 0067, rule 7). Each vector is a whole file, with \x0a for its line ends.
+# Lines starting with "#", and empty lines, are ignored.
+
+# rule: idl-lock
+
+ok	
+ok	# SPDX-FileCopyrightText: 2026 Nicole Roy\x0a# SPDX-License-Identifier: MPL-2.0\x0a# aspis.rpc/1: SHA3-256 of each published minor's canonical form (ADR 0067, rule 7).\x0a
+ok	# x\x0a1.0 sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0a
+ok	1.0 sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0a1.1 sha3-256 0000000000000000000000000000000000000000000000000000000000000000\x0a
+ok	# caf\xc3\xa9\x0a65535.65535 sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0a
+# No final line end.
+err	1.0 sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a
+# Uppercase hex, a short hash, another hash name.
+err	1.0 sha3-256 A7FFC6F8BF1ED76651C14756A061D662F580FF4DE43B49FA82D80A4B80F8434A\x0a
+err	1.0 sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434\x0a
+err	1.0 sha256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0a
+err	1.0 SHA3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0a
+# A version without a minor, or with a leading zero.
+err	1 sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0a
+err	1.01 sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0a
+# Two spaces, a CR, a comment after an entry.
+err	1.0  sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0a
+err	1.0 sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0d\x0a
+err	1.0 sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0a# x\x0a
+# A control character in a comment: C0, DEL, a CR before the LF.
+err	# \x01\x0a
+err	# \x7f\x0a
+err	# x\x0d\x0a
+# A C1 control is UTF-8 text, and allowed.
+ok	# \xc2\x85\x0a
+# A minor above 65535.
+errc	1.65536 sha3-256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\x0a

@@ -222,8 +222,12 @@ pub fn run(o: &Options) -> i32 {
         "-serial",
         "chardev:uart",
     ])
+    // QEMU runs in the run directory, and the socket's path is relative to
+    // it: a UNIX socket's path is limited to 104 octets on macOS, and a
+    // checkout's own path can be longer than that.
     .arg("-qmp")
-    .arg(format!("unix:{},server=on,wait=off", qmp.display()));
+    .arg("unix:qmp.sock,server=on,wait=off")
+    .current_dir(&work);
     if o.flavor == Flavor::Test {
         cmd.args(["-semihosting-config", "enable=on,target=native"]);
     }
@@ -313,7 +317,13 @@ fn screendump(sock: &Path, out: &Path) -> Result<(), String> {
     if let Some(dir) = out.parent() {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let mut s = UnixStream::connect(sock).map_err(|e| e.to_string())?;
+    // Connect by the socket's name from its directory, as QEMU made it,
+    // so a long checkout path never reaches the 104-octet limit.
+    let back = std::env::current_dir().map_err(|e| e.to_string())?;
+    std::env::set_current_dir(sock.parent().unwrap()).map_err(|e| e.to_string())?;
+    let s = UnixStream::connect(sock.file_name().unwrap());
+    std::env::set_current_dir(back).map_err(|e| e.to_string())?;
+    let mut s = s.map_err(|e| e.to_string())?;
     s.set_read_timeout(Some(Duration::from_secs(10)))
         .map_err(|e| e.to_string())?;
     let mut r = BufReader::new(s.try_clone().map_err(|e| e.to_string())?);

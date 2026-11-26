@@ -25,6 +25,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3fb67a6e08acf24fdeccbac2cb6ac4305825bd1f117462e0e6f2f193345ad56"
 
 [[package]]
+name = "aspis-interfaces"
+version = "0.1.0"
+dependencies = [
+ "abnf",
+ "idl",
+ "idl-fixtures",
+ "idl-rt",
+]
+
+[[package]]
 name = "aspis-kernel"
 version = "0.1.0"
 dependencies = [
@@ -214,6 +224,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "idl"
+version = "0.1.0"
+dependencies = [
+ "abnf",
+ "idl-rt",
+ "sha3",
+]
+
+[[package]]
+name = "idl-fixtures"
+version = "0.1.0"
+dependencies = [
+ "idl",
+ "idl-rt",
+]
+
+[[package]]
+name = "idl-rt"
+version = "0.1.0"
+dependencies = [
+ "abnf",
+]
+
+[[package]]
+name = "idlc"
+version = "0.1.0"
+dependencies = [
+ "abnf",
+ "idl",
+ "idl-rt",
+]
+
+[[package]]
 name = "imagesize"
 version = "0.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -236,6 +279,16 @@ name = "kcap"
 version = "0.1.0"
 dependencies = [
  "kmem",
+]
+
+[[package]]
+name = "keccak"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d8f198d1db720e4940b5a493201d199d9f24f568f8f746bd13706243a2f71598"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
 ]
 
 [[package]]
@@ -423,6 +476,16 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+]
+
+[[package]]
+name = "sha3"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be176f1a57ce4e3d31c1a166222d9768de5954f811601fb7ca06fc8203905ce1"
+dependencies = [
+ "digest",
+ "keccak",
 ]
 
 [[package]]

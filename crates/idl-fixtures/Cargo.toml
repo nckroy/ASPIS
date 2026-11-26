@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "idl-fixtures"
+description = "Generated Rust bindings of the IDL compiler's test fixtures, for tests only"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+alloc = ["idl-rt/alloc"]
+
+[dependencies]
+idl-rt = { workspace = true, features = ["rpc"] }
+
+[build-dependencies]
+idl.workspace = true
+idl-rt.workspace = true
