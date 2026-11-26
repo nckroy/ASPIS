@@ -3,7 +3,7 @@
 
 # The kernel specification
 
-*2026-11-25. The kernel specification: the mechanism behind the M2 kernel records, and every mechanism question still open. It follows proposed ADRs 0047 to 0061.*
+*2026-11-25. The kernel specification: the mechanism behind the M2 kernel records, and every mechanism question still open. It follows ADRs 0047 to 0061.*
 
 This note is the kernel specification that [0047](../decisions/0047-the-kernel-follows-sel4.md), rule 5 names. The records say what is decided, what is guaranteed, and why. This note says how the kernel does it: each object's operations and their arguments, the order of steps inside the kernel, and the queue and allocation strategies.
 
@@ -11,7 +11,7 @@ This note is the kernel specification that [0047](../decisions/0047-the-kernel-f
 - **The records win.** Every mechanism here must keep the guarantees of the records, listed in [Invariants the prototype checks](#invariants-the-prototype-checks). If a section here and a record disagree, the record is right and the section is wrong.
 - **It changes with the prototype.** The mechanism is settled alongside a prototype of chunks C10 to C16, or of C17 for the kernel interface library and C70 for debugging. This note may change with the prototype without an edit to the records, as long as every guarantee still holds. A change that would break one is an edit to the record that gives the guarantee, proposed in the pull request that needs it ([0047](../decisions/0047-the-kernel-follows-sel4.md), rule 5).
 - **Open questions are numbered.** Each is listed once, as K01, K02, …, under [Open questions](#open-questions) at the end, and the sections link to them. The [design backlog](design-backlog.md#m2-kernel-objects) carries them as D150 to D160, grouped, under M2. D161, under [M3](design-backlog.md#m3-node-user-space-and-the-entropy-gate), carries K12, and D162, under [M6](design-backlog.md#m6-a-console-you-can-log-in-to), carries K73. K10 and K61 belong to D95 and D115.
-- **The records are proposed.** ADRs 0047 to 0061 are Proposed, not yet accepted, and so are the call-language records 0062 to 0068 that this note cites for message layouts ([call-language specification](call-language.md)). Rule numbers cited here are those of the records as proposed.
+- **The records are accepted.** The project owner accepted ADRs 0047 to 0061 on 2026-11-25, with the call-language records 0062 to 0068 that this note cites for message layouts ([call-language specification](call-language.md)).
 
 The sections follow the order in which the kernel is built: memory and address spaces, capabilities, threads and scheduling, SMP, IPC, eventcounts, interrupts, memory objects and paging, faults, jobs and memory reclaim, the kernel interface library, processes and spawn, debugging, and the boot hand-off.
 

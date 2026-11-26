@@ -3,7 +3,7 @@
 
 # 0050. User-space servers name the kernel objects they present
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context
@@ -22,7 +22,7 @@ The [design backlog, D16](../design/design-backlog.md#m2-kernel-objects) asks wh
 
 No rule of 0001 says which objects must carry an ID. Its rules say how an ID is built and minted, and its Context and its ID table name processes, threads and endpoints as examples. This record reads 0001's list as the kinds of thing an ID may name, so it changes no rule of 0001. The project owner chose that reading on 2026-11-25, over adding a rule to 0001. This record reads the founding requirement the same way: an object that a program reaches only through its own capability, and that no server presents, isn't one of the OS fixtures that programs touch as objects. Once a server presents it, it gets an ID (rule 2).
 
-Those are rules, not context, and a reading can't narrow them. A kernel object that no server presents has no ID, and no server to answer the base interface for it. So this record is proposed with an edit to each, in the same pull request: [0014](0014-versioned-object-apis.md), rule 5, [0027](0027-applications-extend-the-system.md), rule 2 and [0028](0028-discovery-and-realm-catalog.md), rules 1 and 2 and the matching bullet of 0014's Consequences now give the duty, and enumeration's reach, only to objects that have an ID. This record changes nothing else in them (rule 7).
+Those are rules, not context, and a reading can't narrow them. A kernel object that no server presents has no ID, and no server to answer the base interface for it. So this record was proposed with an edit to each, in the same pull request: [0014](0014-versioned-object-apis.md), rule 5, [0027](0027-applications-extend-the-system.md), rule 2 and [0028](0028-discovery-and-realm-catalog.md), rules 1 and 2 and the matching bullet of 0014's Consequences now give the duty, and enumeration's reach, only to objects that have an ID. This record changes nothing else in them (rule 7).
 
 Claude drafted this record on 2026-11-25.
 

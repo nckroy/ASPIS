@@ -3,7 +3,7 @@
 
 # 0056. Typed faults, and the deadline for fetching a page
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

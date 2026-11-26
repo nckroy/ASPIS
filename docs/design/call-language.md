@@ -3,7 +3,7 @@
 
 # The call language
 
-*2026-11-25. The call-language specification: the grammars, octet layouts, tables and worked examples behind the M2 call-language records. It follows proposed ADRs 0062 to 0068.*
+*2026-11-25. The call-language specification: the grammars, octet layouts, tables and worked examples behind the M2 call-language records. It follows ADRs 0062 to 0068.*
 
 This note is the detail that the call-language records cite. The records say what is decided, what is guaranteed, and why. This note says exactly how: every octet layout, grammar, constraint, table and worked example.
 
@@ -11,7 +11,7 @@ This note is the detail that the call-language records cite. The records say wha
 - **The records win.** If a section here and a record disagree, the record is right and the section is wrong.
 - **It changes with the build.** C06, C07, C18, C29 and C71 build what this note describes. A detail here may change with them, as long as every record's rules still hold. A change that would break a rule is an edit to that record, proposed in the pull request that needs it.
 - **Open questions are numbered.** Each is listed once, as L01, L02, …, under [Open questions](#open-questions) at the end, and the sections link to them.
-- **The records are proposed.** ADRs 0062 to 0068 are Proposed, not yet accepted. The same pull request proposes in-place edits of four accepted rules: [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 4 (with 0062), [0014](../decisions/0014-versioned-object-apis.md), rule 3 (with 0065), and [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 1 and [0002](../decisions/0002-capability-security-model.md), rule 5 (with 0066). It also corrects the citation in [0037](../decisions/0037-initial-image-format-and-contents.md), rule 1, which called the byte order of messages open.
+- **The records are accepted.** The project owner accepted ADRs 0062 to 0068 on 2026-11-25. The pull request that proposed them also edited four accepted rules in place: [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 4 (with 0062), [0014](../decisions/0014-versioned-object-apis.md), rule 3 (with 0065), and [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 1 and [0002](../decisions/0002-capability-security-model.md), rule 5 (with 0066). It also corrected the citation in [0037](../decisions/0037-initial-image-format-and-contents.md), rule 1, which called the byte order of messages open.
 
 **Conventions.** An octet is 8 bits. Every integer on the wire is big-endian. `%xHH` is one octet. Grammar blocks are RFC 5234 ABNF, with RFC 7405's `%s"..."` for case-sensitive literals. A message is an octet string, held in memory in octet order. A word is eight consecutive octets of a message, starting at a multiple of 8. On kernel IPC the first four words travel in registers, each loaded as the big-endian reading of its octets ([Octets and words](#octets-and-words)).
 

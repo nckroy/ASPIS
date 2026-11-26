@@ -3,7 +3,7 @@
 
 # 0062. Core rules: big-endian, fixed-width binary conventions
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context
