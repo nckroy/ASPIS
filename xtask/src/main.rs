@@ -10,6 +10,8 @@
 //! cargo xtask check-production              no test code in production images
 //! cargo xtask matrix                        the nightly QEMU matrix
 //! cargo xtask lint                          rustfmt and clippy, every target
+//! cargo xtask grammars                      every grammar and its vectors,
+//!                                           with the Rust checker
 //! cargo xtask grub                          GRUB 2.14 arm64-efi, in Docker
 //! ```
 //!
@@ -31,6 +33,7 @@
 //! ```
 
 mod esp;
+mod grammars;
 mod qemu;
 
 use std::{
@@ -95,7 +98,9 @@ pub fn run_cmd(cmd: &mut Command) {
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let Some(cmd) = args.first() else {
-        eprintln!("usage: cargo xtask build|run|test|check-production|grub [options]");
+        eprintln!(
+            "usage: cargo xtask build|run|test|check-production|matrix|lint|grammars|grub [options]"
+        );
         exit(2)
     };
     let rest = &args[1..];
@@ -124,6 +129,7 @@ fn main() {
         }
         "matrix" => matrix(),
         "lint" => lint(),
+        "grammars" => grammars::check(),
         other => fail(format!("unknown command {other}")),
     }
 }
@@ -379,6 +385,9 @@ fn check_production() {
 }
 
 fn test() {
+    // The grammars and their vectors, with the Rust checker (ADR 0062,
+    // rule 8).
+    grammars::check();
     // Host tests for the crates that build on the host.
     run_cmd(
         Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
@@ -399,6 +408,8 @@ fn test() {
                 "atlas",
                 "-p",
                 "logo",
+                "-p",
+                "abnf",
             ]),
     );
     build(Flavor::Production);
@@ -536,6 +547,8 @@ fn lint() {
         "atlas",
         "-p",
         "logo",
+        "-p",
+        "abnf",
         "-p",
         "xtask",
         "--",

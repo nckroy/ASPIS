@@ -64,6 +64,16 @@ jobs:
           "$RUNNER_TEMP/abnf/bin/pip" install --quiet abnf==2.9.1
           "$RUNNER_TEMP/abnf/bin/python" -I tools/ci/check-grammars.py grammars
 
+      # The second checker of the differential pair, which also checks that
+      # grammars/core.abnf matches the call-language note (ADR 0062, rule 8).
+      - name: Rust toolchain for the grammar checker
+        uses: ./.github/actions/setup
+        with:
+          qemu: "false"
+
+      - name: Grammars and their vectors, with the Rust checker (ADR 0062, rule 8)
+        run: cargo xtask grammars
+
       - name: Diagrams render with the newest Mermaid (ADR 0024)
         run: |
           npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/mermaid" mermaid@latest puppeteer-core@25

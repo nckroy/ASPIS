@@ -30,7 +30,7 @@ The sections follow the order of the records: the core rules, names and the call
 
 ### The core grammar
 
-C06 commits this file as `grammars/core.abnf`. A grammar that uses the core rules says so on a header line, `; uses: core` ([Checkers](#checkers)).
+C06 commits this file as `grammars/core.abnf`. A grammar that uses the core rules says so on a header line, `; uses: core` ([Checkers](#checkers)). C06 committed it unchanged, and `cargo xtask grammars` checks that the file and the block below stay the same, octet for octet. `grammars/core.vectors` holds its vectors ([Vector files](#vector-files)).
 
 The UTF-8 rules are ASPIS's own text, written from RFC 3629's definition rather than copied from section 4 of the RFC. So the file carries only ASPIS's SPDX tags and needs no REUSE snippet. RFC 3629 (2003) predates the IETF Trust's code-component license (RFC 5378), so copying its ABNF would raise a licensing question. RFC 5234's own core rules (`OCTET`, `DIGIT`, `SP`) are referenced, not copied.
 
@@ -138,23 +138,45 @@ utf8-tail   = %x80-BF
 
 ### The constraint vocabulary
 
-`; constraint:` comments keep the convention of `grammars/initfs.abnf`. They are normative, and a rule name stands for its value as an integer (or, for a decimal text rule, the number it spells). Generated grammars use only the forms below, which C06's checker enforces. Any other constraint text is prose. Prose is allowed only in hand-written grammars, and that format's own decoder tests enforce it, as `crates/initfs` does today. C06 publishes the vocabulary's own ABNF ([L22](#l22-the-constraint-vocabularys-grammar-and-the-rust-checker)).
+`; constraint:` comments keep the convention of `grammars/initfs.abnf`. They are normative, and a rule name stands for its value as an integer (or, for a decimal text rule, the number it spells). Generated grammars use only the forms below, which C06's checker enforces. Any other constraint text is prose. Prose is allowed only in hand-written grammars, and that format's own decoder tests enforce it, as `crates/initfs` does today. The vocabulary's own ABNF is `grammars/constraint.abnf`, with vectors in `grammars/constraint.vectors` ([L22](#l22-the-constraint-vocabularys-grammar-and-the-rust-checker)). Several forms act on the rule's *target*, and [How constraints bind](#how-constraints-bind) says exactly what each form reads.
 
 | Form | Meaning |
 |---|---|
-| `exactly R octets` | The next repetition in the rule holds exactly R octets. |
-| `exactly R E elements` | The next repetition holds exactly R matches of rule E. |
-| `exactly R words` | The next repetition holds exactly 8 × R octets. |
-| `header words R` | R is the number of 8-octet words from the message's first octet through the end of its last header extension ([Word 0](#word-0)). |
+| `exactly R octets` | The rule's target holds exactly R octets. |
+| `exactly R E elements` | The target holds exactly R matches of rule E. |
+| `exactly R words` | The target holds exactly 8 × R octets. |
+| `header words R` | The target ends exactly 8 × R octets after the rule's first octet. For a message rule, that is the message's first octet, so R is the number of 8-octet words through the end of its last header extension ([Word 0](#word-0)). |
 | `at most N`, `at least N`, `in N..M`, `not N` | Bounds on the rule's integer value. N and M are decimal, and may be negative for signed rules. |
 | `not one of N, M, ...` | The value is none of the listed integers. |
 | `length at most N` | The whole match is at most N octets. |
 | `not word W1 W2 ...` | The match, as ASCII text, is none of the listed words. |
-| `ascending R` | Successive matches of R inside the enclosing repetition strictly increase. |
-| `ascending tags` | In the next repetition, the first two octets of each element, read as a u16, strictly increase. Generated tails use it, because their known fields begin with literal tags ([The struct encoding](#the-struct-encoding)). |
-| `capability index` | The value is less than the message's capability count, and each index appears exactly once in the message ([Capability indexes](#capability-indexes)). The count is out of band: the kernel's message info, or the frame's descriptor table. In a vector file it comes from the `# caps:` directive. |
+| `ascending R` | Successive matches of R inside the target strictly increase. A match of R counts for the innermost such target open around it. |
+| `ascending tags` | In the target, the first two octets of each element, read as a u16, strictly increase. Generated tails use it, because their known fields begin with literal tags ([The struct encoding](#the-struct-encoding)). |
+| `capability index` | The value is less than the message's capability count, and the indexes appear in ascending order, each exactly once ([Capability indexes](#capability-indexes)). The count is out of band: the kernel's message info, or the frame's descriptor table. In a vector file it comes from the `# caps:` directive. A core rule's match is a fragment of a body, so a vector that tests one checks only the range and repeats. |
 | `canonical float` | A NaN is the canonical quiet NaN. |
-| `remaining octets` | The repetition takes every octet left in the message, as framed by [the call header](#the-call-header-and-wire-encoding). |
+| `remaining octets` | The target takes every octet left in the message, as framed by [the call header](#the-call-header-and-wire-encoding): up to the end of the innermost enclosing match bounded by `exactly R octets` or `exactly R words`, or else to the end of the input. |
+
+### How constraints bind
+
+C06 settled these rules ([L22](#l22-the-constraint-vocabularys-grammar-and-the-rust-checker)). The Rust checker enforces them, and generated decoders follow them.
+
+- **Attachment.** A `; constraint:` comment belongs to the rule whose text holds it: the rule's own lines and its indented continuation lines. A constraint comment outside every rule, at column 0 between rules or after a blank line, is an error. A comment is a constraint comment when its text, after the `;` and any spaces or tabs, starts with `constraint:`, in that case. The constraint is the rest of the line after one or more spaces, without trailing spaces or tabs.
+- **Strictness.** `core.abnf`, every grammar that uses it (directly or through another grammar), and every grammar the catalog checks are strict: they hold no prose constraint and no prose-val (`<...>`). Other hand-written grammars, such as `initfs.abnf`, may hold both. The checker counts prose constraints and doesn't enforce them. A prose-val whose text is exactly a rule name, such as `<b>`, names that rule, as RFC 5234 section 2.1 allows and abnf 2.9.1 reads it. Any other prose-val matches nothing, as in abnf 2.9.1. A vocabulary form is enforced in every grammar, strict or not.
+- **The target.** Seven forms act on the rule's target: `exactly R octets`, `exactly R E elements`, `exactly R words`, `header words R`, `ascending R`, `ascending tags` and `remaining octets`.
+  - The rule's definition, after every `=/`, must be one concatenation. One element counts as a concatenation of one.
+  - The target is the first element of that concatenation with a variable repeat: `*`, `n*`, `*m`, or `n*m` with n below m. A fixed count, such as `16OCTET`, and an option `[ ]` don't count.
+  - With no such element, the target is the rule's whole match. That is allowed for `exactly R octets`, `exactly R words`, `header words R` and `remaining octets`, as the call header's `frame-rest` uses it. `exactly R E elements` and both `ascending` forms need a repetition, and `exactly R E elements` needs it to repeat rule E itself.
+  - Several forms on one target apply together, as `tail`'s two do. A count outside the repetition's own bounds matches nothing.
+- **Which match R is.** R stands for its latest match among the constrained rule's own elements so far, at any depth of the rule's own definition, but not inside other rules. If the rule hasn't matched R, the rule that called it is searched, at the point of the call, and so on outward. So `cap-table` finds `frame-rest`'s `cap-count`, and a `len32` inside an earlier field's `octets` is never found. If no rule has matched R, the form fails.
+- **How a value reads.** Each rule's reading is fixed when the grammar loads.
+  - A rule that is `i8` to `i64`, or is defined as just one of them, reads as two's complement.
+  - A rule whose every octet is an ASCII digit reads as the decimal number it spells.
+  - Any other rule must have a fixed width of 1 to 16 octets, and reads as an unsigned big-endian integer. So `trace-id`'s `not 0` covers all 16 octets.
+  - A rule with no reading can't be R, or carry a value form. A negative bound needs a signed rule, and `in N..M` needs N ≤ M. These are load errors.
+  - Every form reads big-endian, so a little-endian grammar such as `initfs.abnf` writes its constraints as prose.
+- **Values that fit nothing.** A decimal above 2^64 - 1 is greater than every bound. An empty match has no value, so a form that reads it fails. A negative R, or one larger than the input, holds no octets, words or elements, so its form matches nothing.
+- **Framing.** `exactly R octets` and `exactly R words` frame a message: inside the span they bound, `remaining octets` ends where the span ends. `header words R` bounds the header but frames nothing.
+- **Capabilities.** In a vector of a core rule, `capability index` checks each index's range and repeats only, since a core rule is a fragment of a body. In a vector of any other rule, the indexes must appear in ascending order, each once, and every index below the count must appear ([Capability indexes](#capability-indexes)).
 
 ### Vector files
 
@@ -162,6 +184,10 @@ utf8-tail   = %x80-BF
 
 - **The tag `errc`** marks a vector that matches the context-free grammar but breaks a constraint. The context-free checker treats `errc` as `ok`, and the constraint checker treats it as `err`, so each such vector tests both.
 - **The directives `# caps: N`** (0 to 3) **and `# unwrapped: M`** (a 3-bit mask, in hex) give the capability count and the unwrapped mask that the following lines are checked against, until the next such directive. They stand in for the kernel's message info or the frame's descriptor table, which a vector line can't carry, since it holds only body octets. Without them the count is 0.
+- **Positions and repeats.** `# caps:` resets the unwrapped mask to 0. `# unwrapped:` is one hex digit whose bits are below the count. A position delivered unwrapped still has its index, so neither checker judges by the mask; generated bindings' conformance tests do. `# rule:` and `# max-length:` hold for the whole file, and each appears at most once. `# rule:` is needed only when some line has no `@rule`.
+- **Strict lines.** Every vector line has its tab, even with an empty body. A `#` line that names one of the four directives must be exactly `# keyword: value`. A file holds no CR; a vector writes one as `\x0d`.
+- **`max-length` belongs to the context-free judgment**, so an `errc` vector is within it too.
+- **No spaced-hex form.** `\xHH` stays the only escape, so the two readers stay the same ([L22](#l22-the-constraint-vocabularys-grammar-and-the-rust-checker)).
 
 The core vectors cover at least:
 
@@ -178,10 +204,14 @@ Whole-message capability vectors (a repeated index, an index no capability fills
 
 ### Checkers
 
-- **`tools/ci/check-grammars.py`**, changed by C06. The `; uses:` header line takes a list of shared grammars to preload, such as `; uses: core, names`. A grammar whose header says `; uses: core` is loaded into the same rule class as `core.abnf`, so its rules resolve against the core rules. The checker rejects any grammar that defines a core rule name, in any letter case. `initfs.abnf` and `kernel-args.abnf` don't say `; uses: core`, and are unchanged. The Python checker can't bind a length to a repetition, so it checks the context-free grammar only, and treats `errc` as `ok`.
+- **`tools/ci/check-grammars.py`**, changed by C06. The `; uses:` header line takes a list of shared grammars to preload, such as `; uses: core, names`. A grammar whose header says `; uses: core` is loaded into the same rule class as `core.abnf`, so its rules resolve against the core rules. The checker rejects any grammar that defines a core rule name, in any letter case. `initfs.abnf` and `kernel-args.abnf` don't say `; uses: core`, and are unchanged. The Python checker can't bind a length to a repetition, so it checks the context-free grammar only, and treats `errc` as `ok`. It follows `; uses:` transitively, loading each grammar once, and fails on a cycle or a missing grammar. It turns abnf's redefinition warnings into failures, and fails num-vals above 255, empty ranges, and `=/` on a rule the file hasn't defined. It reads files as octets, so it treats a CR as the Rust checker does, and it checks every escape and directive.
 - **C06's Rust checker**, `crates/abnf`: `#![no_std]` with `alloc`, `#![forbid(unsafe_code)]`, no dependencies, MPL-2.0. It parses ABNF, matches vectors and enforces the constraint vocabulary. It bounds its time and memory, because the catalog will run it on publishers' grammars ([0027](../decisions/0027-applications-extend-the-system.md), rule 2). It runs the same vector files, and judges `errc` as `err`.
-- **Two checkers, on purpose.** The Python checker stays in CI as an independent implementation. The two are a differential pair for C71 ([Differential tests](#differential-tests)).
-- **An optional readability form.** C06 may add a spaced-hex vector body, such as `ok@u16<TAB>hex: 03 e8`, keeping `\xHH` valid. It isn't required.
+  - It has a hand-written parser and a matcher that works on sets of states, which is exact for ABNF's ambiguity: alternatives are unioned, and nothing is committed early.
+  - Its budgets cover grammar size and nesting, input size, steps (linear in the input, with a cap, and charged for constraint work too), the memory its live states hold, recursion depth, and the steps of a whole vector file ([L22](#l22-the-constraint-vocabularys-grammar-and-the-rust-checker)). A run over a budget is reported as exhausted, never as a match or a mismatch.
+  - It rejects undefined rule names and left recursion when a grammar loads, and checks that every constraint can apply where it is written ([How constraints bind](#how-constraints-bind)).
+  - `cargo xtask grammars` runs it over `grammars/` in CI's `docs` job, on every change, and checks that `grammars/core.abnf` is the block above, octet for octet. `cargo xtask test` runs it too.
+- **Two checkers, on purpose.** The Python checker stays in CI as an independent implementation. The two are a differential pair for C71 ([Differential tests](#differential-tests)). Some grammars only the Rust checker rejects: undefined names (abnf 2.9.1 fails one only when a vector reaches it), left recursion (which abnf 2.9.1 answers wrongly), prose and prose-vals in strict grammars, misused constraints, and constraint integers out of range. On very deep input, Python's recursion limit gives a parse error where the Rust checker reports exhaustion. So the differential compares only grammars both accept, and only answers both give.
+- **No spaced-hex form.** `\xHH` stays the only vector escape ([L22](#l22-the-constraint-vocabularys-grammar-and-the-rust-checker)).
 
 ## Names and the canonical call text
 
@@ -724,7 +754,7 @@ stream-end    = %x04 error                 ; error: an envelope follows
 ; ---- The error envelope (ADR 0065) follows ------------------------------------
 ```
 
-`session-close = ""` is ABNF's empty string, which RFC 5234's char-val allows. The Python checker (abnf 2.9.1) accepts it; C06's Rust checker must too.
+`session-close = ""` is ABNF's empty string, which RFC 5234's char-val allows. The Python checker (abnf 2.9.1) accepts it, and so does C06's Rust checker.
 
 `grammars/call-header.vectors` covers at least: every message type, on both transports; a trace extension; an unknown non-critical extension (`ok`); an unknown critical kind (`ok` to the grammar, refused by the receiver); must-understand flag bit 2 set (`err`); the spilled bit on an error reply or a stream end (`err`); header words that disagree with the extensions (`errc`); method 0 (`errc`); a zero time remaining (`errc`); a frame length that disagrees (`errc`); a capability count that disagrees with the table (`errc`); each descriptor kind; an empty batch; each stream entry; positions out of order (`errc`); each end reason; and an unknown end reason, `%x09` (`ok`).
 
@@ -2005,10 +2035,17 @@ How is a fault handler, pager or memory server served when it speaks an older ma
 
 ### L22. The constraint vocabulary's grammar and the Rust checker
 
-What is the exact ABNF of the constraint vocabulary? How is C06's Rust checker designed? Is the spaced-hex vector form added?
+The question was: what is the exact ABNF of the constraint vocabulary, how is C06's Rust checker designed, and is the spaced-hex vector form added?
 
-- **Owner:** C06.
-- **Meanwhile:** [The constraint vocabulary](#the-constraint-vocabulary).
+- **Settled with C06:**
+  - **The vocabulary's ABNF** is `grammars/constraint.abnf`, with vectors in `grammars/constraint.vectors`. Keywords are case-sensitive, words are separated by exactly one space, and integers have no leading zeros and no `-0`. Integers lie in -2^63 to 2^64 - 1. The grammar can't say that, so the checker does. `ascending tags` is always the tags form, so a rule named `tags` can't be the R of `ascending R`.
+  - **Binding.** [How constraints bind](#how-constraints-bind) gives the rules: attachment by the rule's text, strictness, the target, which match R is, and how a value reads (signed, decimal, or unsigned of 1 to 16 octets).
+  - **The Rust checker**, `crates/abnf`, has a hand-written parser for RFC 5234 and RFC 7405, a loader, the vocabulary's parser, a matcher and a vector reader. It does no I/O: it takes grammar text, and a resolver for the names on `; uses:` lines. Only the caller marks a grammar as `core.abnf`; a grammar merely named "core" isn't core. The loader's analyses are linear in the grammar, and none recurses along rule references.
+  - **The matcher** works on sets of states, depth-first over the grammar and breadth-first over the input, so its recursion follows the grammar's nesting, never the input's length. With constraints on, a state also carries its rule's bindings, the capability indexes seen, and the open `ascending` frames. A rule that carries a constraint, or is named as R, is matched one start at a time, so its value is known. Each target runs once, with all its forms applied together.
+  - **Budgets.** Loading bounds the grammar text (1 MiB, used grammars included), the rules (16,384), the elements (262,144), the nesting of groups and options (64) and the depth of `; uses:` (8). Each match bounds the input (64 KiB: a vector is one line of text, and whole messages are the generated decoders' to check), the steps (1 M, plus 10,000 an octet, at most 100 M), the memory its live states hold (64 MiB), and the depth of nested calls (768). Each group, repetition and rule call nests one level. 768 levels need about 560 KiB of stack in an optimized build, and about 1.5 MiB without optimization. A linear grammar takes about 20 steps an octet, so a valid 64 KiB input takes about 1.3 M steps. 100 M steps take a few seconds. Constraint work is charged as steps too: each check, each octet of a match read for its value or compared with a `not word` list, each bound, and each caller's frame searched for R. Loading sorts and deduplicates each rule's constraints, and the matcher searches `not one of` and `not word` lists by halves. A vector file has one budget for all its matches (500 M steps), and its check stops at the first vector over any budget. So a publisher's file costs the catalog a bounded time, however many vectors it holds. A state is charged 72 octets, and 48 more for each binding or open frame, so even a state with one binding for every octet of a 64 KiB input stays under 8 MiB. A run over a budget is reported as exhausted, never as a verdict.
+  - **Linear work.** A general ABNF matcher can't be linear in its input. The step budget is how this one meets [0068](../decisions/0068-the-fuzzing-and-differential-testing-gate.md), rule 5: work above a linear bound is refused as exhausted.
+  - **Capabilities.** A whole body names its indexes in ascending order, each once, and every index below the count. A core rule's vector is a fragment, checked for range and repeats only.
+  - **No spaced-hex vector form.** `\xHH` stays the only escape, so the two vector readers stay the same. C07 may add the form if generated vectors need it.
 - **From:** [The constraint vocabulary](#the-constraint-vocabulary); [Checkers](#checkers).
 
 ### L23. Error size limits and free text

@@ -1,0 +1,86 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+#
+# Test vectors for constraint.abnf, the constraint vocabulary (ADR 0062,
+# rule 7; ADR 0013, rule 6).
+#
+# Each vector is one line: "ok" or "err", optionally "@" and a rule, a tab,
+# then the text, with C-style escapes: \t, \\, \" and \xHH.
+# crates/abnf's own reader of constraints must agree with every line.
+#
+# Directives for tools/ci/check-grammars.py:
+# rule: constraint
+
+# Every form, as the core rules and the call-header grammar use it.
+ok	exactly len32 octets
+ok	exactly tail-count tail-field elements
+ok	exactly ext-words words
+ok	header words hwords
+ok	at most 65535
+ok	at least 2
+ok	in 1..32
+ok	not 0
+ok	not one of 1, 2, 3
+ok	length at most 63
+ok	not word true false if then else in is like has
+ok	ascending position
+ok	ascending tags
+ok	capability index
+ok	canonical float
+ok	remaining octets
+
+# Integers: zero, negative bounds for signed rules, the extremes of u64 and i64.
+ok	at least -128
+ok	in -5..5
+ok	in -9223372036854775808..18446744073709551615
+ok	not one of -1, 0
+ok	at most 0
+# Rule names may use either case, digits and hyphens.
+ok	exactly LEN32 octets
+ok	exactly t-change--opt-2 octets
+
+# Keywords are case-sensitive.
+err	At most 5
+err	EXACTLY len32 octets
+err	Capability index
+# One space between words, and nothing after the last.
+err	at  most 5
+err	at most 5\x20
+err	at most 5.
+err	not 0.
+err	at\tmost 5
+# Numbers: no leading zeros, no "-0", no "+", no hex.
+err	at most 05
+err	at most -0
+err	at most +5
+err	at most 0x10
+err	in 1 .. 32
+err	in 1..
+err	in ..5
+# Lists need ", " between items.
+err	not one of 1,2
+err	not one of 1 2
+err	not one of
+err	not word
+err	not word a,b
+# A length is never negative.
+err	length at most -1
+# Incomplete or unknown forms.
+err	
+err	exactly len32
+err	exactly len32 bytes
+err	exactly 4 octets
+err	header words
+err	ascending
+err	capability
+err	a power of two, at least 4096.
+err	exactly entry-count entries.
+
+# The whole comment (constraint-comment).
+ok@constraint-comment	; constraint: at most 65535
+ok@constraint-comment	;constraint: not 0
+ok@constraint-comment	; constraint:  canonical float\x20\x20
+ok@constraint-comment	;\t constraint: capability index\t
+err@constraint-comment	; Constraint: not 0
+err@constraint-comment	; constraint:not 0
+err@constraint-comment	; constraint: not 0 ; and more

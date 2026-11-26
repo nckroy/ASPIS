@@ -1,0 +1,86 @@
+; SPDX-FileCopyrightText: 2026 Nicole Roy
+; SPDX-License-Identifier: MPL-2.0
+;
+; ASPIS core rules (ADR 0062).
+;
+; Notation: RFC 5234 ABNF, updated by RFC 7405, in the binary-octet
+; external encoding (RFC 5234, section 2.4): each terminal value is
+; one octet. Integers are big-endian: the most significant octet comes
+; first. Signed integers are two's complement.
+;
+; Comments marked "constraint:" are normative (ADR 0013, rule 4) and
+; use only the forms ADR 0062 lists. In a constraint, a rule name stands
+; for its value as an integer, read as the core type the rule is.
+; Every name in this file is reserved: no other grammar may define it,
+; in any letter case.
+
+; ---- Integers ----------------------------------------------------
+u8          = OCTET              ; 0 .. 255
+u16         = 2OCTET             ; 0 .. 65535
+u32         = 4OCTET             ; 0 .. 2^32 - 1
+u64         = 8OCTET             ; 0 .. 2^64 - 1
+i8          = OCTET              ; -128 .. 127, two's complement
+i16         = 2OCTET             ; two's complement
+i32         = 4OCTET             ; two's complement
+i64         = 8OCTET             ; two's complement
+
+; ---- Floating point: IEEE 754-2019, most significant octet first --
+f32         = 4OCTET             ; binary32
+              ; constraint: canonical float
+f64         = 8OCTET             ; binary64
+              ; constraint: canonical float
+
+; ---- Booleans ----------------------------------------------------
+bool        = %x00 / %x01        ; false / true; no other value
+
+; ---- IDs (ADR 0001) ----------------------------------------------
+object-id    = id-authority id-sequence id-version id-class id-random
+id-authority = 16OCTET           ; UUID of the minting authority (0001, rule 3)
+id-sequence  = 8OCTET            ; unsigned
+id-version   = OCTET             ; 1 is defined; others pass through
+id-class     = 2OCTET            ; unsigned; the registry is D34's
+id-random    = 5OCTET
+object-id-v1 = id-authority id-sequence %x01 id-class id-random
+uuid         = 16OCTET           ; RFC 9562 octet order
+
+; ---- Lengths, counts and presence ---------------------------------
+len32       = 4OCTET             ; a length in octets, unsigned
+count32     = 4OCTET             ; a count of elements, unsigned
+octets      = len32 *OCTET
+              ; constraint: exactly len32 octets
+text        = len32 *text-char
+              ; constraint: exactly len32 octets
+presence    = %x00 / %x01        ; absent / present
+
+; ---- Struct tails (ADR 0065) ---------------------------------------
+; A generic tail, for a struct with no required fields and no optional
+; field known to the reader. Generated grammars build each struct's own
+; tail from tail-count, tag and octets, and bound its unknown tags
+; (ADR 0065).
+tail        = tail-count *tail-field
+              ; constraint: ascending tags
+              ; constraint: exactly tail-count tail-field elements
+tail-count  = 4OCTET
+              ; constraint: at most 65535
+tail-field  = tag octets
+tag         = 2OCTET
+              ; constraint: not 0
+
+; ---- Unions (ADR 0065) ---------------------------------------------
+arm-tag     = 2OCTET
+              ; constraint: not 0
+
+; ---- Capability references (ADR 0066) ------------------------------
+cap-ref     = %x00-02
+              ; constraint: capability index
+
+; ---- Text: UTF-8 without U+0000 (ADR 0062) --------------------------
+; UTF-8 as RFC 3629 defines it, written out here: no overlong forms,
+; no surrogates, nothing above U+10FFFF.
+text-char   = %x01-7F / utf8-2 / utf8-3 / utf8-4
+utf8-2      = %xC2-DF utf8-tail
+utf8-3      = %xE0 %xA0-BF utf8-tail / %xE1-EC 2utf8-tail
+            / %xED %x80-9F utf8-tail / %xEE-EF 2utf8-tail
+utf8-4      = %xF0 %x90-BF 2utf8-tail / %xF1-F3 3utf8-tail
+            / %xF4 %x80-8F 2utf8-tail
+utf8-tail   = %x80-BF
