@@ -42,6 +42,8 @@ The project owner decided on 2026-11-25: two configurations on every change and 
 3. **Every change runs two configurations**, each with 4 cores and 1 GiB:
    - `cortex-a72` with a GICv2, which is close to the Raspberry Pi 4;
    - `max` with a GICv3, which exercises `RNDR` and newer features.
+
+   A change that touches only documents, meaning Markdown files and anything under `docs/`, skips the host and QEMU tests, since it can't change what they test (the project owner's rule, 2026-11-25). CI decides from the files the change touches, and runs the tests whenever it can't tell.
 4. **The full matrix runs nightly:**
    - `cortex-a72` and `max`, each with a GICv2 and a GICv3;
    - 1, 4 and 8 cores;
@@ -60,7 +62,7 @@ The project owner decided on 2026-11-25: two configurations on every change and 
 
 ## Consequences
 
-- **The Pi 4's GICv2 is tested on every change.** Breakage that only the Pi 4 would see shows up before merging, not a day later.
+- **The Pi 4's GICv2 is tested on every change to code.** Breakage that only the Pi 4 would see shows up before merging, not a day later.
 - **DMA isolation can be developed from M2.** All devices sit behind the SMMUv3 from the start.
 - **The kernel finds its devices on QEMU.** The device tree reaches the kernel through the stub, as [0041](0041-boot-abi.md), rule 3 expects. ACPI paths aren't exercised on QEMU until C65 adds ACPI, and with it a configuration that runs with ACPI on.
 - **The Pi 4 needs the same setting.** Its firmware defaults to ACPI only, and must be set to pass a device tree before ASPIS can find its devices there (C63).
