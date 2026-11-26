@@ -688,7 +688,7 @@ This section gives the mechanism behind [0058](../decisions/0058-jobs-and-budget
 - **Who holds them.** A job's capability is held by its manager, which made the job: the root server for the jobs it spawns into before the process manager runs, the process manager for the native processes it spawns, or the POSIX process server for POSIX processes ([0061](../decisions/0061-debugging.md), rule 4). The memory server holds a capability to each job it lends to, which lets it give and take back memory only. A process doesn't hold its own job's capability. It holds untyped memory of its job ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)).
 - **Operations:**
   - make a child job, from the job's memory, with a reservation carved from the job's reservation, a limit no more than the job's, and a CPU share carved from the job's;
-  - give the job a piece of untyped memory, which the kernel records as the job's and indexes, and which yields an untyped capability for the piece;
+  - give the job a piece of untyped memory, which the kernel records as the job's and indexes, and which yields an untyped capability for the piece. The kernel refuses a piece that would take the job, or any ancestor, past its limit ([0058](../decisions/0058-jobs-and-budgets.md), rule 4);
   - take back an empty piece the job holds above its reservation ([Untyped memory and kernel records](#untyped-memory-and-kernel-records));
   - set the job's limit and its memory endpoint;
   - stop every thread in the job and its descendants, and resume them;
