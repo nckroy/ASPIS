@@ -3,7 +3,7 @@
 
 # Applications that extend the system, and the catalog that finds them
 
-*2026-11-24. Input to the design session. The decisions it led to are recorded in [ADR 0027](../decisions/0027-applications-extend-the-system.md) and [ADR 0028](../decisions/0028-discovery-and-realm-catalog.md).*
+*2026-11-24, updated 2026-11-25. Input to the design session. The decisions it led to are recorded in [ADR 0027](../decisions/0027-applications-extend-the-system.md) and [ADR 0028](../decisions/0028-discovery-and-realm-catalog.md).*
 
 1. [The tenets](#1-the-tenets)
 2. [What ASPIS already has](#2-what-aspis-already-has)
@@ -125,18 +125,8 @@ Only the catalog holds every publisher's earlier versions, so the catalog is whe
 - Interface and type names are dotted and reverse-DNS, as D-Bus recommends: `org.example.sql.table`, for example. The prefix `aspis.` is reserved for ASPIS.
 - Cedar policy decides which publisher may register which prefix.
 - Names serve people and searches. Binding always uses IDs ([0014](../decisions/0014-versioned-object-apis.md), rule 4), so a look-alike name can't capture a binding.
-- An illustrative grammar, not normative:
-
-  ```abnf
-  interface-ref  = interface-name "/" major [ "." minor ]
-  interface-name = label 1*( "." label )     ; at least two labels
-  label          = lc-alpha *( lc-alpha / DIGIT / "-" )
-  lc-alpha       = %x61-7A                    ; a-z
-  major          = 1*5DIGIT                   ; constraint: at most 65535
-  minor          = 1*5DIGIT                   ; constraint: at most 65535
-  ```
-
-  `org.example.sql.table/1.2` means major version 1, minor version 2 or later. The Cedar actions of [0019](../decisions/0019-authzen-decision-protocol.md) rule 4 add the method: `org.example.sql.table/1/select`.
+- The grammar is normative now: [0063](../decisions/0063-names-and-the-canonical-call-text.md) and the [call-language specification](call-language.md#names-and-the-canonical-call-text) define names, interface references and action strings. Labels use underscores, never hyphens, so every type name is also a Cedar entity type.
+- `org.example.sql.table/1.2` means major version 1, minor version 2 or later. The Cedar actions of [0019](../decisions/0019-authzen-decision-protocol.md) rule 4 add the method: `org.example.sql.table/1/select`.
 
 ### 4.7 Becoming a realm function
 

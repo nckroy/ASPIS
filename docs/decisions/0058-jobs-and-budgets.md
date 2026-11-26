@@ -1,0 +1,108 @@
+<!-- SPDX-FileCopyrightText: 2026 Nicole Roy -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
+# 0058. Jobs, memory reservations and limits, and CPU shares
+
+- **Status:** Proposed
+- **Date:** 2026-11-25
+
+## Context
+
+The kernel provides jobs and budgets ([0025](0025-twelve-factor-app-contract.md), rule 12). Jobs can be stopped as a unit, each job has a memory budget and a CPU budget, and anonymous memory objects end with their job. Scratch areas are anonymous memory objects ([0025](0025-twelve-factor-app-contract.md), rule 6). A deploy's formation gives each process type a size ([0026](0026-realm-as-cloud-provider.md), rule 5). None of these defines a size. The [design backlog, D24](../design/design-backlog.md#m2-kernel-objects) asks for the units of memory and CPU budgets, how budgets nest, whether a scratch area counts against memory, and who is charged for immutable build pages that many instances map.
+
+seL4 has no jobs, but [0025](0025-twelve-factor-app-contract.md) notes that untyped memory and MCS scheduling contexts already give most of what they need (Consequences). In seL4, every object belongs to the untyped region it was made from, revoking an untyped capability destroys every object made from it, and a scheduling context's budget and period cap the CPU time of the threads that use it. [0048](0048-kernel-memory-and-address-spaces.md) and [0051](0051-scheduling-timers-and-deadlines.md) adopt both.
+
+A first draft of this record made a job's memory budget simply the untyped memory it held. The project owner asked whether that gives each job a fixed partition. It does, in effect:
+
+- **Memory a job holds but doesn't use is idle.** A job sized at 2 GiB that uses 300 MiB keeps the rest from every other job, so a node runs fewer instances.
+- **Freed memory isn't reusable.** seL4's untyped memory is a watermark allocator. Space freed inside an untyped region returns only once everything made from that region is gone, so a long-running job that allocates and frees would lose capacity, unless memory is handed out in page-sized pieces.
+
+Kubernetes separates a container's memory request, which is guaranteed and used to place it, from its limit, which caps it. A node can then promise more in limits than it has, while every request is still met. Linux overcommits more freely and kills a process when memory runs out, which the project owner didn't want.
+
+On 2026-11-25 the project owner chose a reservation plus a limit, and asked that the node try to free memory before it refuses a job more. The owner also chose that a process holds its job's memory, not its job's capability, and that a reader can't make a cache's faults fail by touching its pages.
+
+This record states what is decided and what is guaranteed. The mechanism behind it is in the [kernel specification](../design/kernel-specification.md) ([0047](0047-the-kernel-follows-sel4.md), rule 5), which also lists what is still open.
+
+Claude drafted this record from those choices.
+
+## Decision
+
+1. **A job is a kernel object.** Jobs nest: every job but the root has one parent. At boot the root server holds the root job, with all the node's memory and CPU.
+   - **The kernel's boot objects belong to no job.** These are the objects the kernel makes at boot from memory it kept for itself: the initial image, the device tree, the boot information, the kernel interface library, the framebuffer's device memory object, the root job itself, and the root server's first thread, IPC buffer, capability space, address space and control capabilities ([0048](0048-kernel-memory-and-address-spaces.md), rule 2). They count against no reservation or limit, and are never destroyed.
+   - **Every other object belongs to the job whose untyped memory it is made from**, as in seL4. Making an object needs untyped memory of the job, not the job's capability. The one exception is a child job, which is made through its parent's capability, because it carves the parent's reservation, limit and CPU share (rule 9).
+2. **A job has a memory reservation and a memory limit**, in bytes, in whole 4 KiB pages. The reservation is never more than the limit.
+3. **The reservation is guaranteed.**
+   - It is untyped memory that the job holds, carved from its parent's reservation, so the reservations on a node never add up to more than its RAM.
+   - **A job holds its memory itself.** Giving a job memory is an operation on the job's capability (rule 9). The kernel records each piece as the job's, so it can find the job's free memory on a fault (rule 6). The giver may make objects from the piece, or pass it to the job's processes.
+   - **Nothing takes memory within a job's reservation away from it while the job runs.**
+4. **Above its reservation, a job borrows from the node's pool, up to its limit.**
+   - **The pool** is the part of the root job's memory that isn't carved into any child's reservation, and that the root server doesn't use itself. A user-space memory server holds the pool on the root job's behalf, and the pool doesn't count against the memory server's own job. The root server plays that role until the memory server runs.
+   - **Borrowed memory is lent in page-sized pieces**, or larger ones for large objects, so that every piece a job empties can be returned whole. Which objects come from which size is in the [kernel specification](../design/kernel-specification.md#untyped-memory-and-kernel-records).
+   - **Limits nest.** A job's parent sets its limit, and a child's limit is never more than its parent's. Memory a job borrows counts against its own limit and every ancestor's, so a parent's limit caps its whole subtree.
+   - **The kernel enforces the limits.** It refuses to add memory to a job beyond the job's limit, or beyond the limit of any of its ancestors.
+   - **Limits may add up to more than the node's RAM.** That is the only overcommit: borrowing can fail; a reservation can't.
+5. **Everything made from a job's memory belongs to it, and counts against it**: threads, scheduling contexts, capability spaces, address spaces, page tables, endpoints, eventcounts and their wait sets, memory objects, the ITS's command queue and its device, collection and interrupt translation tables ([0055](0055-interrupt-objects.md), rule 4), the kernel's records for them, and the pages its memory objects allocate ([0057](0057-memory-objects-and-the-pager-protocol.md), rules 1 and 2). Scratch areas are anonymous memory objects, so they count too ([0025](0025-twelve-factor-app-contract.md), rule 6).
+   - Map's page tables and mapping records come from the address space's job ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 3), or, for the root server's address space, which belongs to no job, from the root job ([0048](0048-kernel-memory-and-address-spaces.md), rule 1).
+   - The pages of an anonymous object or a clone are charged to its job as they are touched or written. The frames of a pager-backed object are charged to its job too, whichever job's thread touched them ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 2).
+   - A page pinned as a thread's IPC buffer stays charged to its memory object's job, which is the thread's job or an ancestor's ([0048](0048-kernel-memory-and-address-spaces.md), rule 5).
+   - **A server that makes objects for another job makes them from that job's memory**, so they are charged to it and end with it. The spawner makes a new process's objects from the memory of the job given to spawn ([0060](0060-processes-native-spawn-and-elf.md), rule 3). The POSIX process server makes `fork`'s snapshot clones in the child's job, which is the parent's job or a descendant of it ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 4).
+   - **A writer never spends another job's memory.** A write copies only into the writer's own object ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 4).
+6. **When a job runs out, the kernel asks; it doesn't wait.**
+   - Each job has a memory endpoint, normally the memory server's, badged for the job.
+   - **A fault takes memory from the job responsible**: the object's job for a page, and the address space's job for page tables and mapping records ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 2). An explicit call that needs memory, such as making an object, fails at once with "no memory" instead; the runtime asks the memory server for more and retries.
+   - **If that job has no free memory, the kernel sends a memory request** to its memory endpoint on the faulting thread's behalf, as it sends a page request ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 6). The thread waits; the kernel doesn't. A memory request donates no scheduling context: the memory server runs on its own.
+   - **A memory request is one-way.** It is a request of the `[local]` interface `aspis.kernel.memory_request/1`, on the common call header ([0064](0064-the-call-header-and-wire-encoding.md), rule 9). The memory server sends no reply; it answers through the job's capability, as the [kernel specification](../design/kernel-specification.md#memory-requests-and-reclaim) says.
+   - **Below its limit,** the memory server lends pieces, freeing memory first if it must (rule 7). When the limit reached is an ancestor's, it first reclaims within that ancestor's subtree, from memory above reservations, and lends what it frees within the limit.
+   - **If it can't lend,** whether because the job or an ancestor is at its limit or because reclaim found too little, it has the pagers of that job's own objects evict that job's clean pages, least recently used first, as an LRU page cache would, so the fault is served from the job's own memory. It refuses only if nothing can be evicted. Evicting a job's own pages to serve its own fault takes nothing from its reservation (rule 3).
+   - So a reader that touches a cache's pages makes the cache evict its least recently used pages, and can't make the cache's faults fail while the cache has clean pages to evict.
+   - A refusal becomes a memory fault ([0056](0056-faults-and-page-fetch-deadlines.md), rule 3).
+   - **A memory wait ends.** A thread waiting on a memory request can be canceled, as any wait ([0054](0054-ipc-endpoints.md), rule 6), and then takes a memory fault at once, marked canceled. The faulting mapping's fetch timeout bounds the memory wait as well as the pager wait ([0056](0056-faults-and-page-fetch-deadlines.md), rule 4). How a memory request is withdrawn when its thread times out or is canceled, and whether it passes to another waiting thread, is open ([kernel specification K51](../design/kernel-specification.md#k51-memory-waits-on-the-fault-path)).
+7. **The memory server frees memory before it refuses**, in this order, stopping as soon as it has enough:
+   1. it takes back empty pieces that jobs hold above their reservations;
+   2. it asks pagers to evict clean pages held in borrowed memory, which costs no write-back;
+   3. it advances the node's memory-pressure eventcount, so runtimes and allocators decommit memory they hold but don't need ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 8), and waits a short time for them;
+   4. it asks pagers to write back and evict dirty pages held in borrowed memory.
+
+   If it still can't lend enough within a bound that its policy sets, it has the job's own clean pages evicted (rule 6), and refuses only if none can be. **It never takes memory within a reservation away from the job that holds it, and it never kills a job.** Whether to stop, kill or move an instance under pressure is a user-space policy decision. On a realm, the realm's scheduler makes it.
+
+   - **Reclaim never waits on itself.** The servers on the reclaim path (pagers, the storage and network servers, and the memory server) run within their reservations and never borrow: their limits equal their reservations. A pager never needs memory for the pages it supplies, because the kernel takes each frame from the object's job, and asks for any memory on the faulting thread's behalf ([0057](0057-memory-objects-and-the-pager-protocol.md), rules 6 and 7). So no pager waits on the memory server while the memory server waits on it.
+   - The objects a pager backs may belong to another job, which may borrow, such as a build cache's (rule 11). Their pages are what reclaim evicts.
+   - The memory server asks pagers with a deadline ([0054](0054-ipc-endpoints.md), rule 5), so a pager that doesn't answer delays reclaim only until then.
+   - Reclaim acts only by taking back empty pieces, and through eviction and decommit, which skip frames pinned as IPC buffers ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 8).
+   - How the memory server takes a piece back without racing the job is in the [kernel specification](../design/kernel-specification.md#untyped-memory-and-kernel-records). How it targets pages in borrowed memory is open there ([Memory requests and reclaim](../design/kernel-specification.md#memory-requests-and-reclaim); [K56](../design/kernel-specification.md#k56-targeting-borrowed-memory)).
+8. **A job's CPU budget is a share of each core**: a budget and a period, in microseconds, for each core it may use. A child's share is carved from its parent's. Scheduling contexts for a job's threads can be configured only within the job's remaining share ([0051](0051-scheduling-timers-and-deadlines.md), rule 1). CPU isn't overcommitted.
+9. **A job's capability stays with its manager.**
+   - A process doesn't hold its own job's capability. It holds untyped memory of its job (rule 1), which is all it needs to make objects.
+   - The job's capability is held by the job's manager, such as the process manager or the root server, which made the job. The memory server holds a capability to each job it lends to, which lets it give and take back memory and nothing else. Which rights make that so is open ([kernel specification K53](../design/kernel-specification.md#k53-rights-on-a-jobs-capability)).
+   - **With the job's capability, a manager can:** give the job memory and set its limits (rules 3 and 4); make a child job, carving its reservation, limit and CPU share from this job's (rules 3, 4 and 8); stop every thread in the job and its descendants, and resume them; list those threads, each with its address space, and get capabilities to them; and end the job (rule 10).
+   - So the process manager reaches every thread of a process, including those the runtime made ([0060](0060-processes-native-spawn-and-elf.md), rule 7; [0061](0061-debugging.md), rule 4), and no process reaches another's threads through a job they share.
+   - Stopping suspends each thread, which doesn't cancel its current wait ([0061](0061-debugging.md), rule 3). Which rights each operation needs, and how a long list is returned, are in the [kernel specification](../design/kernel-specification.md#job-capabilities).
+10. **Ending a job destroys everything it made.** The kernel revokes every piece of untyped memory the job and each of its descendants hold, reserved and borrowed. That destroys every object made from them, including their anonymous memory objects and scratch areas ([0025](0025-twelve-factor-app-contract.md), rules 6 and 12), and the snapshot clones of their anonymous objects, which belong to the same subtree ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 4). A device's interrupt translation table is freed only after the kernel has unmapped the device in the ITS; the ITS's shared tables belong to the root job, which never ends ([0055](0055-interrupt-objects.md), rule 4). The IPC buffers in those objects are unregistered first ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 8). What happens to read-through clones of the job's pager-backed objects, which may belong to other jobs, is still open ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 4). Borrowed memory returns to the pool, and the job's reservation and CPU share return to its parent. Ending a job is a long operation, with preemption points ([0052](0052-smp-bring-up-and-the-kernel-lock.md), rule 2). The [kernel specification](../design/kernel-specification.md#ending-a-job) gives the order of the steps.
+11. **Shared immutable pages are charged to the job they belong to.**
+    - An immutable memory object's frames belong to its job ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 1). For builds and files cached on the node, that is normally a job the caching server keeps for its cache, apart from the job the server runs in (rule 7). The caching server is those objects' pager.
+    - A job that maps such an object pays only for its own page tables and mapping records. A hundred instances of one release share one copy, charged once.
+    - The initial image belongs to no job (rule 1), so executables mapped in place from it are charged to none.
+    - The cache's pages above its reservation are borrowed, and are among the first evicted under pressure (rule 7); its pager supplies them again on the next fault. When it can't get more memory, the cache evicts its own least recently used clean pages to serve new faults (rule 6).
+12. **A size is a CPU share, a memory reservation and a memory limit.** The realm's named sizes ([0026](0026-realm-as-cloud-provider.md), rule 5) map onto these units. The names and their values are decided with C54.
+
+## Consequences
+
+- **Reservations are guarantees.** A job always has its reservation, whatever other jobs do, so twelve-factor apps can be sized and placed predictably. The realm's scheduler places instances by their reservations.
+- **Idle memory is shared.** Memory above reservations sits in the pool, serving whichever jobs need it and caching files until they do.
+- **A parent caps its subtree.** Limits nest as reservations and CPU shares do, so a job can't escape its limit by making children. A child's own limit bounds only the pages its objects allocate and write. Pages its snapshot clones share with a parent's objects count against the parent's job, which pays for them until every clone that shares them lets go ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 4). A policy that sandboxes a forked child by its limit must count that.
+- **Running out is a fault, not a kill.** A job that can't borrow more gets a typed memory fault, which its runtime or fault handler can act on. No out-of-memory killer exists, in the kernel or out of it, unless a policy chooses to stop a job.
+- **Killing a job is complete.** Revoking its pieces reclaims everything the job and its descendants made, wherever its capabilities went, including what other servers made in it.
+- **Processes can't control their own job.** Only managers hold job capabilities (rule 9), so stopping, listing and debugging a job's threads stay with the process manager and the policy it applies.
+- **The memory server is a new node server.** It holds the pool, answers memory requests, and drives reclaim. The build plan adds it to M3 once this record is accepted. Until then the root server does its work.
+- **Runtimes give memory back.** A runtime that decommits its unused pages ([0057](0057-memory-objects-and-the-pager-protocol.md), rule 8) empties page-sized pieces, which the memory server takes back.
+- **Kernel bookkeeping counts against the job.** A job's page tables, mapping records and capability spaces come out of its memory, so a size has to leave room for them. The kernel specification says how much each object costs.
+- **Servers on the reclaim path need generous reservations.** They can't borrow, so their sizes must cover their peak working memory.
+- **D24 is settled.** Units: bytes in whole pages, and a budget and period in microseconds per core (rules 2 and 8). Nesting: rules 3, 4 and 8. Scratch areas count (rule 5). Shared immutable build pages are charged to the cache's job (rule 11). Open in the kernel specification, to be settled with the prototype of C10 to C16: how the memory server learns which job is at its limit and finds its pagers, how a memory request is withdrawn or passed on (K51), which pieces a fault takes first, and the rights on a job's capability (K53).
+
+## References
+
+- [seL4 reference manual, 17.0.0: untyped memory and scheduling contexts](https://docs.sel4.systems/releases/sel4/17.0.0)
+- [Kubernetes: resource management for pods and containers](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/): requests and limits
+- [Zircon jobs](https://fuchsia.dev/fuchsia-src/reference/kernel_objects/job), for the nesting of jobs
+- [Kernel specification](../design/kernel-specification.md): job capabilities, memory requests and reclaim, and ending a job
+- [0025. Twelve-factor app contract](0025-twelve-factor-app-contract.md); [0026. Realm as cloud provider](0026-realm-as-cloud-provider.md); [0057. Memory objects and pagers](0057-memory-objects-and-the-pager-protocol.md); [0064. The call header and the wire encoding](0064-the-call-header-and-wire-encoding.md)

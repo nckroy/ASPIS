@@ -27,17 +27,18 @@ Precedents:
 2. **Interfaces are objects.** Each interface has an ID ([0001](0001-object-identifiers.md)). System interfaces use the reserved ASPIS authority; any other interface uses the authority of whoever defines it. An interface object holds the IDL and the generated ABNF ([0013](0013-abnf-for-protocols-and-calls.md)) for each of its versions, so any program can fetch the definition of any interface.
 3. **Versions are major.minor, following DCE RPC's rule.**
    - A client asking for M.n can use an implementation of M.m whenever m ≥ n.
-   - Minor versions only add methods or optional fields. Anything incompatible needs a new major version.
+   - Minor versions only add things old clients can ignore: methods, optional fields, error codes, union arms, enum values and flag bits, and new types, constants, action groups and deprecation marks ([0065](0065-typed-errors-and-minor-versions-on-the-wire.md), rules 10 and 13). Anything incompatible needs a new major version.
+   - Types are open unless the IDL declares them closed. Generated bindings accept values they don't know, and preserve them. A closed type never changes within a major version ([0065](0065-typed-errors-and-minor-versions-on-the-wire.md), rule 10).
    - A manager can serve several major versions at once.
 4. **Binding.** A client binds to an object, an interface ID, a major version and a minimum minor version. The manager replies with the version it will speak and a capability or session ([0002](0002-capability-security-model.md), [0015](0015-jwt-tokens-and-oidc-identity.md)). Method numbers stay stable within a major version.
-5. **Every object implements a base interface for discovery.** It reports which interfaces and versions the object supports, its type, its attributes and its publisher, and the object's catalog entry if it has one ([0028](0028-discovery-and-realm-catalog.md)). AEGIS's trait lookup and COM's `QueryInterface` did the same job.
+5. **Every object that has an ID implements a base interface for discovery.** It reports which interfaces and versions the object supports, its type, its attributes and its publisher, and the object's catalog entry if it has one ([0028](0028-discovery-and-realm-catalog.md)). AEGIS's trait lookup and COM's `QueryInterface` did the same job.
 6. **The kernel is versioned too.** Programs reach system calls only through a kernel interface library mapped into every process, as with Fuchsia's vDSO. The library exposes versioned interfaces for kernel objects, and the raw system-call ABI can change underneath it.
 7. **Deprecation.** A major version stays available for a declared support period after its successor ships. The design session sets that period in the API policy.
 
 ## Consequences
 
 - Old and new clients coexist, and components upgrade independently.
-- Every object can be introspected, which helps tools, debuggers, dm and the POSIX layer.
+- Every object that has an ID can be introspected through its base interface, which helps tools, debuggers, dm and the POSIX layer. A kernel object that no server presents has no ID, and is inspected through its capability and its kernel interface ([0050](0050-ids-for-kernel-objects.md)).
 - Managers must maintain several major versions during transitions, and the IDL compiler must check that minor versions are compatible.
 - Version negotiation costs a little at bind time, and nothing per call.
 

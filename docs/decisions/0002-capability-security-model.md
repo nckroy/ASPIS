@@ -18,7 +18,7 @@ AEGIS checked access control lists against three-part principals such as `user.n
    - Permissions live in the realm's authorization tree ([0016](0016-authorization-sparse-merkle-tree.md), rule 1). An object's ACL is the set of grants under that object's branch.
    - Managers read permissions from the tree rather than storing them privately.
 4. **Principals** (people, groups, services and nodes) are objects with IDs and post-quantum keys, kept in the realm registry. ACL entries name principals by ID.
-5. **Across nodes, raw capabilities never travel.** The network server ([0004](0004-network-transparency-and-failure.md)) gives the local process a capability to a proxy endpoint and authenticates to the remote node with the node's key. Authority is delegated across nodes with JWTs ([0015](0015-jwt-tokens-and-oidc-identity.md)).
+5. **Across nodes, raw capabilities never travel.** The network server ([0004](0004-network-transparency-and-failure.md)) gives the local process a capability to a proxy endpoint and authenticates to the remote node with the node's key. Authority that a party will exercise under its own binding is delegated across nodes with JWTs ([0015](0015-jwt-tokens-and-oidc-identity.md)); a capability passed as a call parameter crosses as a proxy that routes back through the exporting node ([0066](0066-capability-parameters-and-server-streams.md), rule 4).
 
 ## Consequences
 

@@ -21,7 +21,7 @@ The [security tokens design note](../design/security-tokens.md) works through th
 ## Decision
 
 1. **Two layers of authority.**
-   - JWTs are the portable form of authority. A client presents one when it binds to an object interface ([0014](0014-versioned-object-apis.md)), when a session crosses nodes, and when authority is delegated, including across nodes ([0002](0002-capability-security-model.md), rule 5).
+   - JWTs are the portable form of authority. A client presents one when it binds to an object interface ([0014](0014-versioned-object-apis.md)), when a session crosses nodes, and when authority is delegated to a party that will bind for itself, including across nodes ([0002](0002-capability-security-model.md), rule 5). A capability passed as a call parameter is not such a delegation: its session doesn't move, and a receiver on another node gets a proxy that routes back through the node that passed it, and ends with that session ([0066](0066-capability-parameters-and-server-streams.md), rules 4 and 5).
    - The object's manager verifies the token once. It then returns a kernel capability for a local client, or a session bound to the secure channel for a remote one. Calls go through that capability or session, with no token per call.
    - A session ends when its token expires, or as soon as a new root of the authorization tree ([0016](0016-authorization-sparse-merkle-tree.md)) revokes a branch that holds one of the policies that determined its decision ([0019](0019-authzen-decision-protocol.md), rule 8). Renewing a session needs a fresh token.
    - The kernel never sees or parses tokens.

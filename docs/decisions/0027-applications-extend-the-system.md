@@ -49,7 +49,7 @@ Both would have let a native application offer functionality outside the object 
 2. **One interface standard, for ASPIS and applications alike.** An application's interfaces meet the standard that ASPIS's own interfaces meet:
    - they are defined in the IDL, with ABNF generated and published ([0013](0013-abnf-for-protocols-and-calls.md));
    - they are objects with IDs, versioned major.minor under the DCE rule, with stable method numbers ([0014](0014-versioned-object-apis.md));
-   - every object implements the base discovery interface ([0014](0014-versioned-object-apis.md), rule 5);
+   - every object that has an ID implements the base discovery interface ([0014](0014-versioned-object-apis.md), rule 5);
    - clients bind with a token and proof of possession ([0015](0015-jwt-tokens-and-oidc-identity.md), [0022](0022-spiffe-and-wimse-workload-identity.md));
    - the manager is the enforcement point, with Cedar schema generated from the IDL and decisions carried by AuthZEN ([0018](0018-cedar-policy-language.md), [0019](0019-authzen-decision-protocol.md));
    - calls have deadlines and request IDs, and failure is visible ([0004](0004-network-transparency-and-failure.md));

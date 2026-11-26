@@ -82,3 +82,25 @@ These come from the project brief and aren't re-decided here:
 | [0044](0044-stub-undoes-grubs-command-line.md) | The stub undoes GRUB's rewriting of the command line | Superseded by [0041](0041-boot-abi.md) | 2026-11-25 |
 | [0045](0045-linking-the-kernel-and-stub-on-stable-rust.md) | Linking the kernel and the stub on stable Rust | Superseded by [0035](0035-toolchain-image-linkage-and-esp-layout.md) | 2026-11-25 |
 | [0046](0046-fallback-fonts-for-wgl4-symbols.md) | Fallback Noto fonts for the WGL4 symbols Noto Sans Mono lacks | Accepted | 2026-11-25 |
+| [0047](0047-the-kernel-follows-sel4.md) | The kernel follows seL4's design, with ASPIS's own objects where the records need them | Proposed | 2026-11-25 |
+| [0048](0048-kernel-memory-and-address-spaces.md) | Kernel memory: untyped memory, 4 KiB pages, and no access to user addresses | Proposed | 2026-11-25 |
+| [0049](0049-capability-spaces-rights-and-revocation.md) | Capability spaces, rights, badges and revocation | Proposed | 2026-11-25 |
+| [0050](0050-ids-for-kernel-objects.md) | User-space servers name the kernel objects they present | Proposed | 2026-11-25 |
+| [0051](0051-scheduling-timers-and-deadlines.md) | Scheduling, the timer and deadlines | Proposed | 2026-11-25 |
+| [0052](0052-smp-bring-up-and-the-kernel-lock.md) | SMP: PSCI bring-up and one kernel lock | Proposed | 2026-11-25 |
+| [0053](0053-eventcounts.md) | Eventcounts | Proposed | 2026-11-25 |
+| [0054](0054-ipc-endpoints.md) | IPC: synchronous endpoints with deadlines and cancellation | Proposed | 2026-11-25 |
+| [0055](0055-interrupt-objects.md) | Interrupt objects for user-space drivers | Proposed | 2026-11-25 |
+| [0056](0056-faults-and-page-fetch-deadlines.md) | Typed faults, and the deadline for fetching a page | Proposed | 2026-11-25 |
+| [0057](0057-memory-objects-and-the-pager-protocol.md) | Memory objects and the pager protocol | Proposed | 2026-11-25 |
+| [0058](0058-jobs-and-budgets.md) | Jobs, memory reservations and limits, and CPU shares | Proposed | 2026-11-25 |
+| [0059](0059-the-kernel-interface-library.md) | The kernel interface library | Proposed | 2026-11-25 |
+| [0060](0060-processes-native-spawn-and-elf.md) | Processes, native spawn and the executable format | Proposed | 2026-11-25 |
+| [0061](0061-debugging.md) | Debugging: the kernel, user threads and crash dumps | Proposed | 2026-11-25 |
+| [0062](0062-core-rules-big-endian-fixed-width.md) | Core rules: big-endian, fixed-width binary conventions | Proposed | 2026-11-25 |
+| [0063](0063-names-and-the-canonical-call-text.md) | Names and the canonical call text | Proposed | 2026-11-25 |
+| [0064](0064-the-call-header-and-wire-encoding.md) | The call header and the wire encoding | Proposed | 2026-11-25 |
+| [0065](0065-typed-errors-and-minor-versions-on-the-wire.md) | Typed errors and minor versions on the wire | Proposed | 2026-11-25 |
+| [0066](0066-capability-parameters-and-server-streams.md) | Capability parameters and server streams | Proposed | 2026-11-25 |
+| [0067](0067-the-aspis-idl.md) | The ASPIS IDL | Proposed | 2026-11-25 |
+| [0068](0068-the-fuzzing-and-differential-testing-gate.md) | The fuzzing and differential-testing gate | Proposed | 2026-11-25 |

@@ -86,9 +86,9 @@ flowchart LR
 
 | ASPIS | Cedar | AuthZEN |
 |---|---|---|
-| Principal (object ID) | `Aspis::Principal::"<id>"`, member of groups | `subject` `{type: "aspis:principal", id}` |
-| Object (object ID, type) | `Aspis::Object::"<id>"`, `in` its directory | `resource` `{type: <object type>, id}` |
-| Interface method (interface, major, method) | `Aspis::Action::"<interface>/<major>/<method>"`, in IDL-declared action groups | `action` `{name}` |
+| Principal (object ID) | `aspis::principal::"<id>"`, member of groups | `subject` `{type: "aspis.principal", id}` |
+| Object (object ID, type) | `<object type>::"<id>"`, with the type name's dots as `::` (`aspis::file::"<id>"`), `in` its directory | `resource` `{type: <object type>, id}` |
+| Interface method (interface, major, method) | `aspis::Action::"<interface>/<major>/<method>"`, in IDL-declared action groups, written `@group` ([0063](../decisions/0063-names-and-the-canonical-call-text.md)) | `action` `{name}` |
 | Token claims, epoch, channel | `context` record | `context` |
 | Grant | Template-linked policy | (none) |
 | Determining policies | Diagnostics | ASPIS context key in the decision |
@@ -96,11 +96,11 @@ flowchart LR
 Illustrative policies. The names and attributes are placeholders until the schema exists.
 
 ```cedar
-// Grant template: read through version 1 of the io interface.
+// Grant template: the read group of version 1 of the io interface.
 @id("aspis-io-v1-read")
 permit (
     principal == ?principal,
-    action in Aspis::Action::"aspis.io/1/read",
+    action in aspis::Action::"aspis.io/1/@read",
     resource == ?resource
 );
 
@@ -111,7 +111,7 @@ unless { context.token.scopes.contains(context.action_scope) };
 
 // Realm rule: external principals need the realm's required trust mark.
 @id("external-needs-trust-mark")
-forbid (principal is Aspis::ExternalPrincipal, action, resource)
+forbid (principal is aspis::external_principal, action, resource)
 unless { principal.trust_marks.contains("https://federation.example/marks/incident-response") };
 ```
 
@@ -119,7 +119,7 @@ Illustrative AuthZEN exchange:
 
 ```json
 {
-  "subject":  { "type": "aspis:principal", "id": "<principal ID>" },
+  "subject":  { "type": "aspis.principal", "id": "<principal ID>" },
   "action":   { "name": "aspis.io/1/read" },
   "resource": { "type": "aspis.file", "id": "<object ID>" },
   "context":  { "token": { "iss": "https://realm.example", "scopes": ["aspis.io/1/read"] },

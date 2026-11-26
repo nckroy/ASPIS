@@ -122,7 +122,7 @@ Chunks C06, C07, C10 to C12, C13a, C13b, C14 to C17, C70 and C71 ([build plan](b
 **D11. Byte order and signed integers in the core rules**
 
 - **Decide:** the byte order of fixed-width integers in ASPIS messages, and whether the core rules define signed integers.
-- **Why open:** [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 4 makes byte order a design-session item and keeps IDs big-endian. Every field of an ID is unsigned ([0001](../decisions/0001-object-identifiers.md), rule 2), but POSIX's `off_t` is signed, and [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 3 parses token times as 64-bit integers without fixing their sign. The initial image and the boot information are little-endian, because they are in-memory structures, not messages ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 1; [0041](../decisions/0041-boot-abi.md), rule 2), so they leave messages' byte order to this entry.
+- **Why open:** as accepted on 2026-11-24, [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 4 made byte order a design-session item and kept IDs big-endian. [0062](../decisions/0062-core-rules-big-endian-fixed-width.md), rule 2 (Proposed) answers both items, with an edit of 0013 rule 4 that states the byte order. Every field of an ID is unsigned ([0001](../decisions/0001-object-identifiers.md), rule 2), but POSIX's `off_t` is signed, and [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 3 parses token times as 64-bit integers without fixing their sign. The initial image and the boot information are little-endian, because they are in-memory structures, not messages ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 1; [0041](../decisions/0041-boot-abi.md), rule 2), so they don't fix the byte order of messages.
 - **Options:** big-endian everywhere, so that byte order is sort order ([research notes §5](../research/aegis-domain-os.md#5-implications-for-aspis)); two's complement or offset binary for signed values.
 - **Blocks:** C06. **Depends on:** none.
 
@@ -157,7 +157,7 @@ Chunks C06, C07, C10 to C12, C13a, C13b, C14 to C17, C70 and C71 ([build plan](b
 **D16. Who mints IDs for processes, threads and endpoints**
 
 - **Decide:** who mints the IDs of processes, threads and endpoints; whether other kernel objects carry IDs; who answers their base discovery interface.
-- **Why open:** [0001](../decisions/0001-object-identifiers.md) counts processes, threads and endpoints among the objects IDs name (Context), and every object implements the base interface ([0014](../decisions/0014-versioned-object-apis.md), rule 5). The kernel uses no randomness ([0021](../decisions/0021-entropy-before-keys.md), rule 3), so it can't mint ordinary IDs (see [Conflicts](#conflicts-between-accepted-adrs)).
+- **Why open:** [0001](../decisions/0001-object-identifiers.md) counts processes, threads and endpoints among the objects IDs name (Context), and, as accepted on 2026-11-24, every object implemented the base interface ([0014](../decisions/0014-versioned-object-apis.md), rule 5). [0050](../decisions/0050-ids-for-kernel-objects.md) (Proposed) edits that rule to cover only objects that have an ID. The kernel uses no randomness ([0021](../decisions/0021-entropy-before-keys.md), rule 3), so it can't mint ordinary IDs (see [Conflicts](#conflicts-between-accepted-adrs)).
 - **Options:** the user-space server that creates the object (the root server, a process manager or the POSIX process server) mints its ID and answers its base interface. Giving IDs to only some threads and endpoints would narrow 0001 and needs a change to it.
 - **Blocks:** C11, C19, C41. **Depends on:** none.
 
@@ -227,7 +227,7 @@ Chunks C06, C07, C10 to C12, C13a, C13b, C14 to C17, C70 and C71 ([build plan](b
 **D26. Typed errors and minor versions on the wire**
 
 - **Decide:** how typed errors are encoded and carried across RPC; the system's own errors (version unsupported, no such method, bind refused, tree too stale, session revoked, deadline passed); how a minor version adds optional fields that old clients can parse; how a call to a method that is too new is refused.
-- **Why open:** errors are typed and namespaced by interface ([0027](../decisions/0027-applications-extend-the-system.md), rule 2), and minor versions add only methods or optional fields ([0014](../decisions/0014-versioned-object-apis.md), rule 3). Neither says how this looks on the wire.
+- **Why open:** errors are typed and namespaced by interface ([0027](../decisions/0027-applications-extend-the-system.md), rule 2), and, as accepted on 2026-11-24, minor versions added only methods or optional fields ([0014](../decisions/0014-versioned-object-apis.md), rule 3). Neither said how this looks on the wire. [0065](../decisions/0065-typed-errors-and-minor-versions-on-the-wire.md), rules 9 to 13 (Proposed) answer it, with an edit of 0014 rule 3 that also lets minors add error codes, union arms, enum values and flag bits.
 - **Options:** a tagged optional tail; a length-prefixed extension block.
 - **Blocks:** C07. **Depends on:** D25.
 
@@ -248,7 +248,7 @@ Chunks C06, C07, C10 to C12, C13a, C13b, C14 to C17, C70 and C71 ([build plan](b
 **D29. The kernel interface library**
 
 - **Decide:** its name, packaging and mapping; whether its interfaces are defined in the IDL under the reserved authority; whether the kernel accepts calls only from it; how long its versions are supported; how early servers, relibc and `std` use it.
-- **Why open:** [0014](../decisions/0014-versioned-object-apis.md), rule 6 exposes versioned interfaces over a raw ABI that "can change underneath it", while [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2 puts every IPC call in generated ABNF (see [Conflicts](#conflicts-between-accepted-adrs)).
+- **Why open:** [0014](../decisions/0014-versioned-object-apis.md), rule 6 exposes versioned interfaces over a raw ABI that "can change underneath it", while, as accepted on 2026-11-24, [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2 put every IPC call in generated ABNF (see [Conflicts](#conflicts-between-accepted-adrs)). [0059](../decisions/0059-the-kernel-interface-library.md) (Proposed) edits 0013 rules 2 and 3 to exempt only the private system-call ABI.
 - **Options:** interfaces defined in the IDL under the reserved authority, over a private, unpublished system-call ABI.
 - **Blocks:** C17. **Depends on:** D28, D20.
 
@@ -272,6 +272,85 @@ Chunks C06, C07, C10 to C12, C13a, C13b, C14 to C17, C70 and C71 ([build plan](b
 - **Why open:** JSON parsing enters every manager's trust boundary ([0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), Consequences), and decoders run isolated because their input may be hostile ([0010](../decisions/0010-svg-core-primitive.md), rule 11). [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 6 checks grammars against test vectors, not hostile input.
 - **Options:** none named beyond the list of parsers at trust boundaries (C71). Two accepted records already make their parsers fuzzing targets: the initial image's ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 2) and the kernel arguments' ([0041](../decisions/0041-boot-abi.md), rule 5).
 - **Blocks:** C71. **Depends on:** D03.
+
+D150 to D160 were added on 2026-11-25, after D149, so they break the numbering order. They carry the open mechanism questions of the [kernel specification](kernel-specification.md#open-questions), grouped. Each names the questions (K01, K02, …) it covers, and the specification gives each question's options in full. The prototype of C10 to C16 settles them, or of C17 and C70 where they say so. Two of the specification's questions belong to existing entries: K10 to D95, and K61 to D115. Two are decisions that belong to later milestones: D161, under [M3](#m3-node-user-space-and-the-entropy-gate), carries K12, and D162, under [M6](#m6-a-console-you-can-log-in-to), carries K73. ADRs 0047 to 0061, which raise these questions, are Proposed. Until they are accepted, D13 to D24 and D29 to D31 carry no **Settled:** line. ADRs 0062 to 0068, which would settle D11, D12, D25 to D28 and D32, are also Proposed, and those entries carry no **Settled:** line until they are accepted.
+
+**D150. Kernel memory bookkeeping**
+
+- **Decide:** how the kernel allocates ASIDs (K01); how it keeps its small records without capabilities in a job's memory (K02); where its index of each job's pieces lives (K03); the sizes of pieces (K04); which pieces a fault uses first (K05); and how untyped capabilities that processes hold relate to the pieces the kernel uses for faults (K06).
+- **Why open:** [0048](../decisions/0048-kernel-memory-and-address-spaces.md), rules 1 and 4 and [0058](../decisions/0058-jobs-and-budgets.md), rules 3 to 6 guarantee that every kernel record is charged to a job and that no job can exhaust the ASIDs, but leave the mechanism to the specification ([Untyped memory and kernel records](kernel-specification.md#untyped-memory-and-kernel-records); [Address-space layout](kernel-specification.md#address-space-layout)). seL4's untyped memory is a watermark allocator, so small records would fragment a job's memory.
+- **Options:** ASID generation rollover, or seL4's ASID pools per job; per-job slab pages, records inside the object they serve, or a fixed allowance; see the specification for the rest.
+- **Blocks:** C10, C15, C16, C17. **Depends on:** D14, D24.
+
+**D151. Bindings that hold capabilities, and object sizes**
+
+- **Decide:** which slots the thread, the wait set and the interrupt handler carry for their bindings, and so each object's size (K07); what removing a binding in use does (K08); a scheduling context's size (K15); whether a registered IPC buffer holds a capability (K29); the wait set's size (K33); and what happens to a fault in flight when its endpoint is unset (K50).
+- **Why open:** [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4 makes every binding hold a copy of the capability presented, so that revocation removes it, and leaves where the copies live to the specification ([Kernel bindings that hold capabilities](kernel-specification.md#kernel-bindings-that-hold-capabilities)).
+- **Options:** seL4's thread layout extended with a slot for the bound eventcount, one slot per wait-set entry; refills as seL4 sizes them; see the specification for the rest.
+- **Blocks:** C11, C12, C13b, C14, C15, C16. **Depends on:** D15.
+
+**D152. Rights and capability identity**
+
+- **Decide:** whether the kernel can tell that two capabilities name one object (K11); the rights on wait sets (K32); whether capabilities yielded by listing mappings derive from the listing capability (K42); the rights on a job's capability, and how the memory server's is limited (K53); the rights of the main-thread capability that spawn returns (K63); and whether identify, which reads a capability's kind and rights, is a published method or internal to `aspis-rt` (K75).
+- **Why open:** [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 2 fixes the rights other records rely on, and leaves the rest to the specification ([Rights by object type](kernel-specification.md#rights-by-object-type)). [0061](../decisions/0061-debugging.md), rule 4 leaves open a gap in revoking a debugger's access, until a record closes it.
+- **Options:** as listed under each question in the specification. Closing the listing gap changes [0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rule 3, so it needs a record.
+- **Blocks:** C11, C14, C15, C16, C17, C19, C70. **Depends on:** D15.
+
+**D153. Scheduling, cores and firmware details**
+
+- **Decide:** the arithmetic of the share check (K13); who configures scheduling contexts, now that a process doesn't hold its job's capability (K14); the numeric ranges of the priority bands, and how a shared server's starter learns its callers' highest priority (K16); what the kernel does without PSCI (K21); the SGI numbers (K26); and whether the panic stop uses a pseudo-NMI (K27).
+- **Why open:** [0051](../decisions/0051-scheduling-timers-and-deadlines.md), rules 1 and 2, [0052](../decisions/0052-smp-bring-up-and-the-kernel-lock.md), rules 1 and 4, and [0058](../decisions/0058-jobs-and-budgets.md), rule 8 decide the model and leave these to the specification ([Scheduling contexts and budgets](kernel-specification.md#scheduling-contexts-and-budgets); [Cross-core signals and TLB maintenance](kernel-specification.md#cross-core-signals-and-tlb-maintenance)).
+- **Options:** the process manager configures every context, or a per-job scheduling-control capability; fixed band ranges, or ranges in the boot manifest; see the specification for the rest.
+- **Blocks:** C12, C13a, C16, C17, C19. **Depends on:** D17, D18.
+
+**D154. How waits end: deadlines, cancellation and suspension**
+
+- **Decide:** what happens to a stranded passive server's own wait when a context is taken back along a chain (K17); which core keeps a deadline (K18); the deadline edge cases (K19); whether a suspended thread's deadlines keep running, and how a held reply is kept (K20); how memory requests on the fault path are withdrawn or passed on (K51); and the fetch timeout's unit and range (K52).
+- **Why open:** [0047](../decisions/0047-the-kernel-follows-sel4.md), rule 3, [0054](../decisions/0054-ipc-endpoints.md), rules 5 and 6, [0056](../decisions/0056-faults-and-page-fetch-deadlines.md), rule 4 and [0061](../decisions/0061-debugging.md), rule 3 guarantee that every wait ends and that suspending doesn't cancel a wait, and leave these steps to the specification ([Passive servers and taking a context back](kernel-specification.md#passive-servers-and-taking-a-context-back); [Suspending a thread](kernel-specification.md#suspending-a-thread); [Waiting for a page](kernel-specification.md#waiting-for-a-page)).
+- **Options:** cancel each stranded server's wait down the chain, or leave it to the handler; deadlines keep running while suspended, or pause; see the specification for the rest.
+- **Blocks:** C12, C14, C15, C16, C17, C70. **Depends on:** D17, D20, D22.
+
+**D155. Long operations and ordered queues**
+
+- **Decide:** how many units of work fall between preemption checks (K22); how each long operation keeps its progress (K23); the size of a batch of interrupt work, and where each core keeps its pending work (K24); the structures of the ordered queues (K25); how a restarted advance avoids adding twice (K31); where word-wait queues live (K34); and how long lists of mappings and threads are returned (K41).
+- **Why open:** [0052](../decisions/0052-smp-bring-up-and-the-kernel-lock.md), rule 2 guarantees that the kernel lock is never held for unbounded time, and that ordered queues insert in bounded or logarithmic time, which seL4's code doesn't do. It leaves the mechanism to the specification ([The kernel lock and long operations](kernel-specification.md#the-kernel-lock-and-long-operations); [Ordered kernel queues](kernel-specification.md#ordered-kernel-queues)).
+- **Options:** seL4's preemption granularity of 100; per-priority lists with a bitmap, balanced trees, pairing heaps or timer wheels; listing with a cursor, or a preemptible call that fills a caller's memory object.
+- **Blocks:** C10, C11, C12, C13b, C14, C15, C16. **Depends on:** D18.
+
+**D156. The private ABI and the kernel's messages**
+
+- **Decide:** the message registers, message info word and IPC buffer layout (K28); the results of destroyed waits and the error names (K30); whether fault messages carry the raw syndrome (K49); whether the call check also checks each call's place (K58); the entry table's details (K59); where the kernel interface library is mapped (K60); and how a server that speaks an older major of an interface the kernel calls is served (K76).
+- **Why open:** [0059](../decisions/0059-the-kernel-interface-library.md), rules 2 to 5 make the system-call ABI private and the kernel's own messages IDL-defined, and leave their layouts to the specification ([Endpoint operations and messages](kernel-specification.md#endpoint-operations-and-messages); [The kernel interface library](kernel-specification.md#the-kernel-interface-library)).
+- **Options:** seL4's AArch64 layout extended to three receive slots; raw or decoded syndromes; a range check only, or a per-call place check; a creator-chosen or fixed library address.
+- **Blocks:** C14, C15, C17, C78. **Depends on:** D20, D22, D29.
+
+**D157. MSI and the GICv3 ITS**
+
+- **Decide:** how an MSI request names its device, and what authority it needs (K35); interrupt targets (K36); the number of LPIs (K37); the ITS tables' sizes (K38); what bounds a wait for the ITS (K39); and how a revocation that meets an ITS table reports it (K40).
+- **Why open:** [0055](../decisions/0055-interrupt-objects.md), rule 4 gives four guarantees for MSI and leaves these details, and the report of a revocation it can't finish, to the specification ([MSI and the GICv3 ITS](kernel-specification.md#msi-and-the-gicv3-its)).
+- **Options:** the ITS device ID, the PCIe requester ID or a capability to the PCIe function; a fixed LPI count, a kernel argument or one derived from the firmware's description; see the specification for the rest.
+- **Blocks:** C11, C13b, C20. **Depends on:** D21.
+
+**D158. The pager protocol and reclaim at a limit**
+
+- **Decide:** how a pager fills a pending frame (K43); where the kernel keeps a Fail's error key until each waiting thread's fault is delivered (K74); whether a page request is requeued at a joining thread's higher priority (K44); what Evict and decommit do to a pending page (K45); what a read-through clone sees when its original is destroyed (K46); how shared pages and chains of clones are structured (K47); how a pager learns its least recently used pages (K48); how the memory server learns which job is at its limit and finds its pagers, and whether its answers are operations on the job's capability or a reply (K54); whose pages it evicts under an ancestor's limit (K55); how reclaim targets borrowed memory (K56); and whether it evicts dirty pages at a limit (K57).
+- **Why open:** [0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rules 4 to 8 and [0058](../decisions/0058-jobs-and-budgets.md), rules 6 and 7 decide the protocol's guarantees, including the project owner's decisions on private mappings and on readers at a cache's limit, and leave these steps to the specification ([The pager protocol](kernel-specification.md#the-pager-protocol); [Memory requests and reclaim](kernel-specification.md#memory-requests-and-reclaim)).
+- **Options:** a copy-in call, or a pre-paid mapping window; Fuchsia's hidden nodes, or Mach's shadow chains; see the specification for the rest.
+- **Blocks:** C15, C16. **Depends on:** D23, D24.
+
+**D159. Spawn, the startup block and the capability-table copy**
+
+- **Decide:** whether the capability-table copy is defined only for a stopped source (K09); how a spawner knows the job it spawns into (K62); what a runtime needs to make its own threads (K64); the startup block's layout (K65); how the tail of a writable segment is zeroed, and the segment alignment (K66); and how a process named after it starts learns its ID (K67).
+- **Why open:** [0060](../decisions/0060-processes-native-spawn-and-elf.md), rules 2 to 4 and 7 and [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 7 decide spawn and the copy, and leave these to the specification ([Native spawn and program loading](kernel-specification.md#native-spawn-and-program-loading); [The startup block](kernel-specification.md#the-startup-block)).
+- **Options:** a kernel check of an untyped capability's job, a handle from the process manager, or a child job made on request; little-endian tagged records or a fixed header; see the specification for the rest.
+- **Blocks:** C11, C16, C17. **Depends on:** D29, D30.
+
+**D160. The debugging mechanism**
+
+- **Decide:** the panic symbol table's format and the build ID's hash (K68); how a debugger reads a page that isn't resident (K69); hardware breakpoints, watchpoints and single steps (K70); the breakpoint clone's extent (K71); and what a crash dump contains (K72).
+- **Why open:** [0061](../decisions/0061-debugging.md), rules 2 to 5 decide the debugger's authority and tools, and leave these details to the specification ([Debugger access to threads and memory](kernel-specification.md#debugger-access-to-threads-and-memory); [The panic symbol table](kernel-specification.md#the-panic-symbol-table)).
+- **Options:** SHA-512, SHA-256 or BLAKE3; the manager touches the page, a cross-address-space page request, or absent pages; see the specification for the rest.
+- **Blocks:** C12, C70. **Depends on:** D31.
 
 ## M3. Node user space and the entropy gate
 
@@ -304,6 +383,15 @@ Chunks C08, C09, C18 to C24, C72 and C73 ([build plan](build-plan.md#m3-node-use
 - **Why open:** accepted records conflict: [Names before the gate](#names-before-the-gate-on-a-first-boot).
 - **Options:** listed with the conflict.
 - **Blocks:** C09, C19, C25. **Depends on:** D34, D35.
+
+D161 was added on 2026-11-25, with D150 to D160, and is numbered out of order. It carries the kernel specification's K12.
+
+**D161. Names for objects made between the entropy gate and storage**
+
+- **Decide:** how objects made after the entropy gate, but before storage can record a sequence block durably, are named (K12).
+- **Why open:** [0050](../decisions/0050-ids-for-kernel-objects.md), rule 6 names the objects that exist before the gate from the reserved range, and D36 settles their authority. Objects made after the gate but before storage can't take a sequence number from a durably recorded block ([0001](../decisions/0001-object-identifiers.md), rule 4), and no record says how they are named ([Kernel objects and IDs](kernel-specification.md#kernel-objects-and-ids)).
+- **Options:** none named.
+- **Blocks:** C19. **Depends on:** D34, D36.
 
 **D37. Minting authorities that aren't nodes**
 
@@ -731,6 +819,15 @@ Chunks C41 to C48 ([build plan](build-plan.md#m6-a-console-you-can-log-in-to)).
 - **Options:** the POSIX minimum, or more ([POSIX note §8](posix-compatibility.md#8-open-questions)); `fork` leaves credential capabilities behind unless they are passed explicitly.
 - **Blocks:** C41. **Depends on:** D38, D47, D85.
 
+D162 was added on 2026-11-25, with D150 to D161, and is numbered out of order. It carries the kernel specification's K73.
+
+**D162. Shared libraries and the dynamic linker**
+
+- **Decide:** whether ASPIS has shared libraries; where the dynamic linker lives; how an executable names it.
+- **Why open:** [0060](../decisions/0060-processes-native-spawn-and-elf.md), rule 6, which is Proposed, makes executables static ELF and leaves dynamic linking to a later record, written with the POSIX personality ([kernel specification K73](kernel-specification.md#k73-dynamic-linking)). D30 asked where the dynamic linker lives, and the POSIX note leaves it open ([POSIX note §8](posix-compatibility.md#8-open-questions)).
+- **Options:** a user-space linker in the process, named by the executable's `PT_INTERP` header, as on Linux and Fuchsia.
+- **Blocks:** C47. **Depends on:** D30.
+
 **D96. POSIX instances, signals, pids, `errno` and extensions**
 
 - **Decide:** who starts the default instance on each node, and as which principal; pid 1 and the re-parenting of orphans; which processes get `SIGTERM` on a stop notice; which policy decides whether one process may signal another; whether pids reach other nodes; the `errno` mapping table, and the call that returns the original typed error; which Linux and BSD extensions are in scope (`epoll`, `kqueue`, `/proc`, `ptrace`, `inotify`, `eventfd`).
@@ -1155,8 +1252,8 @@ Where accepted records disagree, the fix is a change to one of them, or a readin
 - **One manager or several per type.** [0027](../decisions/0027-applications-extend-the-system.md), rule 4: "The type object names the type's manager". [0028](../decisions/0028-discovery-and-realm-catalog.md), rule 2: "every type, with its managers and interfaces". Options: one manager, whose instances the location service finds; several managers. Settled by D111.
 - **Which principal a one-off process uses.** [0026](../decisions/0026-realm-as-cloud-provider.md), rule 10 runs it with "the deploy's config, bindings and identity". Rule 11 gives each process type its own principal, and a `run` has no type. Options: a `run` principal per deploy; the principal of a type the operator names; either with the operator as `act`. Settled by D133.
 - **Proofs attached to tokens.** [0016](../decisions/0016-authorization-sparse-merkle-tree.md), rule 5: a client "may also attach a proof and a signed root to its token". [0019](../decisions/0019-authzen-decision-protocol.md), rule 8 removed the grant keys tokens named, so nothing says what such a proof covers, or whether tokens still carry an issue epoch. Options: keep attached proofs only for grants checked against another realm's roots; drop the issue epoch unless the profile needs it. Settled by D85.
-- **IDs for kernel objects.** [0001](../decisions/0001-object-identifiers.md)'s Context names processes, threads and endpoints among the objects IDs name. Kernel objects are reached by capability ([0002](../decisions/0002-capability-security-model.md), rule 1), and the kernel uses no randomness ([0021](../decisions/0021-entropy-before-keys.md), rule 3), so it can't mint their IDs. Options: the user-space server that creates the object mints its ID; IDs for only some threads and endpoints, which needs a change to 0001. Settled by D16.
-- **The kernel's interfaces and ABNF.** [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2 puts "every RPC and IPC call" in generated ABNF. [0014](../decisions/0014-versioned-object-apis.md), rule 6 has the raw system-call ABI "change underneath" the kernel interface library. Options: define the library's interfaces in the IDL, and treat the raw ABI as no IPC call, unpublished. Settled by D29.
+- **IDs for kernel objects.** [0001](../decisions/0001-object-identifiers.md)'s Context names processes, threads and endpoints among the objects IDs name. Kernel objects are reached by capability ([0002](../decisions/0002-capability-security-model.md), rule 1), and the kernel uses no randomness ([0021](../decisions/0021-entropy-before-keys.md), rule 3), so it can't mint their IDs. Options: the user-space server that creates the object mints its ID; IDs for only some threads and endpoints, which needs a change to 0001. Settled by D16. [0050](../decisions/0050-ids-for-kernel-objects.md) (Proposed) would settle it, with edits of [0014](../decisions/0014-versioned-object-apis.md), rule 5, [0027](../decisions/0027-applications-extend-the-system.md), rule 2 and [0028](../decisions/0028-discovery-and-realm-catalog.md), rules 1 and 2.
+- **The kernel's interfaces and ABNF.** As accepted on 2026-11-24, [0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 2 put "every RPC and IPC call" in generated ABNF. [0014](../decisions/0014-versioned-object-apis.md), rule 6 has the raw system-call ABI "change underneath" the kernel interface library. Options: define the library's interfaces in the IDL, and treat the raw ABI as no IPC call, unpublished. Settled by D29. [0059](../decisions/0059-the-kernel-interface-library.md) (Proposed) would settle it, with an edit of 0013 rules 2 and 3.
 - **The font's license.** [0009](../decisions/0009-text-as-graphics-console.md), rule 3 shares one OpenType family between the kernel and the SVG layer. [0008](../decisions/0008-mpl-2.0-license.md), rule 4 admits only permissive licenses and MPL-2.0, which a font under a font license would break. Options: a family under an admitted license; an amendment to 0008 rule 4. Settled by D06: [0034](../decisions/0034-noto-fonts-under-ofl.md), accepted 2026-11-25, adopts fonts under OFL-1.1 (rule 2), and [0008](../decisions/0008-mpl-2.0-license.md), rule 4 admits OFL-1.1 for fonts and the data derived from them, never for code. The conflict is closed.
 - **An entropy service that "never blocks again".** [0021](../decisions/0021-entropy-before-keys.md), rule 2: once the gate opens, "the service never blocks again". Rule 5 makes requests for long-lived keys wait without a healthy physical source, and rule 9 reseeds "before giving any further output" after a restore. Options: "never blocks" covers ordinary requests, requests with prediction resistance wait by design, and output after a restore pauses only for the reseed. Settled by D46.
 - **Tokens on remote PDP requests.** [0019](../decisions/0019-authzen-decision-protocol.md), rule 6: remote requests travel "carrying the enforcement point's workload token". [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 1: calls go through a session "with no token per call". Options: the remote enforcement point binds to the PDP once with its token, then uses the session. Settled by D74.

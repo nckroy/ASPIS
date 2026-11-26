@@ -29,7 +29,7 @@ The project owner decided on 2026-11-25: a format of ASPIS's own. The rules belo
    - **Header:** the magic `ASPISIMG`, a major and minor format version, the alignment, the number of entries, the offset of the entry table, and the index of the boot manifest's entry.
    - **Entry table:** one entry for each file, giving its name, kind, flags, offset, length and SHA-512 digest.
    - **Contents:** each file starts at an offset that is a multiple of the alignment. The alignment is a power of two, at least 4 KiB. The builder uses 64 KiB, which suits any translation granule, until the kernel specification fixes the page size.
-   - Integers are little-endian. The image is an in-memory structure for the node that boots it, not a message, so the byte order of messages, which [0013](0013-abnf-for-protocols-and-calls.md), rule 4 leaves open, doesn't apply.
+   - Integers are little-endian. The image is an in-memory structure for the node that boots it, not a message, so the byte order of messages ([0062](0062-core-rules-big-endian-fixed-width.md), rule 2) doesn't apply.
 2. **An ABNF grammar defines the format**, with test vectors, and CI checks it like every other grammar ([0013](0013-abnf-for-protocols-and-calls.md), rule 6). The root server's parser is a fuzzing target (C71).
 3. **There are three kinds of entry:** an executable, which is a static ELF64 AArch64 program; data; and the boot manifest. The manifest's format is the root server's decision (D40).
 4. **Executables are mapped in place.** Because each file is aligned, the root server can map an executable's segments straight from the image's memory without copying them. How the image's memory becomes a memory object is decided with the kernel specification.
