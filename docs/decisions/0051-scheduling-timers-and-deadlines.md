@@ -3,7 +3,7 @@
 
 # 0051. Scheduling, the timer and deadlines
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

@@ -3,7 +3,7 @@
 
 # 0054. IPC: synchronous endpoints with deadlines and cancellation
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

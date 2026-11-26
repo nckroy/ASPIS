@@ -3,7 +3,7 @@
 
 # 0061. Debugging: the kernel, user threads and crash dumps
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

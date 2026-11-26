@@ -3,7 +3,7 @@
 
 # 0057. Memory objects and the pager protocol
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

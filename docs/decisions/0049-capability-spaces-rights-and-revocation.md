@@ -3,7 +3,7 @@
 
 # 0049. Capability spaces, rights, badges and revocation
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

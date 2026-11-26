@@ -3,7 +3,7 @@
 
 # 0058. Jobs, memory reservations and limits, and CPU shares
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

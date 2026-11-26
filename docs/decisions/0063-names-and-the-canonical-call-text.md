@@ -3,7 +3,7 @@
 
 # 0063. Names and the canonical call text
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

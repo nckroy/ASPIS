@@ -3,7 +3,7 @@
 
 # 0066. Capability parameters and server streams
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context
@@ -19,7 +19,7 @@ On 2026-11-25 the project owner decided:
 
 The owner also accepted defaults that Claude proposed with these records: server streams only; a badge per holder, with `session_dup` to share a session capability; stream pulls that never block; and u32 counts.
 
-This record is proposed with in-place edits of [0002](0002-capability-security-model.md), rule 5 and [0015](0015-jwt-tokens-and-oidc-identity.md), rule 1, which said authority crosses nodes as JWTs. Both now keep JWTs for authority a party uses under its own bind, and say a capability parameter crosses as a proxy (rule 4).
+This record was proposed with in-place edits of [0002](0002-capability-security-model.md), rule 5 and [0015](0015-jwt-tokens-and-oidc-identity.md), rule 1, which said authority crosses nodes as JWTs. Both now keep JWTs for authority a party uses under its own bind, and say a capability parameter crosses as a proxy (rule 4).
 
 Claude drafted this record from the discussion. The [call-language specification](../design/call-language.md#capability-parameters-and-server-streams) holds the layouts, tables and examples.
 

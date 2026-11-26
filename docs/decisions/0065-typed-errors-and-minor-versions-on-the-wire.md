@@ -3,7 +3,7 @@
 
 # 0065. Typed errors and minor versions on the wire
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context
@@ -43,7 +43,7 @@ Layouts, grammars and tables are in the [call-language specification](../design/
 - Any caller can tell a safe retry from an unsafe one. Interfaces gain errors, arms and values without a new major.
 - `closed` buys fixed sizes, at the price of a new major for any change.
 - One encoding per value gives the fuzzing gate its round trip ([0068](0068-the-fuzzing-and-differential-testing-gate.md), rule 5), and lets reply caches compare octets.
-- Proposed records [0054](0054-ipc-endpoints.md), [0056](0056-faults-and-page-fetch-deadlines.md) and [0057](0057-memory-objects-and-the-pager-protocol.md) change to match: "timed out" and "canceled" report delivery, and Fail carries the error key.
+- [0054](0054-ipc-endpoints.md), [0056](0056-faults-and-page-fetch-deadlines.md) and [0057](0057-memory-objects-and-the-pager-protocol.md) match it: "timed out" and "canceled" report delivery, and Fail carries the error key.
 - **D26 is settled**: errors by rules 1 to 5, the system's errors by rules 6 and 7, new fields by rules 9 to 11, and too-new calls by rule 12.
 - **Still open**, in the specification: [L13](../design/call-language.md#l13-token-rejected-reasons) (token-rejected reasons), [L23](../design/call-language.md#l23-error-size-limits-and-free-text) (error size and free text), [L14](../design/call-language.md#l14-errno-mapping) and [L15](../design/call-language.md#l15-the-https-binding) (errno and HTTPS), [L43](../design/call-language.md#l43-keeping-a-fails-error-key) (a Fail's key), [L02](../design/call-language.md#l02-reserved-numbers) (`aspis.rpc`'s number), [L04](../design/call-language.md#l04-request-ids-the-reply-cache-and-default-deadlines) (the reply cache), [L20](../design/call-language.md#l20-the-tree-staleness-bound) (the staleness bound) and [L21](../design/call-language.md#l21-older-majors-of-the-interfaces-the-kernel-calls) (older majors of the interfaces the kernel calls).
 

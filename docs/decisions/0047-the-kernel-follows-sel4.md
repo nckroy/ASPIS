@@ -3,7 +3,7 @@
 
 # 0047. The kernel follows seL4's design, with ASPIS's own objects where the records need them
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

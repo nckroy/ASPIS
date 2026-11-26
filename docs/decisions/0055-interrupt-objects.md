@@ -3,7 +3,7 @@
 
 # 0055. Interrupt objects for user-space drivers
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

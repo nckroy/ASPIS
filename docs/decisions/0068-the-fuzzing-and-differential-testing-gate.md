@@ -3,7 +3,7 @@
 
 # 0068. The fuzzing and differential-testing gate
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

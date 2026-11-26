@@ -3,7 +3,7 @@
 
 # 0048. Kernel memory: untyped memory, 4 KiB pages, and no access to user addresses
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context

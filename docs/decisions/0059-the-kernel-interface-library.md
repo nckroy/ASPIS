@@ -3,14 +3,14 @@
 
 # 0059. The kernel interface library
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context
 
 Programs reach system calls only through a kernel interface library mapped into every process, as with Fuchsia's vDSO. The library exposes versioned interfaces for kernel objects, and the raw system-call ABI can change underneath it ([0014](0014-versioned-object-apis.md), rule 6). A major version stays available for a declared support period after its successor ships ([0014](0014-versioned-object-apis.md), rule 7).
 
-As accepted, [0013](0013-abnf-for-protocols-and-calls.md), rule 2 said ABNF describes "every RPC and IPC call: the message header, each method's request and reply, and error replies", generated from the IDL. Rule 3 made the generated grammar "normative for the wire format", and had conformance tests check real messages against it. A raw ABI that changes underneath the library has no stable grammar. The [design backlog](../design/design-backlog.md#conflicts-between-accepted-adrs) lists this as a conflict between accepted records that D29 settles, and names one option: define the library's interfaces in the IDL, and treat the raw ABI as no IPC call, unpublished. Since the two rules conflict, the project owner chose on 2026-11-25 to edit 0013 rather than read it narrowly. This record is proposed with that edit, in the same pull request, and the edit is kept narrow. 0013's rule 2 now exempts only the private ABI, and its rule 3 says what the generated grammar means for the `[kernel]` interfaces, which have no wire form (rule 7).
+As accepted, [0013](0013-abnf-for-protocols-and-calls.md), rule 2 said ABNF describes "every RPC and IPC call: the message header, each method's request and reply, and error replies", generated from the IDL. Rule 3 made the generated grammar "normative for the wire format", and had conformance tests check real messages against it. A raw ABI that changes underneath the library has no stable grammar. The [design backlog](../design/design-backlog.md#conflicts-between-accepted-adrs) lists this as a conflict between accepted records that D29 settles, and names one option: define the library's interfaces in the IDL, and treat the raw ABI as no IPC call, unpublished. Since the two rules conflict, the project owner chose on 2026-11-25 to edit 0013 rather than read it narrowly. This record was proposed with that edit, in the same pull request, and the edit is kept narrow. 0013's rule 2 now exempts only the private ABI, and its rule 3 says what the generated grammar means for the `[kernel]` interfaces, which have no wire form (rule 7).
 
 The kernel also sends messages of its own to user-space servers: fault messages to fault handlers, page requests to pagers and memory requests to the memory server ([0056](0056-faults-and-page-fetch-deadlines.md); [0057](0057-memory-objects-and-the-pager-protocol.md); [0058](0058-jobs-and-budgets.md)). Those servers parse them as they parse any other IPC message.
 

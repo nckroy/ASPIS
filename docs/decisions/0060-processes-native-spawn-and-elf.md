@@ -3,7 +3,7 @@
 
 # 0060. Processes, native spawn and the executable format
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-25
 
 ## Context
