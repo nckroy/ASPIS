@@ -22,6 +22,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Document-only changes (Markdown files and docs/) skip the lint, test
+  # and reproducibility jobs; skipped jobs pass as required checks. If
+  # this job fails, its output is empty and every job runs.
   changes:
     name: What the change touches
     runs-on: ubuntu-24.04
@@ -68,6 +71,8 @@ jobs:
 
   lint:
     name: rustfmt and clippy
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,9 +83,6 @@ jobs:
 
   test:
     name: Host and QEMU tests
-    # Skipped for document-only changes, which then pass this required
-    # check. If the changes job fails, its output is empty and the tests
-    # run.
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04-arm
@@ -104,6 +106,8 @@ jobs:
 
   reproducible:
     name: Reproducible images
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

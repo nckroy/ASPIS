@@ -30,7 +30,7 @@ The project owner decided on 2026-11-25: CycloneDX for SBOMs, signed through Sig
 1. **ASPIS's own images build bit for bit reproducibly.**
    - **Inputs are pinned:** the toolchain ([0035](0035-toolchain-image-linkage-and-esp-layout.md), rule 1), `Cargo.lock`, vendored dependencies, the font files by hash ([0034](0034-noto-fonts-under-ofl.md), rule 1), and the build environment as a container image named by digest.
    - **The build fixes everything that varies:** paths are remapped with `--remap-path-prefix` and `--remap-path-scope`, each crate is built as one codegen unit, `SOURCE_DATE_EPOCH` is the commit's time, the PE timestamp comes from `/Brepro`, and the image builders sort their inputs and record no times, owners or permissions of their own.
-   - **CI checks it:** every change builds `aspis.efi` and `initfs.img` twice, in different directories and as different users, and fails if the bytes differ. A difference is reported with diffoscope.
+   - **CI checks it:** every change to code builds `aspis.efi` and `initfs.img` twice, in different directories and as different users, and fails if the bytes differ. A difference is reported with diffoscope.
 2. **CycloneDX is ASPIS's SBOM format.**
    - Each release of `aspis.efi` and `initfs.img` carries a CycloneDX 1.7 SBOM in JSON. It lists every crate and asset with its version, hash and license, as SPDX license identifiers, which CycloneDX uses. Assets include the fonts and their OFL-1.1 license ([0034](0034-noto-fonts-under-ofl.md), rule 3).
    - App builds use CycloneDX too. This settles the SBOM format that [0026](0026-realm-as-cloud-provider.md), rule 3 left open (D128).
@@ -47,7 +47,7 @@ The project owner decided on 2026-11-25: CycloneDX for SBOMs, signed through Sig
 - **Anyone can check a release** by rebuilding it from the commit and comparing hashes, without trusting ASPIS's CI.
 - **One SBOM format across ASPIS.** The images and the app platform use the same tooling, and a realm reads one format. The per-file copyright and license tags stay SPDX tags in the REUSE format ([0023](0023-copyright-notices.md), [0033](0033-contributions-docs-license-and-notice-years.md)). CycloneDX names licenses with the same SPDX identifiers.
 - **Release signatures are classical until mid-2027 or later.** Sigstore's post-quantum timing is outside ASPIS's control. Rebuilding is the post-quantum-safe check until then.
-- **Builds are slower.** One codegen unit per crate and two builds per change cost CI time.
+- **Builds are slower.** One codegen unit per crate and two builds per code change cost CI time.
 - **D128 narrows** to the OCI layout of app builds and the signatures that verifiers outside ASPIS can check.
 
 ## References
