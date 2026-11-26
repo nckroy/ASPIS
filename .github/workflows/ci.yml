@@ -22,6 +22,21 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    name: What the change touches
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.kind.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: kind
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: sh tools/ci/code-changed.sh "$BASE" "$HEAD" | tee -a "$GITHUB_OUTPUT"
+
   docs:
     name: Licenses, sign-offs, grammars and diagrams
     runs-on: ubuntu-24.04
@@ -63,6 +78,11 @@ jobs:
 
   test:
     name: Host and QEMU tests
+    # Skipped for document-only changes, which then pass this required
+    # check. If the changes job fails, its output is empty and the tests
+    # run.
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

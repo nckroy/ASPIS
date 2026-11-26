@@ -51,7 +51,7 @@ Useful `run` options:
 
 ### The checks CI runs
 
-CI runs four jobs on every pull request. `cargo xtask lint` and `cargo xtask test` cover two of them, the Rust lints and the tests. A change to documents or file headers needs the others too. From the repository root:
+CI runs four jobs on every pull request. `cargo xtask lint` and `cargo xtask test` cover two of them, the Rust lints and the tests. CI skips the tests when a pull request changes only Markdown files and `docs/`. A change to documents or file headers needs the others too. From the repository root:
 
 | CI job | Run it yourself |
 |---|---|
