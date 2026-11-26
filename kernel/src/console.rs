@@ -178,7 +178,7 @@ impl Console {
             let at = (y as u64 * self.fb.stride as u64 + x as u64) * 4;
             if at + 4 <= self.fb.size {
                 // SAFETY: inside the framebuffer the stub described, which
-                // the early identity map covers.
+                // the kernel's tables map in the device window.
                 unsafe { core::ptr::write_volatile((self.fb.base + at) as *mut u32, v) };
             }
         }
@@ -293,7 +293,8 @@ impl Console {
         let line = self.fb.stride as usize * 4 * ch as usize;
         let first = (self.top * ch) as usize * self.fb.stride as usize * 4;
         let count = self.rows.saturating_sub(self.top + 1) as usize * line;
-        // SAFETY: both ranges lie inside the framebuffer.
+        // SAFETY: both ranges lie inside the framebuffer, which is normal
+        // non-cacheable memory, so unaligned copies are allowed.
         unsafe {
             core::ptr::copy(
                 (self.fb.base as usize + first + line) as *const u8,

@@ -149,7 +149,7 @@ Chunks C06, C07, C10 to C12, C13a, C13b, C14 to C17, C70 and C71 ([build plan](b
 - **Why open:** [0005](../decisions/0005-single-level-store.md) calls the virtual-memory subsystem early, critical work (Consequences), and no decision fixes the model. Job memory budgets follow from it ([0025](../decisions/0025-twelve-factor-app-contract.md), rule 12). [0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 2 links the kernel in the upper half of the address space and leaves the exact base to C05. The initial image aligns its files to 64 KiB until the kernel specification fixes the page size ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 1).
 - **Options:** seL4's untyped memory and retype; a kernel heap with quotas per job.
 - **Blocks:** C10, C16, C78. **Depends on:** D13.
-- **Settled:** [0048](../decisions/0048-kernel-memory-and-address-spaces.md), accepted 2026-11-25: untyped memory owned by jobs (rule 1), 4 KiB pages (rule 3), the address-space layout (rule 4), and W^X, PXN and PAN from the first page tables (rule 6), which settles that part of D145. Open in the [kernel specification](kernel-specification.md#open-questions): how ASIDs are allocated, and how a job's small kernel records and the index of its pieces are kept.
+- **Settled:** [0048](../decisions/0048-kernel-memory-and-address-spaces.md), accepted 2026-11-25: untyped memory owned by jobs (rule 1), 4 KiB pages (rule 3), the address-space layout (rule 4), and W^X, PXN and PAN from the first page tables (rule 6), which settles that part of D145. ASID allocation was settled with C10, by generation rollover, in the [kernel specification](kernel-specification.md#address-space-layout). Still open there: how a job's small kernel records and the index of its pieces are kept.
 
 **D15. Capability spaces, rights and revocation**
 
@@ -302,7 +302,8 @@ D150 to D160 were added on 2026-11-25, after D149, so they break the numbering o
 - **Decide:** how the kernel allocates ASIDs (K01); how it keeps its small records without capabilities in a job's memory (K02); where its index of each job's pieces lives (K03); the sizes of pieces (K04); which pieces a fault uses first (K05); and how untyped capabilities that processes hold relate to the pieces the kernel uses for faults (K06).
 - **Why open:** [0048](../decisions/0048-kernel-memory-and-address-spaces.md), rules 1 and 4 and [0058](../decisions/0058-jobs-and-budgets.md), rules 3 to 6 guarantee that every kernel record is charged to a job and that no job can exhaust the ASIDs, but leave the mechanism to the specification ([Untyped memory and kernel records](kernel-specification.md#untyped-memory-and-kernel-records); [Address-space layout](kernel-specification.md#address-space-layout)). seL4's untyped memory is a watermark allocator, so small records would fragment a job's memory.
 - **Options:** ASID generation rollover, or seL4's ASID pools per job; per-job slab pages, records inside the object they serve, or a fixed allowance; see the specification for the rest.
-- **Blocks:** C10, C15, C16, C17. **Depends on:** D14, D24.
+- **Blocks:** C15, C16, C17. **Depends on:** D14, D24.
+- **Settled in part:** K01 with C10, in the [kernel specification](kernel-specification.md#address-space-layout): generation rollover, as Linux on arm64 does.
 
 **D151. Bindings that hold capabilities, and object sizes**
 
@@ -337,7 +338,7 @@ D150 to D160 were added on 2026-11-25, after D149, so they break the numbering o
 - **Decide:** how many units of work fall between preemption checks (K22); how each long operation keeps its progress (K23); the size of a batch of interrupt work, and where each core keeps its pending work (K24); the structures of the ordered queues (K25); how a restarted advance avoids adding twice (K31); where word-wait queues live (K34); and how long lists of mappings and threads are returned (K41).
 - **Why open:** [0052](../decisions/0052-smp-bring-up-and-the-kernel-lock.md), rule 2 guarantees that the kernel lock is never held for unbounded time, and that ordered queues insert in bounded or logarithmic time, which seL4's code doesn't do. It leaves the mechanism to the specification ([The kernel lock and long operations](kernel-specification.md#the-kernel-lock-and-long-operations); [Ordered kernel queues](kernel-specification.md#ordered-kernel-queues)).
 - **Options:** seL4's preemption granularity of 100; per-priority lists with a bitmap, balanced trees, pairing heaps or timer wheels; listing with a cursor, or a preemptible call that fills a caller's memory object.
-- **Blocks:** C10, C11, C12, C13b, C14, C15, C16. **Depends on:** D18.
+- **Blocks:** C11, C12, C13b, C14, C15, C16. **Depends on:** D18.
 
 **D156. The private ABI and the kernel's messages**
 

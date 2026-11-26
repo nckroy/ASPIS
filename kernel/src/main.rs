@@ -1,13 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Nicole Roy
 // SPDX-License-Identifier: MPL-2.0
 
-//! The ASPIS kernel, at milestone M1 ("first light"): it boots, turns on
+//! The ASPIS kernel. From milestone M1 ("first light") it boots, turns on
 //! the MMU, finds the UART in the device tree, draws its console as text on
 //! the boot framebuffer from the first message, keeps a log ring, and
-//! reports a panic on both (ADRs 0009, 0041 and 0042).
+//! reports a panic on both (ADRs 0009, 0041 and 0042). From M2's chunk C10
+//! it runs on its own page tables, W^X from the first instruction, divides
+//! memory into what it keeps and untyped memory for the root server, and
+//! makes user address spaces from untyped memory, reaching user memory only
+//! by a software walk (ADR 0048).
 //!
 //! The root server, and everything that runs on top of the kernel, come in
-//! later milestones (M2 and M3).
+//! later chunks of M2, and in M3.
 
 #![no_std]
 #![no_main]
@@ -16,6 +20,7 @@ mod console;
 mod entry;
 mod exceptions;
 mod log;
+mod mm;
 mod settings;
 #[cfg(aspis_test_build)]
 mod testing;
@@ -59,45 +64,104 @@ pub fn halt() -> ! {
     }
 }
 
-/// The boot information at `phys`, through the early identity map.
+/// The boot information at `addr`, and its length.
 ///
 /// # Safety
 ///
-/// `phys` must be where the stub put the boot information.
-unsafe fn boot_info(phys: u64) -> Option<BootInfo<'static>> {
-    if phys == 0 || phys >= 1 << 32 {
+/// `addr` must be where the stub put the boot information, as the current
+/// tables map it: through the boot window, then the direct map.
+unsafe fn boot_info(addr: u64) -> Option<(BootInfo<'static>, u64)> {
+    if addr == 0 {
         return None;
     }
     // SAFETY: the header's first 32 bytes are readable; its total length
     // says how many more are.
-    let header = unsafe { core::slice::from_raw_parts(phys as *const u8, bootinfo::HEADER_LEN) };
+    let header = unsafe { core::slice::from_raw_parts(addr as *const u8, bootinfo::HEADER_LEN) };
     let total = u32::from_le_bytes(header[16..20].try_into().ok()?) as usize;
     if !(bootinfo::HEADER_LEN..=1 << 20).contains(&total) {
         return None;
     }
     // SAFETY: as above.
-    let all = unsafe { core::slice::from_raw_parts(phys as *const u8, total) };
-    BootInfo::parse(all).ok()
+    let all = unsafe { core::slice::from_raw_parts(addr as *const u8, total) };
+    Some((BootInfo::parse(all).ok()?, total as u64))
+}
+
+/// The device tree at `addr`, `len` bytes, as the current tables map it.
+/// Only those bytes are read, whatever the tree's header says.
+///
+/// # Safety
+///
+/// `addr` must be where the stub copied the device tree, and `len` its
+/// length, from the boot information.
+unsafe fn device_tree(addr: u64, len: u64) -> Option<fdt::Fdt<'static>> {
+    // SAFETY: as the caller promises; the stub copied it into memory it
+    // reserved, which the kernel keeps.
+    let bytes = unsafe { core::slice::from_raw_parts(addr as *const u8, len as usize) };
+    fdt::Fdt::new(bytes).ok()
+}
+
+/// Maps the boot information at physical address `pa` in the boot window,
+/// and reads it: its header first, for its length.
+fn map_boot_info(pa: u64) -> Option<(BootInfo<'static>, u64)> {
+    use mm::boot_window::map_ro;
+    if pa == 0 {
+        return None;
+    }
+    let head = map_ro(pa, bootinfo::HEADER_LEN as u64)?;
+    // SAFETY: the header's bytes, which the boot window maps.
+    let header = unsafe { core::slice::from_raw_parts(head as *const u8, bootinfo::HEADER_LEN) };
+    let total = u32::from_le_bytes(header[16..20].try_into().ok()?) as u64;
+    if !(bootinfo::HEADER_LEN as u64..=1 << 20).contains(&total) {
+        return None;
+    }
+    let va = map_ro(pa, total)?;
+    // SAFETY: the whole boot information, which the boot window maps.
+    unsafe { boot_info(va) }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn kernel_main(boot_info_phys: u64) -> ! {
     exceptions::install();
-    // SAFETY: the stub passes the boot information's address in x0.
-    let Some(info) = (unsafe { boot_info(boot_info_phys) }) else {
+    // The bootstrap tables map only the kernel's image: the boot
+    // information, the device tree and the UART are reached through the
+    // boot window until the kernel's own tables exist.
+    let Some((info, info_len)) = map_boot_info(boot_info_phys) else {
         // Nowhere to report it yet: no UART is known without the boot
         // information's device tree.
         halt()
     };
 
-    // The UART, from the device tree.
-    // SAFETY: the stub copied the device tree into memory it reserved.
-    let fdt = info
-        .device_tree()
-        .and_then(|(addr, _)| unsafe { fdt::Fdt::from_ptr(addr as *const u8) }.ok());
+    // The device tree, and the UART it names, in the boot window.
+    let fdt = info.device_tree().and_then(|(pa, len)| {
+        let va = mm::boot_window::map_ro(pa, len)?;
+        // SAFETY: the device tree's address and length, from the boot
+        // information, which the boot window now maps.
+        unsafe { device_tree(va, len) }
+    });
     if let Some(f) = &fdt {
-        uart::init(f);
+        uart::init(f, mm::boot_window::map_device);
     }
+
+    // The kernel's own tables (ADR 0048). After this the boot window is
+    // gone: the boot information and the device tree are read again from
+    // the direct map, and the old bindings are shadowed, so no pointer into
+    // the window survives.
+    let moved = mm::init(
+        (boot_info_phys, boot_info_phys + info_len),
+        &info,
+        fdt.as_ref(),
+    );
+    // SAFETY: `mm::init` returns the boot information's direct-map address.
+    let Some((info, _)) = (unsafe { boot_info(moved.boot_info) }) else {
+        panic!("the boot information isn't in the direct map");
+    };
+    // SAFETY: and the device tree's.
+    let fdt = moved
+        .device_tree
+        .zip(info.device_tree())
+        .and_then(|(va, (_, len))| unsafe { device_tree(va, len) });
+    // Later chunks make their boot objects here, before the seal.
+    mm::seal();
 
     // The kernel arguments (ADR 0041, rule 5).
     let mut notes: [Option<settings::Note<'static>>; 16] = [None; 16];
@@ -117,7 +181,9 @@ pub extern "C" fn kernel_main(boot_info_phys: u64) -> ! {
     // There is a console whenever there is a framebuffer, so a panic can
     // reach it even with `console=uart` (ADR 0042, rule 7). The kernel
     // draws its log there only if `console` includes `fb`.
-    if let Some(fb) = info.framebuffer() {
+    if let (Some(fb), Some(base)) = (info.framebuffer(), moved.framebuffer) {
+        // The framebuffer is in the device window now.
+        let fb = bootinfo::Framebuffer { base, ..fb };
         // SAFETY: one CPU; nothing else holds the slot yet.
         unsafe { *CONSOLE.0.get() = Console::new(fb, s.cell) };
     }
@@ -213,6 +279,40 @@ fn report_boot(info: &BootInfo<'_>, s: &settings::Settings, have_dt: bool) {
         "memory map: {ranges} ranges, {} MiB usable",
         usable >> 20
     );
+    let m = mm::report();
+    klog!(
+        Info,
+        "memory",
+        "{} MiB untyped in {} pieces, {} device pieces; {} KiB of page tables; direct map {} MiB; {}-bit ASIDs; {}",
+        m.untyped_bytes >> 20,
+        m.ram_pieces,
+        m.device_pieces,
+        m.boot_pages_bytes >> 10,
+        m.direct_map_bytes >> 20,
+        m.asid_bits,
+        if m.pan {
+            "PAN on"
+        } else {
+            "PAN not implemented"
+        }
+    );
+    if m.dropped_pieces > 0 {
+        klog!(
+            Warning,
+            "memory",
+            "{} untyped pieces ({} MiB) didn't fit the boot table and go unused",
+            m.dropped_pieces,
+            m.dropped_bytes >> 20
+        );
+    }
+    if m.above_direct_limit > 0 {
+        klog!(
+            Warning,
+            "memory",
+            "{} MiB of RAM lie beyond the direct map's reach and go unused",
+            m.above_direct_limit >> 20
+        );
+    }
     match info.initial_image() {
         Some(i) => klog!(
             Info,
