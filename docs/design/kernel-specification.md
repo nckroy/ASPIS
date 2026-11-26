@@ -1347,9 +1347,9 @@ Which rights does each job operation need, and how is the memory server's capabi
 
 ### K54. Reclaim at a limit
 
-How does the memory server learn that a job, or which ancestor, is at its limit, and how does it find the pagers of the objects in that job? And are its answers (lend, free, refuse) operations on the job's capability, as the one-way memory request assumes ([0058](../decisions/0058-jobs-and-budgets.md), rule 6), or a reply?
+How does the memory server learn that a job, or which ancestor, is at its limit, and how does it find the pagers of the objects in that job? Its answers (lend, free, refuse) are operations on the job's capability, not a reply ([0058](../decisions/0058-jobs-and-budgets.md), rule 6).
 
-- **Options:** the memory request names the job at its limit; pagers register the jobs they keep for their objects with the memory server; or a cache job's memory endpoint is its own pager's, which evicts directly. For the answers: operations on the job's capability, or a reply, which would make the memory request two-way.
+- **Options:** the memory request names the job at its limit; pagers register the jobs they keep for their objects with the memory server; or a cache job's memory endpoint is its own pager's, which evicts directly.
 - **Blocks:** C16.
 - **From:** [Memory requests and reclaim](#memory-requests-and-reclaim); [0058](../decisions/0058-jobs-and-budgets.md), rule 6; the project owner's decision on readers and cache limits. **Backlog:** D158.
 

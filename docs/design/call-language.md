@@ -72,7 +72,7 @@ bool        = %x00 / %x01        ; false / true; no other value
 
 ; ---- IDs (ADR 0001) ----------------------------------------------
 object-id    = id-authority id-sequence id-version id-class id-random
-id-authority = 16OCTET           ; RFC 9562 UUIDv8 of the minting node
+id-authority = 16OCTET           ; UUID of the minting authority (0001, rule 3)
 id-sequence  = 8OCTET            ; unsigned
 id-version   = OCTET             ; 1 is defined; others pass through
 id-class     = 2OCTET            ; unsigned; the registry is D34's
@@ -2183,8 +2183,6 @@ What is the Cedar mapping of each attribute type? How are entity tags used, and 
 
 ### L45. The memory server's answers
 
-Are the memory server's answers (lend, free, refuse) operations on the job's capability, as this note assumes, or a reply?
+Settled by [0058](../decisions/0058-jobs-and-budgets.md), rule 6: the memory server's answers (lend, free, refuse) are operations on the job's capability, never a reply, and `memory_request` is `[oneway]`. The number is kept so that links to it still resolve.
 
-- **Owner:** the [kernel specification](kernel-specification.md) ([K51](kernel-specification.md#k51-memory-waits-on-the-fault-path), [K54](kernel-specification.md#k54-reclaim-at-a-limit)), with C16.
-- **Meanwhile:** operations on the job's capability; `memory_request` is `[oneway]`.
 - **From:** [Messages the kernel sends](#messages-the-kernel-sends).
