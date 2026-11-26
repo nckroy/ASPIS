@@ -17,5 +17,6 @@ workspace = true
 bootinfo.workspace = true
 kargs.workspace = true
 kmem.workspace = true
+kcap.workspace = true
 glyph-atlas.workspace = true
 fdt = "0.1.5"

@@ -15,8 +15,9 @@
 //! `resetUntypedCap` does. So a retype never needs to clear. Device untyped
 //! memory is MMIO: it is never cleared, and a reset only moves its watermark.
 //!
-//! C11: seL4 keeps the watermark in the untyped capability. Here it lives in
-//! [`Untyped`], which a capability can embed.
+//! As in seL4, the watermark lives in the untyped capability: the capability
+//! system (crate `kcap`, C11) rebuilds an [`Untyped`] from a capability with
+//! [`Untyped::from_parts`], and writes the watermark back after each change.
 
 use crate::{PAGE_SHIFT, align_down, align_up};
 
@@ -44,7 +45,7 @@ pub fn decompose(start: u64, end: u64) -> impl Iterator<Item = (u64, u8)> {
     })
 }
 
-/// What a retype makes (C10's objects; later chunks add theirs).
+/// What a retype makes (C10's and C11's objects; later chunks add theirs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjectType {
     /// A smaller piece of untyped memory, of `2^bits` bytes.
@@ -58,14 +59,32 @@ pub enum ObjectType {
     /// A translation table, at any level: 4 KiB.
     PageTable,
     /// An address space: its level-0 table at offset 0, then a 4 KiB kernel
-    /// record holding its ASID word, with room for what C15 and C16 add. The
+    /// record. The record is a 32-byte header, whose first word is the ASID
+    /// word and whose other three are kept for C15 and C16, then 127
+    /// capability slots: slot 0 is the park slot that deletion uses, and
+    /// slots 1 to 126 hold the copies that the space's mappings keep (C11;
+    /// kernel specification, "Kernel bindings that hold capabilities"). The
     /// level-0 table needs all 512 entries for a 48-bit lower half, so the
     /// record can't live inside it.
     AddressSpace,
+    /// A CNode of `2^radix` capability slots of 32 bytes each, with a radix
+    /// from [`MIN_RADIX`] to [`MAX_RADIX`] (C11; ADR 0049, rule 1).
+    CNode(u8),
+    /// An endpoint. Its 64 bytes are provisional until C14 settles its
+    /// layout (kernel specification K25).
+    Endpoint,
 }
 
 /// The size of an address space object, in bits: 8 KiB.
 pub const ADDRESS_SPACE_BITS: u8 = 13;
+/// log2 of a capability slot's size: 32 bytes, as seL4's `cte_t` on AArch64.
+pub const SLOT_BITS: u8 = 5;
+/// The smallest CNode radix: two slots.
+pub const MIN_RADIX: u8 = 1;
+/// The largest CNode radix: a CNode of 2^47 bytes, the largest piece.
+pub const MAX_RADIX: u8 = MAX_BITS - SLOT_BITS;
+/// The size of an endpoint, in bits: 64 bytes, provisional until C14.
+pub const ENDPOINT_BITS: u8 = 6;
 
 impl ObjectType {
     /// log2 of the object's size in bytes.
@@ -76,6 +95,19 @@ impl ObjectType {
             ObjectType::Frame2M => 21,
             ObjectType::Frame1G => 30,
             ObjectType::AddressSpace => ADDRESS_SPACE_BITS,
+            ObjectType::CNode(radix) => radix.saturating_add(SLOT_BITS),
+            ObjectType::Endpoint => ENDPOINT_BITS,
+        }
+    }
+
+    /// Whether the size argument is in range: an untyped size from
+    /// [`MIN_BITS`] to [`MAX_BITS`], a CNode radix from [`MIN_RADIX`] to
+    /// [`MAX_RADIX`]. Other types take no size.
+    pub const fn size_ok(self) -> bool {
+        match self {
+            ObjectType::Untyped(bits) => bits >= MIN_BITS && bits <= MAX_BITS,
+            ObjectType::CNode(radix) => radix >= MIN_RADIX && radix <= MAX_RADIX,
+            _ => true,
         }
     }
 
@@ -123,15 +155,33 @@ impl Untyped {
     /// A free piece of `2^bits` bytes at `base`, which must be aligned to its
     /// size. RAM pieces must already be zero.
     pub const fn new(base: u64, bits: u8, device: bool) -> Option<Self> {
+        Self::from_parts(base, bits, device, 0)
+    }
+
+    /// A piece with its watermark, as an untyped capability records it (C11).
+    /// `None` if the piece is misaligned, of a size out of range, or the
+    /// watermark lies beyond its end.
+    pub const fn from_parts(base: u64, bits: u8, device: bool, watermark: u64) -> Option<Self> {
         if bits < MIN_BITS || bits > MAX_BITS || base & ((1 << bits) - 1) != 0 {
+            return None;
+        }
+        if watermark > 1 << bits {
             return None;
         }
         Some(Self {
             base,
             bits,
             device,
-            watermark: 0,
+            watermark,
         })
+    }
+
+    /// Marks the whole piece used, as seL4's `setUntypedCapAsFull` does when
+    /// an untyped capability is copied: two capabilities to one piece then
+    /// never hand out the same memory. The piece makes objects again only
+    /// after a reset, once nothing derives from it.
+    pub fn set_full(&mut self) {
+        self.watermark = self.size();
     }
 
     pub const fn base(&self) -> u64 {
@@ -165,9 +215,7 @@ impl Untyped {
         if count == 0 {
             return Err(RetypeError::ZeroCount);
         }
-        if let ObjectType::Untyped(bits) = ty
-            && !(MIN_BITS..=MAX_BITS).contains(&bits)
-        {
+        if !ty.size_ok() {
             return Err(RetypeError::BadSize);
         }
         if self.device && !ty.allowed_from_device() {
@@ -188,8 +236,9 @@ impl Untyped {
         Ok(self.base + start)
     }
 
-    /// Begins a reset, once nothing made from the piece is left (C11 checks
-    /// that through the derivation tree, as seL4 does). A device piece is
+    /// Begins a reset, once nothing made from the piece is left (the
+    /// capability system checks that through the derivation tree, as seL4
+    /// does). A device piece is
     /// never cleared, so its watermark drops to zero at once. A RAM piece
     /// keeps its watermark, which [`Untyped::reset_step`] lowers.
     pub fn begin_reset(&mut self) {

@@ -6,7 +6,7 @@
 mod common;
 
 use common::Lcg;
-use kmem::untyped::{MAX_BITS, MIN_BITS, ObjectType, RetypeError, Untyped, decompose};
+use kmem::untyped::{MAX_BITS, MAX_RADIX, MIN_BITS, ObjectType, RetypeError, Untyped, decompose};
 
 const KIB: u64 = 1024;
 
@@ -107,6 +107,62 @@ fn device_untyped_makes_only_frames_and_device_untyped() {
     assert_eq!(u.retype(ObjectType::Frame4K, 1), Ok(0x900_0000));
     assert_eq!(u.retype(ObjectType::Untyped(12), 1), Ok(0x900_1000));
     assert_eq!(u.retype(ObjectType::Frame2M, 1), Err(RetypeError::NoRoom));
+    // The kernel keeps no slots or endpoints in MMIO (C11).
+    assert_eq!(
+        u.retype(ObjectType::CNode(1), 1),
+        Err(RetypeError::DeviceMemory)
+    );
+    assert_eq!(
+        u.retype(ObjectType::Endpoint, 1),
+        Err(RetypeError::DeviceMemory)
+    );
+}
+
+#[test]
+fn cnodes_and_endpoints_have_their_sizes() {
+    // A CNode is 2^(radix + 5) bytes; an endpoint is 64 bytes for now.
+    assert_eq!(ObjectType::CNode(1).size_bits(), 6);
+    assert_eq!(ObjectType::CNode(7).size_bits(), 12);
+    assert_eq!(ObjectType::CNode(MAX_RADIX).size_bits(), MAX_BITS);
+    assert_eq!(ObjectType::Endpoint.size_bits(), 6);
+    let mut u = Untyped::new(0x4000_0000, 14, false).unwrap();
+    assert_eq!(u.retype(ObjectType::Endpoint, 1), Ok(0x4000_0000));
+    // A CNode of 4 KiB is aligned to 4 KiB, past the endpoint.
+    assert_eq!(u.retype(ObjectType::CNode(7), 1), Ok(0x4000_1000));
+    assert_eq!(u.retype(ObjectType::CNode(1), 2), Ok(0x4000_2000));
+    assert_eq!(u.watermark(), 0x2080);
+    // A radix out of range is refused before anything changes.
+    for radix in [0, MAX_RADIX + 1, u8::MAX] {
+        assert_eq!(
+            u.retype(ObjectType::CNode(radix), 1),
+            Err(RetypeError::BadSize)
+        );
+    }
+    assert_eq!(u.retype(ObjectType::CNode(10), 1), Err(RetypeError::TooBig));
+    assert_eq!(u.watermark(), 0x2080);
+}
+
+#[test]
+fn a_piece_round_trips_through_its_parts() {
+    let mut u = Untyped::new(0x4000_0000, 16, false).unwrap();
+    u.retype(ObjectType::Frame4K, 3).unwrap();
+    let back = Untyped::from_parts(u.base(), u.bits(), u.is_device(), u.watermark());
+    assert_eq!(back, Some(u));
+    // A watermark past the end, or a misaligned base, is refused.
+    assert!(Untyped::from_parts(0x4000_0000, 16, false, 64 * KIB + 1).is_none());
+    assert!(Untyped::from_parts(0x4000_0000, 16, false, 64 * KIB).is_some());
+    assert!(Untyped::from_parts(0x4000_1000, 16, false, 0).is_none());
+    // Full: nothing more can be made until a reset.
+    u.set_full();
+    assert_eq!(u.watermark(), 64 * KIB);
+    assert_eq!(u.retype(ObjectType::Frame4K, 1), Err(RetypeError::NoRoom));
+    u.begin_reset();
+    let mut cleared = 0;
+    while let Some((_, len)) = u.reset_step(64 * KIB) {
+        cleared += len;
+    }
+    assert_eq!(cleared, 64 * KIB);
+    assert_eq!(u.retype(ObjectType::Frame4K, 1), Ok(0x4000_0000));
 }
 
 #[test]

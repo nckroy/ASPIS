@@ -32,6 +32,7 @@ dependencies = [
  "fdt",
  "glyph-atlas",
  "kargs",
+ "kcap",
  "kmem",
 ]
 
@@ -229,6 +230,13 @@ dependencies = [
 [[package]]
 name = "kargs"
 version = "0.1.0"
+
+[[package]]
+name = "kcap"
+version = "0.1.0"
+dependencies = [
+ "kmem",
+]
 
 [[package]]
 name = "kmem"

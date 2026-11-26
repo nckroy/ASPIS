@@ -7,36 +7,37 @@
 //!
 //! At boot, [`init`] divides the memory map, builds the kernel's own tables
 //! with pages from the boot allocator, which it reaches through the boot
-//! window, switches to them, and retires the bootstrap tables. Later chunks make their boot objects. Then
-//! [`seal`] seals the boot allocator and gives the rest of RAM, and the
-//! device memory, to the boot untyped table. From then on the kernel never
-//! allocates memory that no job supplied (ADR 0048, rule 1): user address
-//! spaces, their tables and their frames are retyped from untyped memory
-//! ([`untyped::retype`], [`space`]), and the kernel reaches user memory only
-//! by a software walk ([`user`]).
+//! window, switches to them, and retires the bootstrap tables. Later chunks
+//! make their boot objects, with pages from [`boot_page`]. Then [`seal`]
+//! takes the boot CNodes' pages, seals the boot allocator, and gives the
+//! rest of RAM, and the device memory, to the boot capability space as
+//! untyped capabilities ([`crate::cap::boot`]). From then on the kernel
+//! never allocates memory that no job supplied (ADR 0048, rule 1): user
+//! address spaces, their tables and their frames are retyped from untyped
+//! memory through capabilities ([`crate::cap`], [`space`]), and the kernel
+//! reaches user memory only by a software walk ([`user`]).
 //!
-//! The pure parts are in the `kmem` crate, which is tested on the host.
+//! The pure parts are in the `kmem` and `kcap` crates, which are tested on
+//! the host.
 //!
-//! C11: capabilities name untyped pieces, frames and address spaces; until
-//! then they are kernel-internal handles. C12: the kernel lock guards the
-//! statics here; until then one CPU runs, with exceptions masked.
+//! C12: the kernel lock guards the statics here; until then one CPU runs,
+//! with exceptions masked.
 
-mod arch;
+pub(crate) mod arch;
 mod boot_objects;
 pub mod boot_window;
 mod devices;
 mod kernel_map;
-mod phys;
-// C11 to C16 build on these: until their system calls exist, only the
-// in-QEMU tests use them.
+pub(crate) mod phys;
+// C12 to C16 build on these: until their system calls exist, only the
+// capability layer and the in-QEMU tests use them.
 #[cfg_attr(not(aspis_test_build), allow(dead_code))]
-mod space;
+pub(crate) mod space;
 #[cfg(aspis_test_build)]
 mod tests;
+pub(crate) mod untyped;
 #[cfg_attr(not(aspis_test_build), allow(dead_code))]
-mod untyped;
-#[cfg_attr(not(aspis_test_build), allow(dead_code))]
-mod user;
+pub(crate) mod user;
 
 use boot_window::BootWindow;
 use bootinfo::{BootInfo, MemoryMap, MemoryType};
@@ -105,10 +106,15 @@ pub struct Report {
     pub untyped_bytes: u64,
     pub ram_pieces: usize,
     pub device_pieces: usize,
-    /// Pieces beyond the table's capacity, unused, and their bytes.
+    /// Untyped capabilities in the boot capability space: one for each
+    /// piece, RAM and device.
+    pub untyped_caps: usize,
+    /// Pieces beyond the boot capability space's capacity, unused, and
+    /// their bytes.
     pub dropped_pieces: usize,
     pub dropped_bytes: u64,
-    /// Bytes the boot allocator handed out: the kernel's page tables.
+    /// Bytes the boot allocator handed out: the kernel's page tables, and
+    /// the boot CNodes.
     pub boot_pages_bytes: u64,
     /// Bytes the direct map covers.
     pub direct_map_bytes: u64,
@@ -147,6 +153,7 @@ static STATE: BootCell<State> = BootCell::new(State {
         untyped_bytes: 0,
         ram_pieces: 0,
         device_pieces: 0,
+        untyped_caps: 0,
         dropped_pieces: 0,
         dropped_bytes: 0,
         boot_pages_bytes: 0,
@@ -380,9 +387,56 @@ pub fn init(info_range: (u64, u64), info: &BootInfo<'_>, fdt: Option<&fdt::Fdt<'
     moved
 }
 
-/// Seals the boot allocator and builds the boot untyped table from what is
-/// left, zeroing its RAM (ADR 0048, rule 1). Later chunks make their boot
-/// objects, other cores' stacks and the LPI tables before this.
+/// Takes a zeroed page of usable RAM from the boot allocator, after the
+/// switch to the kernel's own tables and before the seal, for a boot
+/// object: the boot CNodes now; later chunks' boot objects, other cores'
+/// stacks and the LPI tables (kernel specification, "Boot memory"). Boot
+/// objects belong to no job and are never destroyed (ADR 0048, rule 2), so
+/// the page never comes back.
+///
+/// Before the seal only: after it the boot allocator panics, since the
+/// kernel then never allocates memory that no job supplied (ADR 0048,
+/// rule 1).
+pub fn boot_page() -> u64 {
+    assert!(
+        INIT_DONE.load(Ordering::Relaxed),
+        "mm::boot_page runs before mm::init"
+    );
+    // SAFETY: during boot, on one CPU; the reference lives only for this
+    // call, and no other reference to the allocator is live.
+    let alloc = unsafe { BOOT_ALLOC.get_mut() };
+    let pa = match alloc.alloc(None) {
+        Ok(pa) => pa,
+        Err(AllocError::Exhausted) => panic!("no usable RAM left for the boot objects"),
+        Err(AllocError::Sealed) => panic!("the boot allocator is sealed"),
+    };
+    let Some(va) = layout::direct_va(pa) else {
+        // `classify` leaves RAM beyond the direct map out of usable memory.
+        panic!("boot page {pa:#x} is beyond the direct map");
+    };
+    // SAFETY: a page of usable RAM the boot allocator just handed out, which
+    // nothing uses, mapped read-write as normal memory in the direct map.
+    unsafe { arch::zero(va, PAGE_SIZE) };
+    // The zeroes are visible before the page is used.
+    arch::dsb_ishst();
+    pa
+}
+
+/// Builds the boot capability space and seals the boot allocator (ADR 0048,
+/// rule 1; kernel specification, "What the root server receives"):
+///
+/// 1. takes the boot CNodes' pages, with [`boot_page`]: the root CNode, the
+///    page that keeps the boot CNodes' original capabilities, and a fixed
+///    [`crate::cap::boot::UNTYPED_CNODES`] untyped CNodes, enough for
+///    [`untyped::MAX_PIECES`] pieces whatever the pages taken do to the free
+///    set;
+/// 2. seals the boot allocator;
+/// 3. divides what is left, and the device memory, into pieces, zeroing the
+///    RAM, and puts an untyped capability to each piece in the untyped
+///    CNodes.
+///
+/// Later chunks make their boot objects, other cores' stacks and the LPI
+/// tables before this.
 pub fn seal() {
     // A second seal would give the same memory out twice as untyped
     // memory (ADR 0048, rule 1); a seal before `init` would give it all.
@@ -391,14 +445,19 @@ pub fn seal() {
         "mm::seal runs before mm::init"
     );
     assert!(!SEALED.swap(true, Ordering::Relaxed), "mm::seal runs twice");
+    let root = boot_page();
+    let originals = boot_page();
+    let cnodes: [u64; crate::cap::boot::UNTYPED_CNODES] = core::array::from_fn(|_| boot_page());
     // SAFETY: the one call, after `init` has returned; it holds the only
     // references to these until it returns.
     let (alloc, state, c) = unsafe { (BOOT_ALLOC.get_mut(), STATE.get_mut(), CLASSIFIED.get()) };
     alloc.seal();
-    let t = untyped::build(alloc.free(), &c.device);
+    let mut space = crate::cap::boot::BootSpace::new(root, originals, cnodes);
+    let t = untyped::build(alloc.free(), &c.device, |piece| space.add_untyped(&piece));
     state.report.untyped_bytes = t.ram_bytes;
     state.report.ram_pieces = t.ram;
     state.report.device_pieces = t.device;
+    state.report.untyped_caps = space.untyped_count();
     state.report.dropped_pieces = t.dropped;
     state.report.dropped_bytes = t.dropped_bytes;
     state.report.boot_pages_bytes = alloc.taken().total();
