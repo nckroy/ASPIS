@@ -62,7 +62,7 @@ Claude drafted this record from the project owner's choice of seL4 as the model,
 - **Priority inversion through shared servers is bounded** by the servers' priorities, their callers' budgets and the handlers on their timeout endpoints.
 - **Passive servers bear the cost of prompt cancellation.** One can lose its context mid-request, and the handler on its timeout endpoint cleans up.
 - **Page fetching is charged to the pager**, whose own budget bounds the fetching it does for all its clients.
-- **The stub gains two register writes**, the virtual offset and the timer access controls at EL2. C04's follow-up work adds them, before C13a starts the timer.
+- **The stub already makes both register writes.** M1's stub zeroes the virtual offset and opens the timer access controls when it is entered at EL2 (C04), and a kernel test checks that the virtual count matches the physical one.
 - **One timer path serves bare metal, QEMU and cloud VMs**, which C81 needs.
 
 ## References

@@ -347,6 +347,34 @@ mod tests {
         assert!(console::advance(FbState::Kernel).is_err());
     });
 
+    crate::kernel_test!(virtual_count_has_no_offset, {
+        // The kernel's clock is the virtual count (ADR 0051, rule 4). When
+        // the stub is entered at EL2 it zeroes CNTVOFF_EL2 and lets EL1 read
+        // the physical counter, so the virtual count read between two
+        // physical reads must fall between them. Tests run under QEMU's TCG,
+        // with no hypervisor of their own to set an offset.
+        fn read(physical: bool) -> u64 {
+            let t: u64;
+            // SAFETY: reading a counter has no side effects; the ISB keeps
+            // the read in program order.
+            unsafe {
+                if physical {
+                    core::arch::asm!("isb", "mrs {}, cntpct_el0", out(reg) t, options(nomem, nostack));
+                } else {
+                    core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) t, options(nomem, nostack));
+                }
+            }
+            t
+        }
+        let before = read(true);
+        let virtual_count = read(false);
+        let after = read(true);
+        assert!(
+            before <= virtual_count && virtual_count <= after,
+            "virtual count {virtual_count} outside [{before}, {after}]: CNTVOFF_EL2 isn't zero"
+        );
+    });
+
     crate::kernel_test!(arguments_after_an_error_are_ignored, {
         let s = settings::read(b"log.level=debug Bad=1 log.level=error", |_| {});
         assert_eq!(s.log_level, log::Level::Debug);
