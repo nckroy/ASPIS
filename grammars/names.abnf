@@ -1,0 +1,55 @@
+; SPDX-FileCopyrightText: 2026 Nicole Roy
+; SPDX-License-Identifier: MPL-2.0
+; uses: json
+;
+; Names, references, action strings and the canonical call text (ADR 0063).
+; Literal words use RFC 7405 %s"...": plain ABNF strings are case-insensitive.
+
+; ---- Names --------------------------------------------------------
+name          = label 1*( "." label )
+                ; constraint: length at most 255
+label         = lc-alpha *lchar / "_" ( lc-alpha / DIGIT ) *lchar
+                ; constraint: length at most 63
+                ; constraint: not word true false if then else in is like has self super crate
+lchar         = lc-alpha / DIGIT / "_"
+lc-alpha      = %x61-7A                       ; a-z only
+interface-name = name
+type-name     = name
+
+member-name   = lc-alpha *( lc-alpha / DIGIT / "_" ( lc-alpha / DIGIT ) )
+                ; no "__" and no trailing "_", so "--" never comes from a
+                ; name in generated rule names (ADR 0067)
+                ; constraint: length at most 63
+                ; constraint: not word true false if then else in is like has self super crate
+
+; ---- Versions and references -------------------------------------
+number        = "0" / %x31-39 *4DIGIT         ; no leading zeros
+                ; constraint: at most 65535
+major         = number
+minor         = number
+interface-ref = interface-name "/" major [ "." minor ]
+
+; ---- Actions, groups and scopes ------------------------------------
+action-name   = interface-name "/" major "/" member-name    ; one method
+group-name    = interface-name "/" major "/@" member-name   ; an IDL action group
+all-methods   = interface-name "/" major "/*"               ; every method of the major
+action-ref    = action-name / group-name / all-methods
+scope-token   = action-ref                    ; the ASPIS form of an RFC 6749 scope-token
+
+; ---- Errors ---------------------------------------------------------
+error-ref     = interface-name "/" major "!" member-name
+              / id-text "/" major "!#" error-code-text  ; name not known
+error-code-text = number
+                ; constraint: in 1..65535
+
+; ---- Canonical call text (output only) ---------------------------------
+call-text     = action-name SP target [ SP call-args ]
+target        = id-text / "-"                 ; "-": a [kernel] call, named by capability (ADR 0050)
+id-text       = 64hex                         ; interim; replaced by D34's object-ID text form
+call-args     = json-object                   ; per method, generated (ADR 0067)
+reply-text    = %s"ok" [ SP reply-results ]
+              / outcome-word SP error-ref
+outcome-word  = %s"refused" / %s"failed" / %s"unreachable" / %s"indeterminate"
+reply-results = json-object                   ; per method, generated (ADR 0067)
+request-id-text = 32hex                       ; for log records and spans, not the call text
+hex           = DIGIT / %x61-66               ; 0-9 a-f, lowercase only

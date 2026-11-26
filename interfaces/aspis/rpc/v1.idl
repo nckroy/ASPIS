@@ -1,0 +1,205 @@
+// SPDX-FileCopyrightText: 2026 Nicole Roy
+// SPDX-License-Identifier: MPL-2.0
+edition 2026;
+
+//! The system errors (ADR 0065, rule 6). Every method may return any of
+//! them, and no method lists them. The protocol methods, 0xFF01 to 0xFF08,
+//! are defined with the call header, not here: only their text forms use
+//! the `aspis.rpc` prefix (docs/design/call-language.md, "The system
+//! errors"). 1.0 is unpublished: its lock is empty until the IDL can say
+//! that `error_key`'s code is not 0, and C18 publishes it then. L23's
+//! tuning of the envelope's bounds, which aren't in this file, comes as a
+//! later minor.
+
+[id(aspis.rpc), object_id(reserved(0x0001)), version(1.0)]
+interface rpc {
+    /// A supported range of minors of one major.
+    [closed]
+    struct version_range {
+        major: u16,
+        highest_minor: u16,
+    }
+
+    /// An error's key alone: the interface, its major and the code (36
+    /// octets). The kernel interfaces use it for a pager's Fail and the
+    /// page-unavailable fault (ADR 0057, rule 7). The code is never 0, a
+    /// constraint this IDL can't state yet.
+    [closed]
+    struct error_key {
+        interface: id,
+        major: u16,
+        code: u16,
+    }
+
+    /// Why a token was rejected. The values follow the token profile,
+    /// which is D85's (L13).
+    enum token_problem: u8 {
+        expired = 1,
+        bad_proof = 2,
+        wrong_audience = 3,
+        unknown_issuer = 4,
+        other = 5,
+    }
+
+    /// Why a session ended.
+    enum session_end: u8 {
+        expired = 1,
+        revoked = 2,
+        closed = 3,
+        unknown = 4,
+    }
+
+    /// Why a call was never delivered.
+    enum unreachable_cause: u8 {
+        no_route = 1,
+        location_unknown = 2,
+        peer_authentication_failed = 3,
+        connection_failed = 4,
+        manager_not_running = 5,
+    }
+
+    /// Why no answer came to a call that may have run.
+    enum indeterminate_cause: u8 {
+        connection_lost = 1,
+        server_exited = 2,
+        abandoned = 3,
+    }
+
+    /// Which per-session or per-server limit was reached.
+    enum limit_kind: u8 {
+        streams_per_session = 1,
+        imports_per_session = 2,
+        sessions = 3,
+        pending_calls = 4,
+        badges_per_session = 5,
+    }
+
+    /// The header extensions' kinds (docs/design/call-language.md,
+    /// "Header extensions"). The layout of tracestate is D84's.
+    enum extension_kind: u8 {
+        trace_context = 1,
+        tracestate = 2,
+    }
+
+    /// A header, frame or body doesn't parse, or breaks a constraint.
+    [refused]
+    error malformed = 1;
+
+    /// The message is over a size limit.
+    [refused]
+    error too_large = 2 { limit: u32 };
+
+    /// An unknown protocol version in word 0.
+    [refused]
+    error protocol_unsupported = 3 { highest: u8 };
+
+    /// A bind to a major that isn't served, or a minimum minor above what
+    /// is served. The detail lists what is served.
+    [refused]
+    error version_unsupported = 4 { served: seq<version_range, 16> };
+
+    /// The object doesn't implement the interface.
+    [refused]
+    error no_such_interface = 5;
+
+    /// An unknown method number, or one newer than the session's minor.
+    [refused]
+    error no_such_method = 6 { method: u16, session_minor: u16, since_minor: u16? };
+
+    /// A request field newer than the session's minor.
+    [refused]
+    error field_too_new = 7 { tags: seq<u16, 8> };
+
+    /// No such object, or a bind the caller may not make on an object it
+    /// may not discover.
+    [refused]
+    error no_such_object = 8;
+
+    /// Policy denied a bind the caller may see. The fields are RFC 9470's
+    /// step-up hints, present only when the decision context has them.
+    [refused]
+    error bind_refused = 9 { acr_values: string<255>?, max_age: u64? };
+
+    /// The token was rejected.
+    [refused, retry(rebind)]
+    error token_rejected = 10 { reason: token_problem };
+
+    /// A bind refused because the node's signed root is too old. The
+    /// envelope's `retry_after` says when to try again.
+    [refused, retry(later)]
+    error tree_too_stale = 11;
+
+    /// The session ended. Refused when the manager answers it; otherwise
+    /// the outcome follows the delivery state.
+    [refused, retry(rebind)]
+    error session_ended = 12 { reason: session_end };
+
+    /// The method is outside what the bind authorized.
+    [refused]
+    error method_not_granted = 13;
+
+    /// The deadline passed: unreachable before delivery, indeterminate
+    /// after.
+    [retry(later)]
+    error deadline_passed = 14;
+
+    /// The call was canceled: unreachable before delivery, indeterminate
+    /// after.
+    error canceled = 15;
+
+    /// The call was never delivered. Made by a runtime or a network
+    /// server.
+    [retry(later)]
+    error unreachable = 16 { cause: unreachable_cause };
+
+    /// The call may have run, and no answer came. Made by a runtime or a
+    /// network server.
+    [retry(later)]
+    error indeterminate = 17 { cause: indeterminate_cause };
+
+    /// The server is overloaded. The envelope's `retry_after` says when to
+    /// try again.
+    [refused, retry(later)]
+    error overloaded = 18;
+
+    /// The server, or the runtime, couldn't get memory for the call within
+    /// its job's budget.
+    [retry(later)]
+    error no_memory = 19;
+
+    /// A per-session or per-server limit.
+    [refused]
+    error resource_limit = 20 { limit: limit_kind, maximum: u32 };
+
+    /// A capability at this position can't cross nodes.
+    error capability_not_remotable = 21 { position: u8 };
+
+    /// A received capability lacks the declared rights.
+    [refused]
+    error capability_rights = 22 { position: u8, missing: u8 };
+
+    /// A local interface or method, reached through a network server.
+    [refused]
+    error local_only = 23;
+
+    /// A stream opened or pulled after a position older than the server
+    /// keeps: list again.
+    [refused, retry(higher)]
+    error stream_expired = 24 { oldest: u64? };
+
+    /// The session has no such stream.
+    [refused]
+    error no_such_stream = 25;
+
+    /// The same request ID arrived with a different body.
+    [refused]
+    error request_id_conflict = 26;
+
+    /// An internal error.
+    error internal = 27;
+
+    /// A request carries an enum value, flag bit or union arm that the
+    /// server knows, but that is newer than the session's minor.
+    [refused]
+    error value_too_new = 28 { since_minor: u16 };
+}

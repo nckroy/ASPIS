@@ -4,7 +4,7 @@
 # 0063. Names and the canonical call text
 
 - **Status:** Accepted
-- **Date:** 2026-11-25
+- **Date:** 2026-11-25, updated 2026-11-26
 
 ## Context
 
@@ -25,11 +25,11 @@ The grammar, vectors and examples are in the [call-language specification](../de
 
 1. **One name grammar serves interfaces and types** ([spec](../design/call-language.md#interface-and-type-names)).
    - A name is lowercase ASCII, dotted and reverse-DNS, with at least two labels. A label uses `a-z`, digits and `_`, never `-`, and starts with a letter, or with `_` and a letter or digit. Labels and names have length limits.
-   - No label is a Cedar reserved word.
+   - No label is a Cedar reserved word, or `self`, `super` or `crate`, which Rust can't take as raw identifiers in a generated module path.
    - So every type name is a Cedar entity-type path, and every action string a Cedar string and an RFC 6749 scope-token, with no escaping. CI checks both.
    - An interface and a type may share a name; an interface reference carries a major.
    - The grammar is `grammars/names.abnf`, hand-written and checked against C07's generator ([The names grammar](../design/call-language.md#the-names-grammar)).
-2. **Publishers transliterate DNS names the D-Bus way.** A hyphen becomes `_`. A label that starts with a digit, or is a Cedar reserved word, takes a leading `_`: `org.aspis_os.sql`, `org._7_zip.archive`, `_in.co.example.ledger`.
+2. **Publishers transliterate DNS names the D-Bus way.** A hyphen becomes `_`. A label that starts with a digit, or is a Cedar reserved word or one of `self`, `super` and `crate`, takes a leading `_`: `org.aspis_os.sql`, `org._7_zip.archive`, `_in.co.example.ledger`, `io._crate.registry`.
 3. **The `aspis.` prefix is reserved by ASPIS policy** ([0027](0027-applications-extend-the-system.md), rule 7). `aspis` isn't a top-level domain.
    - Kernel interfaces are `aspis.kernel.<object>`, one per kind of kernel object ([0059](0059-the-kernel-interface-library.md), rule 1), such as `aspis.kernel.eventcount`.
    - The interfaces the kernel calls are `aspis.kernel.fault`, `aspis.kernel.pager` and `aspis.kernel.memory_request`. No kernel object's interface takes one of these names: the pager capability's is `aspis.kernel.pager_object`.

@@ -1,0 +1,228 @@
+// SPDX-FileCopyrightText: 2026 Nicole Roy
+// SPDX-License-Identifier: MPL-2.0
+edition 2026;
+
+//! A test fixture, not an interface of ASPIS: every construct the
+//! compiler knows, across three minors, for its tests.
+
+use org.example.base/1.0.{point, pair};
+
+/// The fixture's interface.
+[id(org.example.kinds), object_id(hex(00000000000000000000000000000000000000000000000000000000000000a1)), version(1.2), groups(read, write, extra)]
+interface kinds {
+    /// Most items in a list.
+    const max_items: u16 = 4;
+    const big: u64 = 0x10;
+    const neg: i8 = -1;
+
+    /// A short name.
+    alias name = string<63>;
+    [deprecated(1.1)]
+    alias label = string<16>;
+
+    /// Closed flags at u8.
+    [closed]
+    flags perms: u8 {
+        read = 1,
+        write = 2,
+        reserved 4,
+        exec = 8,
+    }
+
+    /// Open flags at u64.
+    flags wide: u64 {
+        low = 1,
+        high = 0x8000000000000000,
+        [since(1.1)] mid = 0x100000000,
+    }
+
+    /// An open enum at u16.
+    enum level: u16 {
+        low = 1,
+        high = 2,
+        reserved 3,
+        [since(1.1)] top = 4,
+    }
+
+    /// A closed enum at u32.
+    [closed]
+    enum mode: u32 {
+        off = 0,
+        on = 1,
+        auto = 0xffffffff,
+    }
+
+    /// A closed, fixed-size struct, usable in arrays.
+    [closed]
+    struct cell {
+        a: i8,
+        b: i16,
+        c: i32,
+        d: i64,
+        e: f32,
+        f: f64,
+        g: bool,
+        h: uuid,
+        i: id,
+        j: perms,
+        k: level,
+    }
+
+    /// A closed struct with optional and variable-size fields.
+    [closed]
+    struct rec {
+        n: name,
+        o: u32?,
+        p: string<8>?,
+        q: array<cell, 2>,
+        r: array<string<4>, 2>,
+        s: seq<u8?, 3>,
+    }
+
+    /// An open struct with optional fields of every kind. [org.example.kinds/1.get]
+    /// reads one, and [org.example.kinds/1.put.item] writes one; `pt` is a
+    /// [org.example.base/1.point]. Things are listed by
+    /// [aspis.catalog/1.list], which this compiler doesn't check.
+    struct thing {
+        key: u64,
+        count: u32,
+        tags: seq<name, max_items>,
+        blob: bytes<16>?,
+        nested: rec?,
+        pt: point?,
+        [sensitive] secret: string<32>?,
+        [since(1.1)] extra: u64?,
+        [since(1.2)] more: wide?,
+    }
+
+    /// A closed union.
+    [closed]
+    union shape {
+        @1 circle: u32,
+        @2 square: cell,
+        reserved @3,
+        @4 none: bool?,
+    }
+
+    /// An open union that holds an open struct.
+    union event {
+        @1 created: thing,
+        @2 deleted: id,
+        reserved @3,
+        [format(json)] @4 note: string<128>,
+        [since(1.1)] @5 moved: pair,
+        /// Named as the generator's unknown-arm variant would be, but for
+        /// its trailing underscore.
+        [since(1.2)] @6 unknown: u8,
+    }
+
+    /// New in 1.1, with required fields and a capability.
+    [since(1.1)]
+    struct later {
+        a: u8,
+        b: point,
+        type: u8,
+        c: cap<org.example.base/1>?,
+    }
+
+    /// Members named as generated helpers would be, but for their trailing
+    /// underscore or third hyphen: no member name collides with them.
+    [since(1.2)]
+    struct odd {
+        unknown: u8,
+        unknown_tag: u8?,
+        tail: u8?,
+    }
+
+    /// Types named as Rust's prelude types and variants are: generated
+    /// code names those by full path, so these shadow nothing.
+    [since(1.2)]
+    struct result {
+        o: option?,
+        s: some?,
+        k: ok?,
+    }
+
+    /// An open enum: a Rust newtype, `Option(u8)`.
+    [since(1.2)]
+    enum option: u8 {
+        a = 1,
+    }
+
+    /// `Some(u16)`, which would shadow the variant.
+    [since(1.2)]
+    enum some: u16 {
+        a = 1,
+    }
+
+    /// `Ok(u8)`, likewise.
+    [since(1.2)]
+    flags ok: u8 {
+        a = 1,
+    }
+
+    /// An object type.
+    [type(org.example.widget), parents(org.example.box)]
+    object widget {
+        owner: id,
+        size: u64,
+        [since(1.1)] labels: seq<string<63>, 16>?,
+    }
+
+    /// Nothing under that key.
+    error not_found = 1 { key: u64 };
+
+    /// Try again later.
+    [refused, retry(later)]
+    error busy = 2;
+
+    /// It was there, and isn't now.
+    [since(1.1)]
+    error gone = 3 { at: u64?, why: string<32> };
+
+    /// An error named as the generated unknown-code variant would be.
+    [since(1.2)]
+    error unknown = 4;
+
+    /// An error named as the generated error enum is.
+    [since(1.2)]
+    error error = 5 { unknown: u8? };
+
+    /// Reads one thing.
+    [group(read), readonly, idempotent]
+    @1 get(key: u64, [sensitive] secret: string<32>?) -> thing error(not_found, gone);
+
+    /// Writes one thing.
+    [group(write)]
+    @2 put(item: thing, shape: shape, ev: event) -> (ok: bool, [since(1.1)] at: u64?) error(busy);
+
+    /// A lossy stream.
+    [group(read), readonly, lossy]
+    @3 tail(after: u64?, lvl: level?) -> stream<thing>;
+
+    /// Three capabilities.
+    [group(write)]
+    @4 give(
+        a: cap<org.example.base/1>,
+        b: cap<org.example.base/1.1>?,
+        c: cap<aspis.kernel.memory/1, read, immutable>,
+    ) -> u8;
+
+    /// Two capabilities, and a body that may spill.
+    [group(write)]
+    @5 big(a: cap<org.example.base/1>, b: cap<org.example.base/1>, data: bytes<4096>) -> (n: u32);
+
+    /// Local by inference: an eventcount capability can't cross nodes.
+    [group(read)]
+    @6 notify(ec: cap<aspis.kernel.eventcount/1, read>);
+
+    reserved @7;
+
+    /// New in 1.1.
+    [since(1.1), group(extra)]
+    @8 later_op(x: later) -> later;
+
+    /// New in 1.2, and already deprecated.
+    [since(1.2), deprecated(1.2), group(read)]
+    @9 newest(m: mode, f: perms, w: wide) -> array<cell, max_items>;
+}

@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+# aspis.catalog/1: SHA3-256 of each published minor's canonical form (ADR 0067, rule 7).
+1.0 sha3-256 1f728f874ab60fcb87b839f7fbc276378b7cac3455c1a01aa405f847a828f7b5

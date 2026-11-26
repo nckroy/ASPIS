@@ -1,0 +1,75 @@
+; SPDX-FileCopyrightText: 2026 Nicole Roy
+; SPDX-License-Identifier: MPL-2.0
+; uses: core
+;
+; JSON as the canonical call text writes it (ADR 0063, rule 9; ADR 0067,
+; rule 8): RFC 8259 values in compact form, with no insignificant
+; whitespace. Written here from RFC 8259's and RFC 8785's definitions,
+; not copied from them. Every rule is prefixed "json-".
+;
+; json-object and json-value accept any compact RFC 8259 value, as an
+; embedded [format(json)] string may hold one. json-string is the form
+; the IDL's JSON mapping itself writes: RFC 8785's escaping, section
+; 3.2.2.2. Each method's generated text grammar gives its exact arguments
+; and results (docs/design/call-language.md, "Generated grammars").
+
+; ---- Any compact RFC 8259 value ------------------------------------
+json-value    = json-object / json-array / json-any-string / json-number
+              / %s"true" / %s"false" / %s"null"
+; An embedded [format(json)] string: any value but a bare null, which
+; under a field's key means redacted. The writer writes a bare null as
+; the JSON string "null".
+json-embedded = json-object / json-array / json-any-string / json-number
+              / %s"true" / %s"false"
+json-object   = "{" [ json-member *( "," json-member ) ] "}"
+json-member   = json-any-string ":" json-value
+json-array    = "[" [ json-value *( "," json-value ) ] "]"
+json-number   = [ "-" ] json-int [ "." 1*DIGIT ] [ ( %s"e" / %s"E" ) [ "+" / "-" ] 1*DIGIT ]
+json-int      = "0" / %x31-39 *DIGIT
+json-any-string = %x22 *( json-unescaped / %x5C json-any-escape ) %x22
+json-any-escape = %x22 / %x5C / "/" / %s"b" / %s"f" / %s"n" / %s"r" / %s"t"
+              / %s"u" 4( DIGIT / %x41-46 / %x61-66 )
+
+; ---- Strings as the mapping writes them (RFC 8785) ------------------
+; Only '"', '\' and control characters are escaped: the five short
+; escapes, then \u00xx in lowercase hex. Text never holds U+0000.
+json-string   = %x22 *( json-unescaped / %x5C json-escape ) %x22
+json-unescaped = %x20-21 / %x23-5B / %x5D-7F / utf8-2 / utf8-3 / utf8-4
+json-escape   = %x22 / %x5C / %s"b" / %s"f" / %s"n" / %s"r" / %s"t"
+              / %s"u00" ( "0" ( %x31-37 / %s"b" / %s"e" / %s"f" ) / "1" json-hexl )
+json-hexl     = DIGIT / %x61-66                ; lowercase only
+
+; ---- Typed values, as the IDL's JSON mapping writes them --------------
+; A generated text grammar bounds an integer on a rule defined as
+; json-uint or json-uint-nz: such a rule reads as the decimal number it
+; spells, so "at most 255" applies to it (docs/design/call-language.md,
+; "How constraints bind"). These rules check shape only.
+json-uint     = "0" / json-uint-nz             ; no leading zeros
+json-uint-nz  = %x31-39 *DIGIT
+json-u64      = %x22 json-uint %x22            ; u64: a string of digits
+json-i64      = %x22 ( "-" json-uint-nz / json-uint ) %x22
+json-null     = %s"null"
+json-bool     = %s"true" / %s"false"
+; f32 and f64: the shapes ECMAScript's Number::toString writes (RFC 8785,
+; section 3.2.2.3), with -0 kept, and NaN and the infinities as strings.
+json-float    = [ "-" ] json-magnitude
+              / %x22 ( %s"NaN" / %s"Infinity" / %s"-Infinity" ) %x22
+json-magnitude = json-uint                                 ; 0, 12, 1200
+              / json-uint-nz "." json-fraction              ; 1.5
+              / "0." *5"0" %x31-39 [ json-fraction ]        ; 0.000001
+              / %x31-39 [ "." json-fraction ] %s"e" ( "+" / "-" ) json-uint-nz
+json-fraction = *DIGIT %x31-39                 ; no trailing zero
+; IDs, until D34's text form (L01), and UUIDs (RFC 9562), in lowercase.
+json-id       = %x22 64json-hexl %x22
+json-uuid     = %x22 8json-hexl "-" 4json-hexl "-" 4json-hexl "-" 4json-hexl
+                "-" 12json-hexl %x22
+; bytes: base64url without padding (RFC 4648, section 5). The unused
+; bits of the last character are zero, so each value has one form.
+json-bytes    = %x22 *json-b64-4 [ json-b64-2 / json-b64-3 ] %x22
+json-b64-4    = 4json-b64
+json-b64-2    = json-b64 ( %x41 / %x51 / %x67 / %x77 )  ; one octet: A Q g w
+json-b64-3    = 2json-b64 ( %x41 / %x45 / %x49 / %x4D / %x51 / %x55 / %x59
+                / %x63 / %x67 / %x6B / %x6F / %x73 / %x77 / %x30 / %x34 / %x38 )
+json-b64      = %x41-5A / %x61-7A / DIGIT / "-" / "_"
+; A capability parameter: its index in the message's capability list.
+json-cap      = "{" %x22 %s"cap" %x22 ":" %x30-32 "}"

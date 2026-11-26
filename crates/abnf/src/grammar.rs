@@ -740,6 +740,24 @@ impl Grammar {
         let mut unlimited = u64::MAX;
         matcher::matches(self, r, input, Some(cx), &mut unlimited)
     }
+
+    /// [`Grammar::matches`] when `cx` is None, and
+    /// [`Grammar::matches_constrained`] otherwise, taking the match's steps
+    /// from `allowance`, whatever the result. The match keeps its own
+    /// limits too, so it takes no more steps than either allows. A caller
+    /// that matches many inputs passes one allowance to all of them, and
+    /// bounds their total, as [`crate::vectors::check`] does. A match that
+    /// runs out of the allowance stops with [`Exhausted::Steps`] and leaves
+    /// it at 0.
+    pub fn matches_within(
+        &self,
+        r: RuleId,
+        input: &[u8],
+        cx: Option<&Context>,
+        allowance: &mut u64,
+    ) -> Result<bool, Exhausted> {
+        matcher::matches(self, r, input, cx, allowance)
+    }
 }
 
 /// Tarjan's strongly connected components, without recursion. Each

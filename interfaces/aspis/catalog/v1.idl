@@ -1,0 +1,80 @@
+// SPDX-FileCopyrightText: 2026 Nicole Roy
+// SPDX-License-Identifier: MPL-2.0
+edition 2026;
+
+//! The realm catalog (ADR 0028).
+//!
+//! An example, not final: it is the catalog example of
+//! docs/design/call-language.md ("Example: the catalog across two
+//! minors"), which exercises the compiler. The catalog's real interface is
+//! C51's, with D111 to D114; C51 replaces this file and rewrites its lock.
+
+[id(aspis.catalog), object_id(reserved(0x0201)), version(1.1), groups(discover, register)]
+interface catalog {
+    /// Most entries in one page.
+    const max_page: u32 = 256;
+
+    /// What happened to an entry.
+    enum change_kind: u8 {
+        registered = 1,
+        withdrawn = 2,
+        available = 3,
+        unavailable = 4,
+    }
+
+    /// One change, at a catalog sequence number.
+    struct change {
+        seq: u64,
+        kind: change_kind,
+        entry: id,
+        /// The entry's publisher, where it has one.
+        [since(1.1)]
+        publisher: id?,
+    }
+
+    /// An interface and the versions acceptable.
+    [closed]
+    struct interface_req {
+        interface: id,
+        major: u16,
+        min_minor: u16,
+    }
+
+    /// What a query selects by.
+    union selector {
+        @1 by_id: id,
+        @2 by_name: string<255>,
+        @3 by_interface: interface_req,
+    }
+
+    struct query {
+        select: selector,
+        limit: u32?,
+    }
+
+    /// The query selects more than one watch may follow.
+    error query_too_broad = 1 { limit: u32 };
+
+    /// That interface version is already registered.
+    [refused]
+    error already_registered = 2;
+
+    /// Lists the entries matching `query`, a page at a time, at one sequence number.
+    [group(discover), readonly, idempotent]
+    @1 list(query: query, page: bytes<64>?)
+        -> (at: u64, entries: seq<id, max_page>, next_page: bytes<64>?)
+        error(query_too_broad);
+
+    /// Streams every change matching `query` after `after` (ADR 0028, rule 6).
+    [group(discover), readonly]
+    @2 watch(query: query, after: u64?) -> (at: u64) stream<change> error(query_too_broad);
+
+    /// Registers an interface version from its signed definition.
+    [group(register)]
+    @3 register(
+        definition: cap<aspis.kernel.memory/1, read, immutable>,
+        length: u32,
+        [sensitive] proof: string<8192>,
+        [since(1.1)] dry_run: bool?,
+    ) -> u64 error(already_registered);
+}

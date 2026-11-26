@@ -41,3 +41,7 @@ path = "tests/constraints.rs"
 [[test]]
 name = "matcher"
 path = "tests/matcher.rs"
+
+[[test]]
+name = "dict"
+path = "tests/dict.rs"

@@ -13,7 +13,12 @@ members = [
     "crates/initfs",
     "crates/glyph-atlas",
     "crates/abnf",
+    "crates/idl-rt",
+    "crates/idl",
+    "crates/interfaces",
+    "crates/idl-fixtures",
     "tools/atlas",
+    "tools/idlc",
     "tools/logo",
     "xtask",
 ]
@@ -34,6 +39,12 @@ kcap = { path = "crates/kcap" }
 initfs = { path = "crates/initfs" }
 glyph-atlas = { path = "crates/glyph-atlas" }
 abnf = { path = "crates/abnf" }
+# Without its default `rpc` feature, so idlc builds even when the
+# committed aspis.rpc binding is stale; crates that use the call seams
+# add `features = ["rpc"]`.
+idl-rt = { path = "crates/idl-rt", default-features = false }
+idl = { path = "crates/idl" }
+idl-fixtures = { path = "crates/idl-fixtures" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

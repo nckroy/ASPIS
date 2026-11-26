@@ -1,0 +1,17 @@
+; SPDX-FileCopyrightText: 2026 Nicole Roy
+; SPDX-License-Identifier: MPL-2.0
+; uses: core, names
+;
+; The lock file beside an IDL file, such as interfaces/aspis/catalog/
+; v1.idl.lock (ADR 0067, rule 7; docs/design/call-language.md, "The lock
+; and the canonical form"). Each entry is a published minor of the file's
+; major, and the SHA3-256 hash of that minor's canonical form, in
+; lowercase hex. The entries are the minors 0, 1, 2 and on, in order, one
+; each, and the file's major is the IDL file's: idlc checks both, which
+; this grammar doesn't say. A lock with no entries means nothing is
+; published yet.
+
+idl-lock      = *lock-comment *lock-entry
+lock-comment  = "#" *lock-char %x0A            ; the SPDX tags, and a title
+lock-char     = %x09 / %x20-7E / utf8-2 / utf8-3 / utf8-4
+lock-entry    = major "." minor SP %s"sha3-256" SP 64hex %x0A

@@ -1,0 +1,23 @@
+// SPDX-FileCopyrightText: 2026 Nicole Roy
+// SPDX-License-Identifier: MPL-2.0
+edition 2026;
+
+//! A test fixture, not C15's interface: an interface the kernel calls,
+//! recognized by its name (ADR 0063, rule 3). Its requests are read
+//! tolerantly, and its dispatcher refuses nothing.
+
+[id(aspis.kernel.pager), object_id(hex(00000000000000000000000000000000000000000000000000000000000000c1)), version(1.0), local]
+interface pager {
+    /// What the kernel asks for.
+    enum access: u8 {
+        read = 1,
+        write = 2,
+    }
+
+    /// A page request: one-way, so it never gets a reply.
+    [oneway]
+    @1 page_request(offset: u64, length: u32, access: access?);
+
+    /// A two-way method.
+    @2 query(key: u64) -> u64;
+}

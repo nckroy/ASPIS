@@ -1,0 +1,86 @@
+; SPDX-FileCopyrightText: 2026 Nicole Roy
+; SPDX-License-Identifier: MPL-2.0
+; uses: core, names
+;
+; The ASPIS IDL, edition 2026 (ADR 0067). This grammar is normative: the
+; IDL's hand-written parser, crates/idl, accepts exactly what it accepts,
+; with its constraints (ADR 0067, rule 11). The checker adds the rules a
+; grammar can't say (docs/design/call-language.md, "The IDL grammar").
+;
+; A file is UTF-8. Plain "//" comments are whitespace. "///" documents the
+; item that follows and "//!" the file; they are never whitespace, so
+; they stand only where a rule writes "docs" or "file-docs". Rule names
+; such as label, member-name, interface-ref and number come from
+; names.abnf; utf8-2 to utf8-4 from core.abnf.
+
+; ---- Files ------------------------------------------------------------
+idl-file     = s edition [ file-docs ] s *( use-decl s ) interface s
+edition      = %s"edition" w "2026" s ";"
+use-decl     = %s"use" w interface-ref ".{" s decl-name *( s "," s decl-name ) s "}" s ";"
+interface    = [ docs s ] attrs s %s"interface" w label s "{" *( s member ) s "}"
+
+; ---- Members ------------------------------------------------------------
+member       = [ docs s ] [ attrs s ] ( const-decl / alias-decl / struct-decl
+               / union-decl / enum-decl / error-decl / object-decl / method
+               / reserved-method )
+const-decl   = %s"const" w member-name s ":" s int-type s "=" s int-lit s ";"
+alias-decl   = %s"alias" w decl-name s "=" s type s ";"
+struct-decl  = %s"struct" w decl-name s field-block
+object-decl  = %s"object" w decl-name s field-block
+field-block  = "{" s [ field *( s "," s field ) [ s "," ] ] s "}"
+union-decl   = %s"union" w decl-name s "{" s [ arm *( s "," s arm ) [ s "," ] ] s "}"
+enum-decl    = ( %s"enum" / %s"flags" ) w decl-name s ":" s uint-type s "{" s
+               [ value *( s "," s value ) [ s "," ] ] s "}"
+error-decl   = %s"error" w member-name s "=" s int-lit [ s field-block ] s ";"
+method       = "@" ordinal w member-name s "(" s [ field *( s "," s field ) [ s "," ] ] s ")"
+               [ s "->" s results ] [ w %s"error" s "(" s member-name *( s "," s member-name ) s ")" ] s ";"
+               ; "w" before "error": with "s", a result type such as u64 could
+               ; run into it, as "u64error(e)"
+results      = type [ w stream-type ]
+             / "(" s field *( s "," s field ) [ s "," ] s ")" [ s stream-type ]
+             / stream-type
+stream-type  = %s"stream" "<" s type-ref s ">"
+reserved-method = %s"reserved" w "@" ordinal s ";"         ; interface level: methods only
+
+; A field may write its position, "@n", which must equal its position
+; (the canonical form writes every one).
+field        = [ docs s ] [ attrs s ] [ "@" ordinal w ] member-name s ":" s type
+arm          = [ docs s ] [ attrs s ] "@" ordinal w member-name s ":" s type
+             / %s"reserved" w "@" ordinal                   ; a retired arm
+value        = [ docs s ] [ attrs s ] member-name s "=" s int-lit
+             / %s"reserved" w int-lit                       ; a retired value
+
+; ---- Types ----------------------------------------------------------------
+type         = base-type [ "?" ]
+base-type    = %s"bool" / int-type / %s"f32" / %s"f64" / %s"id" / %s"uuid"
+             / ( %s"string" / %s"bytes" ) "<" s bound s ">"
+             / ( %s"seq" / %s"array" ) "<" s type s "," s bound s ">"
+             / ( %s"cap" / %s"slot" ) "<" s interface-ref *( s "," s cap-qual ) s ">"
+             / type-ref
+int-type     = uint-type / %s"i8" / %s"i16" / %s"i32" / %s"i64"
+uint-type    = %s"u8" / %s"u16" / %s"u32" / %s"u64"
+cap-qual     = %s"read" / %s"write" / %s"grant" / %s"grant_reply" / %s"immutable"
+bound        = int-lit / member-name                        ; a const
+type-ref     = decl-name / interface-ref "." decl-name      ; local or imported
+decl-name    = member-name                                  ; a declared type's name
+               ; constraint: not word bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 id uuid string bytes seq array cap slot stream
+
+; ---- Attributes and literals ------------------------------------------
+attrs        = "[" s attr *( s "," s attr ) s "]"
+attr         = member-name [ "(" s attr-arg *( s "," s attr-arg ) s ")" ]
+attr-arg     = version-lit / int-lit / interface-name / member-name / id-lit
+version-lit  = number "." number
+id-lit       = %s"reserved(" s int-lit s ")" / %s"hex(" 64( DIGIT / %x61-66 ) ")"
+int-lit      = [ "-" ] ( "0" / %x31-39 *DIGIT ) / %s"0x" 1*( DIGIT / %x61-66 )
+ordinal      = "0" / %x31-39 *4DIGIT
+               ; constraint: in 1..65535
+
+; ---- Whitespace, comments and doc comments ---------------------------
+s            = *( WSP / CR / LF / comment )                 ; optional
+w            = 1*( WSP / CR / LF / comment )                ; required
+comment      = "//" [ comment-start *doc-char ] LF
+               ; a third character "/" or "!" would make a doc comment
+comment-start = %x01-09 / %x0B-20 / %x22-2E / %x30-7F / utf8-2 / utf8-3 / utf8-4
+docs         = 1*( s "///" *doc-char LF )                   ; the item that follows
+file-docs    = 1*( s "//!" *doc-char LF )                   ; the file
+doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF and NUL

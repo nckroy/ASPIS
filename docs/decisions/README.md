@@ -98,7 +98,7 @@ These come from the project brief and aren't re-decided here:
 | [0060](0060-processes-native-spawn-and-elf.md) | Processes, native spawn and the executable format | Accepted | 2026-11-25 |
 | [0061](0061-debugging.md) | Debugging: the kernel, user threads and crash dumps | Accepted | 2026-11-25 |
 | [0062](0062-core-rules-big-endian-fixed-width.md) | Core rules: big-endian, fixed-width binary conventions | Accepted | 2026-11-25, updated 2026-11-26 |
-| [0063](0063-names-and-the-canonical-call-text.md) | Names and the canonical call text | Accepted | 2026-11-25 |
+| [0063](0063-names-and-the-canonical-call-text.md) | Names and the canonical call text | Accepted | 2026-11-25, updated 2026-11-26 |
 | [0064](0064-the-call-header-and-wire-encoding.md) | The call header and the wire encoding | Accepted | 2026-11-25 |
 | [0065](0065-typed-errors-and-minor-versions-on-the-wire.md) | Typed errors and minor versions on the wire | Accepted | 2026-11-25 |
 | [0066](0066-capability-parameters-and-server-streams.md) | Capability parameters and server streams | Accepted | 2026-11-25 |
