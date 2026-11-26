@@ -43,7 +43,7 @@ The project owner decided on 2026-11-25: two configurations on every change and 
    - `cortex-a72` with a GICv2, which is close to the Raspberry Pi 4;
    - `max` with a GICv3, which exercises `RNDR` and newer features.
 
-   A change that touches only documents, meaning Markdown files and anything under `docs/`, skips the host and QEMU tests, since it can't change what they test (the project owner's rule, 2026-11-25). CI decides from the files the change touches, and runs the tests whenever it can't tell.
+   A change that touches only documents, meaning Markdown files and anything under `docs/`, skips the host and QEMU tests, rustfmt and clippy, and the reproducibility check ([0038](0038-reproducible-builds-and-provenance.md), rule 1), since it can't change what they check (the project owner's rule, 2026-11-25). CI decides from the files the change touches, and runs them whenever it can't tell.
 4. **The full matrix runs nightly:**
    - `cortex-a72` and `max`, each with a GICv2 and a GICv3;
    - 1, 4 and 8 cores;

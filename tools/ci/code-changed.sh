@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: MPL-2.0
 
 # Says whether a change touches anything other than documents, so CI can
-# skip the kernel tests for document-only changes (the project owner's
-# rule). Documents are Markdown files anywhere, and everything under
+# skip the lint, test and reproducibility jobs for document-only changes
+# (the project owner's rule; ADR 0036, rule 3). Documents are Markdown files anywhere, and everything under
 # docs/. Any other path, or a missing or unknown base, counts as code, so
 # the tests run whenever this script can't be sure.
 #
