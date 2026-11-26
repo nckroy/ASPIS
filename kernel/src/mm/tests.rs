@@ -3,8 +3,9 @@
 
 //! In-QEMU tests of the kernel's tables and boot memory (ADR 0036, rule 5).
 //! They check the invariants of ADR 0048 on the tables the kernel really
-//! runs on, through the direct map, and the boot untyped table that
-//! `mm::seal` built.
+//! runs on, through the direct map, and the boot untyped pieces that
+//! `mm::seal` gave to the boot capability space. User address spaces are
+//! made and mapped through capabilities.
 
 use super::*;
 use kmem::desc::{self, Leaf, MAIR_DEVICE, MAIR_NC, MAIR_NORMAL};
@@ -271,15 +272,36 @@ crate::kernel_test!(asid_width_matches_the_cpu, {
     assert_eq!(report().asid_bits, arch::asid_bits());
 });
 
+/// Calls `f` with every boot untyped piece, as its capability says it is
+/// now.
+fn each_piece(mut f: impl FnMut(&kmem::untyped::Untyped)) {
+    crate::cap::boot::for_each_untyped(|_, c| {
+        let kcap::cap::Cap::Untyped {
+            base,
+            bits,
+            device,
+            watermark,
+        } = c
+        else {
+            return;
+        };
+        let Some(u) = kmem::untyped::Untyped::from_parts(base, bits, device, watermark) else {
+            panic!("bad untyped capability {c:x?}");
+        };
+        f(&u);
+    });
+}
+
 crate::kernel_test!(untyped_memory_is_the_rest_of_ram, {
     let c = classified();
     // SAFETY: nothing changes the boot allocator after the seal.
     let taken = unsafe { BOOT_ALLOC.get() }.taken();
     let mut ram = 0;
     let mut prev = (0, 0);
-    untyped::for_each(|u| {
+    each_piece(|u| {
         let (s, e) = (u.base(), u.base() + u.size());
         assert!((12..=47).contains(&u.bits()) && s % u.size() == 0);
+        // Every test resets the pieces it used.
         assert_eq!(u.watermark(), 0);
         if u.is_device() {
             return;
@@ -327,7 +349,7 @@ crate::kernel_test!(device_untyped_leaves_out_ram_uart_and_gic, {
     let uart = devices.uart.expect("no UART in the device tree");
     assert!(!devices.gic().is_empty(), "no GIC in the device tree");
     let pa_limit = 1u64 << classified().pa_bits;
-    untyped::for_each(|u| {
+    each_piece(|u| {
         if !u.is_device() {
             return;
         }
@@ -360,16 +382,21 @@ crate::kernel_test!(boot_allocator_is_sealed, {
     assert_eq!(alloc.alloc(None), Err(AllocError::Sealed));
 });
 
-// Stage 3: retype, user address spaces, user access and ASIDs. Each test
-// takes free pieces from the boot untyped table, and resets them before it
-// ends, so tests can run in any order and leave untyped memory as the boot
-// left it: free and zero.
+// Retype, user address spaces, user access and ASIDs, through capabilities.
+// Each test works in a scratch CNode made from free untyped pieces, and
+// revokes and resets them before it ends (`cap::testkit`), so tests can run
+// in any order and leave untyped memory as the boot left it: free and zero.
 
 mod user_space {
-    use super::super::space::{self, AddressSpace, Frame};
-    use super::super::untyped::{self, UntypedId};
+    use super::super::space::{self, AddressSpace, Frame, UntypedTables};
     use super::super::user::{read_user, write_user};
     use super::*;
+    use crate::cap::testkit::{Scratch, base, watermark};
+    use crate::cap::{self as caps, MapFailure};
+    use kcap::SlotRef;
+    use kcap::cap::{Cap, SlotArray};
+    use kcap::ops::{Error, MintData};
+    use kcap::rights::Rights;
     use kmem::desc::UserPerm;
     use kmem::untyped::{ObjectType, RetypeError};
     use kmem::user::{Access, UserError};
@@ -407,33 +434,6 @@ mod user_space {
     /// The physical page `PAR_EL1` reports.
     const PAR_PA: u64 = 0x0000_ffff_ffff_f000;
 
-    /// A free RAM piece of at least 128 KiB.
-    fn ram_piece() -> UntypedId {
-        untyped::find(|u| !u.is_device() && u.bits() >= 17 && u.watermark() == 0)
-            .expect("no free RAM untyped piece of 128 KiB")
-    }
-
-    /// A free device piece.
-    fn device_piece() -> UntypedId {
-        untyped::find(|u| u.is_device() && u.watermark() == 0).expect("no free device piece")
-    }
-
-    /// Resets a piece the test used, and checks its watermark is back to 0.
-    ///
-    /// # Safety
-    ///
-    /// Nothing made from it may be in use: every address space made from it
-    /// is released and inactive.
-    unsafe fn reset(id: UntypedId) {
-        // SAFETY: as the caller promises.
-        unsafe { untyped::reset(id) };
-        assert_eq!(untyped::get(id).watermark(), 0);
-    }
-
-    fn frame(id: UntypedId) -> Frame {
-        Frame::retype(id, ObjectType::Frame4K).unwrap_or_else(|e| panic!("no frame: {e:?}"))
-    }
-
     /// Writes `v` through the direct map at physical address `pa`.
     fn poke(pa: u64, v: u64) {
         // SAFETY: a RAM frame the test retyped, in the direct map.
@@ -446,124 +446,148 @@ mod user_space {
         unsafe { core::ptr::read_volatile((DIRECT_MAP_BASE + pa) as *const u8) }
     }
 
+    /// How many mappings the address space in `space` holds: its full
+    /// binding slots.
+    fn bindings(space: SlotRef) -> usize {
+        let a = SlotArray::of_address_space(base(space));
+        (1..a.count)
+            .filter(|&i| !caps::cap(a.slot(i)).is_null())
+            .count()
+    }
+
     /// The test address space: two RAM frames read-write at `RW_VA`, one
     /// read-execute at `RX_VA`, and a device frame at `DEVICE_VA`, all made
-    /// from untyped memory, tables included.
+    /// from untyped memory, tables included, and mapped through their
+    /// capabilities.
     struct Fixture {
-        ram: UntypedId,
-        dev: UntypedId,
+        sc: Scratch,
+        space_cap: SlotRef,
         space: AddressSpace,
-        rw: [Frame; 2],
-        rx: Frame,
-        device: Frame,
+        rw: [SlotRef; 2],
+        rx: SlotRef,
+        device: SlotRef,
     }
 
     impl Fixture {
         fn new() -> Self {
-            let ram = ram_piece();
-            let dev = device_piece();
-            let space = AddressSpace::create(ram).expect("no address space");
-            let rw = [frame(ram), frame(ram)];
-            let rx = frame(ram);
-            let device = frame(dev);
-            assert!(device.is_device() && !rx.is_device());
-            let mut src = ram;
+            let mut sc = Scratch::with_device(17);
+            let space_cap = sc.make(ObjectType::AddressSpace);
+            let rw = [sc.make(ObjectType::Frame4K), sc.make(ObjectType::Frame4K)];
+            let rx = sc.make(ObjectType::Frame4K);
+            let dev = sc.dev();
+            let device = sc.make_from(dev, ObjectType::Frame4K);
             for (va, f, perm) in [
                 (RW_VA, rw[0], RW),
                 (RW_VA + PAGE_SIZE, rw[1], RW),
                 (RX_VA, rx, RX),
                 (DEVICE_VA, device, RW),
             ] {
-                space
-                    .map(va, f, perm, &mut src)
+                caps::map(f, space_cap, va, perm, sc.ram)
                     .unwrap_or_else(|e| panic!("can't map {va:#x}: {e:?}"));
             }
             Fixture {
-                ram,
-                dev,
-                space,
+                space: AddressSpace::from_object(base(space_cap)),
+                sc,
+                space_cap,
                 rw,
                 rx,
                 device,
             }
         }
 
-        /// Deactivates and releases the space, and resets both pieces.
+        /// Maps the frame capability in `f` into the test space.
+        fn map(&self, f: SlotRef, va: u64, perm: UserPerm) -> Result<(), MapFailure> {
+            caps::map(f, self.space_cap, va, perm, self.sc.ram)
+        }
+
+        /// A frame of RAM, mapped nowhere.
+        fn frame(&mut self) -> SlotRef {
+            self.sc.make(ObjectType::Frame4K)
+        }
+
+        /// Revokes and resets the pieces: the space is destroyed, which
+        /// deactivates it if it is active and releases its ASID.
         fn finish(self) {
-            if self.space.is_active() {
-                space::deactivate();
-            }
-            self.space.release();
-            // SAFETY: the space is released and inactive, and nothing else
-            // was made from the pieces.
-            unsafe {
-                reset(self.ram);
-                reset(self.dev);
-            }
+            self.sc.finish();
+            assert!(!self.space.is_active());
         }
     }
 
     crate::kernel_test!(retype_aligns_objects_and_refuses_overflow, {
-        let id = ram_piece();
-        let u = untyped::get(id);
-        let base = u.base();
-        let retype = |ty, n| untyped::retype(id, ty, n);
-        assert_eq!(retype(ObjectType::Frame4K, 1), Ok(base));
-        assert_eq!(retype(ObjectType::PageTable, 1), Ok(base + 0x1000));
-        assert_eq!(retype(ObjectType::Frame4K, 1), Ok(base + 0x2000));
+        let mut sc = Scratch::with_device(18);
+        // A 128 KiB child piece, so that filling it fits the scratch CNode.
+        let child = sc.make(ObjectType::Untyped(17));
+        let cb = base(child);
+        assert_eq!(cb % (1 << 17), 0);
+        let mut make = |ty, n| sc.try_make(child, ty, n).map(base);
+        assert_eq!(make(ObjectType::Frame4K, 1), Ok(cb));
+        assert_eq!(make(ObjectType::Frame4K, 1), Ok(cb + 0x1000));
+        assert_eq!(make(ObjectType::Frame4K, 1), Ok(cb + 0x2000));
         // An address space is 8 KiB, aligned to its size: the watermark
         // skips a page.
-        let a = retype(ObjectType::AddressSpace, 1).expect("no address space");
-        assert_eq!(a, base + 0x4000);
-        assert_eq!(a % 0x2000, 0);
-        assert_eq!(untyped::get(id).watermark(), 0x6000);
-        // Two page tables, one after the other.
-        assert_eq!(retype(ObjectType::PageTable, 2), Ok(base + 0x6000));
-        assert_eq!(retype(ObjectType::Frame4K, 0), Err(RetypeError::ZeroCount));
-        if u.bits() < 47 {
-            assert_eq!(
-                retype(ObjectType::Untyped(u.bits() + 1), 1),
-                Err(RetypeError::TooBig)
-            );
-        }
-        // One frame more than the free part holds: refused, unchanged.
-        let w = untyped::get(id).watermark();
-        let left = (u.size() - w) / PAGE_SIZE;
+        assert_eq!(make(ObjectType::AddressSpace, 1), Ok(cb + 0x4000));
+        assert_eq!(watermark(child), 0x6000);
+        // Small objects pack: a CNode of two slots, then an endpoint.
+        assert_eq!(make(ObjectType::CNode(1), 1), Ok(cb + 0x6000));
+        assert_eq!(make(ObjectType::Endpoint, 1), Ok(cb + 0x6040));
+        assert_eq!(make(ObjectType::Frame4K, 1), Ok(cb + 0x7000));
+        // Page tables have no capability: Map takes them itself.
+        assert_eq!(make(ObjectType::PageTable, 1), Err(Error::BadType));
         assert_eq!(
-            retype(ObjectType::Frame4K, left + 1),
-            Err(RetypeError::NoRoom)
+            make(ObjectType::Frame4K, 0),
+            Err(Error::Retype(RetypeError::ZeroCount))
         );
-        assert_eq!(untyped::get(id).watermark(), w);
-        assert_eq!(retype(ObjectType::Frame4K, left).map(|_| ()), Ok(()));
-        assert_eq!(untyped::get(id).free(), 0);
-        assert_eq!(retype(ObjectType::Frame4K, 1), Err(RetypeError::NoRoom));
+        assert_eq!(
+            make(ObjectType::Untyped(18), 1),
+            Err(Error::Retype(RetypeError::TooBig))
+        );
+        // One frame more than the free part holds: refused, unchanged.
+        let w = watermark(child);
+        let left = ((1 << 17) - w) / PAGE_SIZE;
+        assert_eq!(
+            make(ObjectType::Frame4K, left + 1),
+            Err(Error::Retype(RetypeError::NoRoom))
+        );
+        assert_eq!(watermark(child), w);
+        assert!(make(ObjectType::Frame4K, left).is_ok());
+        assert_eq!(watermark(child), 1 << 17);
+        assert_eq!(
+            make(ObjectType::Frame4K, 1),
+            Err(Error::Retype(RetypeError::NoRoom))
+        );
 
         // Device memory makes frames, never the kernel's own records.
-        let d = device_piece();
-        for ty in [ObjectType::PageTable, ObjectType::AddressSpace] {
-            assert_eq!(untyped::retype(d, ty, 1), Err(RetypeError::DeviceMemory));
+        let d = sc.dev();
+        for ty in [
+            ObjectType::AddressSpace,
+            ObjectType::CNode(7),
+            ObjectType::Endpoint,
+        ] {
+            assert_eq!(
+                sc.try_make(d, ty, 1),
+                Err(Error::Retype(RetypeError::DeviceMemory))
+            );
         }
         assert_eq!(
-            untyped::retype(d, ObjectType::Frame4K, 1),
-            Ok(untyped::get(d).base())
+            sc.try_make(d, ObjectType::PageTable, 1),
+            Err(Error::BadType)
         );
-        // SAFETY: nothing made from either piece is used.
-        unsafe {
-            reset(id);
-            reset(d);
-        }
+        let f = sc.make_from(d, ObjectType::Frame4K);
+        assert_eq!(base(f), base(d));
+        assert!(matches!(caps::cap(f), Cap::Frame { device: true, .. }));
+        sc.finish();
     });
 
     crate::kernel_test!(user_walk_says_not_resident_and_not_ram, {
         let fx = Fixture::new();
         let s = &fx.space;
         let read = |va| s.translate(va, Access::Read);
-        assert_eq!(read(RW_VA + 0x10), Ok(fx.rw[0].pa() + 0x10));
+        assert_eq!(read(RW_VA + 0x10), Ok(base(fx.rw[0]) + 0x10));
         assert_eq!(
             s.translate(RW_VA + PAGE_SIZE + 8, Access::Write),
-            Ok(fx.rw[1].pa() + 8)
+            Ok(base(fx.rw[1]) + 8)
         );
-        assert_eq!(read(RX_VA + 0x123), Ok(fx.rx.pa() + 0x123));
+        assert_eq!(read(RX_VA + 0x123), Ok(base(fx.rx) + 0x123));
         // Device memory is never reached on a user's behalf.
         assert_eq!(read(DEVICE_VA), Err(UserError::NotRam));
         assert_eq!(
@@ -595,8 +619,8 @@ mod user_space {
         let mut back = [0u8; 32];
         assert_eq!(read_user(s, va, &mut back), Ok(()));
         assert_eq!(back, msg);
-        assert_eq!(peek(fx.rw[0].pa() + PAGE_SIZE - 16), 1);
-        assert_eq!(peek(fx.rw[1].pa()), 17);
+        assert_eq!(peek(base(fx.rw[0]) + PAGE_SIZE - 16), 1);
+        assert_eq!(peek(base(fx.rw[1])), 17);
 
         // A read-only mapping can't be written.
         assert_eq!(write_user(s, RX_VA, &msg), Err(UserError::NoRight));
@@ -607,7 +631,7 @@ mod user_space {
             write_user(s, edge, &[0xee; 32]),
             Err(UserError::NotResident)
         );
-        assert!((0..16).all(|i| peek(fx.rw[1].pa() + PAGE_SIZE - 16 + i) == 0));
+        assert!((0..16).all(|i| peek(base(fx.rw[1]) + PAGE_SIZE - 16 + i) == 0));
         let mut buf = [0x55u8; 32];
         assert_eq!(read_user(s, edge, &mut buf), Err(UserError::NotResident));
         assert!(buf.iter().all(|&b| b == 0x55));
@@ -618,15 +642,16 @@ mod user_space {
 
         // A writable user mapping of a boot object, as a mapping bug might
         // make: the kernel reads it, but never stores through the direct
-        // map's read-only alias, which would fault.
+        // map's read-only alias, which would fault. No capability names a
+        // boot object until C15, so the test maps it with the internal
+        // encoder, and unmaps it by hand.
         let info_pa = state().boot_info - DIRECT_MAP_BASE;
         let page = info_pa & !(PAGE_SIZE - 1);
-        let boot = Frame {
-            pa: page,
-            size: PAGE_SIZE,
-            device: false,
+        let boot = Frame::new(page, PAGE_SIZE, false);
+        let mut src = UntypedTables {
+            slot: fx.sc.ram,
+            space: base(fx.space_cap),
         };
-        let mut src = fx.ram;
         assert_eq!(s.map(SPARE_VA, boot, RW, &mut src), Ok(()));
         let at = SPARE_VA + (info_pa - page);
         assert_eq!(write_user(s, at, &msg), Err(UserError::NoRight));
@@ -638,51 +663,79 @@ mod user_space {
     });
 
     crate::kernel_test!(writable_and_executable_user_mappings_are_refused, {
-        let fx = Fixture::new();
-        let s = &fx.space;
-        let mut src = fx.ram;
-        let f = frame(fx.ram);
+        let mut fx = Fixture::new();
+        let f = fx.frame();
         assert_eq!(
-            s.map(SPARE_VA, f, WX, &mut src),
-            Err(MapError::WriteExecute)
+            fx.map(f, SPARE_VA, WX),
+            Err(MapFailure::Cap(Error::BadMapping))
         );
         assert_eq!(
-            s.map(SPARE_VA, fx.device, RX, &mut src),
-            Err(MapError::DeviceExecute)
+            fx.map(fx.device, SPARE_VA, RX),
+            Err(MapFailure::Cap(Error::BadMapping))
         );
-        // Nothing was mapped.
-        assert_eq!(s.tables().walk(SPARE_VA), Walk::Invalid { level: 3 });
         // A mapping never replaces another.
-        assert_eq!(s.map(RW_VA, f, RO, &mut src), Err(MapError::Occupied));
-        assert_eq!(s.translate(RW_VA, Access::Read), Ok(fx.rw[0].pa()));
+        assert_eq!(
+            fx.map(f, RW_VA, RO),
+            Err(MapFailure::Table(MapError::Occupied))
+        );
+        assert_eq!(fx.space.translate(RW_VA, Access::Read), Ok(base(fx.rw[0])));
+
+        // Rights: a frame without write can't be mapped writable, one
+        // without read can't be mapped at all, and an address space without
+        // write can't be mapped into or unmapped from (ADR 0049, rule 2).
+        let ro_frame = fx.sc.take();
+        caps::mint(f, ro_frame, Rights::READ, MintData::None).expect("mint");
+        let wo_frame = fx.sc.take();
+        caps::mint(f, wo_frame, Rights::WRITE, MintData::None).expect("mint");
+        let ro_space = fx.sc.take();
+        caps::mint(fx.space_cap, ro_space, Rights::READ, MintData::None).expect("mint");
+        assert_eq!(
+            fx.map(ro_frame, SPARE_VA, RW),
+            Err(MapFailure::Cap(Error::MissingRight))
+        );
+        assert_eq!(
+            fx.map(wo_frame, SPARE_VA, RO),
+            Err(MapFailure::Cap(Error::MissingRight))
+        );
+        assert_eq!(
+            caps::map(f, ro_space, SPARE_VA, RO, fx.sc.ram),
+            Err(MapFailure::Cap(Error::MissingRight))
+        );
+        assert_eq!(
+            caps::unmap(ro_space, RW_VA, PAGE_SIZE),
+            Err(MapFailure::Cap(Error::MissingRight))
+        );
+        // Nothing was mapped or bound.
+        assert_eq!(fx.space.tables().walk(SPARE_VA), Walk::Invalid { level: 3 });
+        assert_eq!(bindings(fx.space_cap), 4);
+        // A read-only copy maps read-only.
+        assert_eq!(fx.map(ro_frame, SPARE_VA, RO), Ok(()));
+        assert_eq!(bindings(fx.space_cap), 5);
         fx.finish();
     });
 
     crate::kernel_test!(executable_user_mappings_make_the_icache_coherent, {
         use core::sync::atomic::Ordering;
         let syncs = || space::ICACHE_SYNCS.load(Ordering::Relaxed);
-        let fx = Fixture::new();
-        let mut src = fx.ram;
+        let mut fx = Fixture::new();
         // Read-only and read-write mappings need no instruction-cache
         // maintenance.
         let before = syncs();
-        let ro = frame(fx.ram);
-        fx.space
-            .map(SPARE_VA, ro, RO, &mut src)
+        let ro = fx.frame();
+        fx.map(ro, SPARE_VA, RO)
             .unwrap_or_else(|e| panic!("can't map: {e:?}"));
         assert_eq!(syncs(), before);
         // An executable mapping of RAM does, before its descriptor is
         // stored: one sync for one frame.
-        let rx = frame(fx.ram);
-        fx.space
-            .map(SPARE_VA + PAGE_SIZE, rx, RX, &mut src)
+        let rx = fx.frame();
+        fx.map(rx, SPARE_VA + PAGE_SIZE, RX)
             .unwrap_or_else(|e| panic!("can't map: {e:?}"));
         assert_eq!(syncs(), before + 1);
         // A refused one needs none.
-        let wx = frame(fx.ram);
+        let wx = fx.frame();
         assert_eq!(
-            fx.space.map(SPARE_VA + 2 * PAGE_SIZE, wx, WX, &mut src),
-            Err(MapError::WriteExecute)
+            fx.map(wx, SPARE_VA + 2 * PAGE_SIZE, WX),
+            Err(MapFailure::Cap(Error::BadMapping))
         );
         assert_eq!(syncs(), before + 1);
         fx.finish();
@@ -752,19 +805,17 @@ mod user_space {
         // mapping. AT can't show this: it always walks the tables afresh.
         const P1: u64 = 0x1111_2222_3333_4444;
         const P2: u64 = 0x5555_6666_7777_8888;
-        let fx = Fixture::new();
-        let s = &fx.space;
-        let mut src = fx.ram;
-        let (f1, f2) = (frame(fx.ram), frame(fx.ram));
-        poke(f1.pa(), P1);
-        poke(f2.pa(), P2);
-        assert_eq!(s.map(SPARE_VA, f1, RO, &mut src), Ok(()));
-        s.activate();
+        let mut fx = Fixture::new();
+        let (f1, f2) = (fx.frame(), fx.frame());
+        poke(base(f1), P1);
+        poke(base(f2), P2);
+        assert_eq!(fx.map(f1, SPARE_VA, RO), Ok(()));
+        fx.space.activate();
         // SAFETY: mapped readable at EL0 in the active space. Test only: the
         // kernel never dereferences a user address (ADR 0048, rule 5).
         assert_eq!(unsafe { arch::ldtr_u64(SPARE_VA) }, P1);
-        assert_eq!(s.unmap(SPARE_VA, PAGE_SIZE), Ok(1));
-        assert_eq!(s.map(SPARE_VA, f2, RO, &mut src), Ok(()));
+        assert_eq!(caps::unmap(fx.space_cap, SPARE_VA, PAGE_SIZE), Ok(1));
+        assert_eq!(fx.map(f2, SPARE_VA, RO), Ok(()));
         // SAFETY: as above.
         assert_eq!(
             unsafe { arch::ldtr_u64(SPARE_VA) },
@@ -781,15 +832,20 @@ mod user_space {
         // of the TLB (kernel specification, "Address-space layout", "ASIDs").
         const PA: u64 = 0xaaaa_0000_aaaa_0000;
         const PB: u64 = 0xbbbb_0000_bbbb_0000;
-        let id = ram_piece();
-        let mut src = id;
-        let a = AddressSpace::create(id).expect("no address space");
-        let b = AddressSpace::create(id).expect("no address space");
-        let (fa, fb) = (frame(id), frame(id));
-        poke(fa.pa(), PA);
-        poke(fb.pa(), PB);
-        assert_eq!(a.map(RW_VA, fa, RO, &mut src), Ok(()));
-        assert_eq!(b.map(RW_VA, fb, RO, &mut src), Ok(()));
+        let mut sc = Scratch::new(17);
+        let (ca, cb) = (
+            sc.make(ObjectType::AddressSpace),
+            sc.make(ObjectType::AddressSpace),
+        );
+        let (fa, fb) = (sc.make(ObjectType::Frame4K), sc.make(ObjectType::Frame4K));
+        poke(base(fa), PA);
+        poke(base(fb), PB);
+        assert_eq!(caps::map(fa, ca, RW_VA, RO, sc.ram), Ok(()));
+        assert_eq!(caps::map(fb, cb, RW_VA, RO, sc.ram), Ok(()));
+        let (a, b) = (
+            AddressSpace::from_object(base(ca)),
+            AddressSpace::from_object(base(cb)),
+        );
         // SAFETY (each `ldtr_u64` below): `RW_VA` is mapped readable at EL0
         // in the active space. Test only, as above.
         a.activate();
@@ -816,11 +872,11 @@ mod user_space {
         assert!(space::is_current(a.asid_word()));
         assert_eq!(arch::ttbr0() >> 48, (a.asid_word() & 0xffff));
 
-        space::deactivate();
-        a.release();
-        b.release();
-        // SAFETY: both spaces are released and inactive.
-        unsafe { reset(id) };
+        // Revoking the piece destroys both spaces: A, which is active, is
+        // deactivated, and both ASIDs are released.
+        sc.finish();
+        assert_eq!(arch::ttbr0() >> 48, 0);
+        assert_eq!((a.asid_word(), b.asid_word()), (0, 0));
     });
 
     crate::kernel_test!(pan_stops_the_kernel_reaching_user_pages, {
@@ -842,36 +898,42 @@ mod user_space {
     });
 
     crate::kernel_test!(untyped_reset_clears_what_was_used, {
-        let id = ram_piece();
+        let mut sc = Scratch::with_device(18);
+        let piece = sc.make(ObjectType::Untyped(17));
+        let pb = base(piece);
         // More than one 64 KiB chunk, so the reset takes several steps.
         let n = 20;
-        let first = untyped::retype(id, ObjectType::Frame4K, n).expect("no frames");
+        let first = sc
+            .try_make(piece, ObjectType::Frame4K, n)
+            .expect("no frames");
+        assert_eq!(base(first), pb);
         for i in 0..n * PAGE_SIZE / 8 {
-            poke(first + 8 * i, 0xa5a5_a5a5_a5a5_a5a5);
+            poke(pb + 8 * i, 0xa5a5_a5a5_a5a5_a5a5);
         }
-        // SAFETY: the frames are used by nothing but this test.
-        unsafe { reset(id) };
+        // Revoking destroys the frames, and leaves the watermark: the next
+        // retype resets the piece, then makes from its start.
+        caps::revoke(piece);
+        assert_eq!(watermark(piece), n * PAGE_SIZE);
+        let again = sc.make_from(piece, ObjectType::Frame4K);
+        assert_eq!(base(again), pb);
+        assert_eq!(watermark(piece), PAGE_SIZE);
         for i in 0..n * PAGE_SIZE / 8 {
-            let at = DIRECT_MAP_BASE + first + 8 * i;
+            let at = DIRECT_MAP_BASE + pb + 8 * i;
             // SAFETY: RAM in the direct map.
             let v = unsafe { core::ptr::read_volatile(at as *const u64) };
-            assert_eq!(
-                v,
-                0,
-                "untyped memory at {:#x} wasn't cleared",
-                first + 8 * i
-            );
+            assert_eq!(v, 0, "untyped memory at {:#x} wasn't cleared", pb + 8 * i);
         }
 
         // A device piece is never written: its watermark only drops.
-        let d = device_piece();
-        assert_eq!(
-            Frame::retype(d, ObjectType::Frame4K).map(|f| f.is_device()),
-            Ok(true)
-        );
-        assert_ne!(untyped::get(d).watermark(), 0);
-        // SAFETY: the device frame is used by nothing.
-        unsafe { reset(d) };
+        let d = sc.dev();
+        let f = sc.make_from(d, ObjectType::Frame4K);
+        assert!(matches!(caps::cap(f), Cap::Frame { device: true, .. }));
+        caps::revoke(d);
+        assert_ne!(watermark(d), 0);
+        let f = sc.make_from(d, ObjectType::Frame4K);
+        assert_eq!(base(f), base(d));
+        assert_eq!(watermark(d), PAGE_SIZE);
+        sc.finish();
     });
 }
 

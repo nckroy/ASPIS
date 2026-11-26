@@ -9,6 +9,7 @@ members = [
     "crates/bootinfo",
     "crates/kargs",
     "crates/kmem",
+    "crates/kcap",
     "crates/initfs",
     "crates/glyph-atlas",
     "crates/abnf",
@@ -29,6 +30,7 @@ rust-version = "1.100"
 bootinfo = { path = "crates/bootinfo" }
 kargs = { path = "crates/kargs" }
 kmem = { path = "crates/kmem" }
+kcap = { path = "crates/kcap" }
 initfs = { path = "crates/initfs" }
 glyph-atlas = { path = "crates/glyph-atlas" }
 abnf = { path = "crates/abnf" }

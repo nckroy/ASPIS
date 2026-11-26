@@ -8,7 +8,9 @@
 //! it runs on its own page tables, W^X from the first instruction, divides
 //! memory into what it keeps and untyped memory for the root server, and
 //! makes user address spaces from untyped memory, reaching user memory only
-//! by a software walk (ADR 0048).
+//! by a software walk (ADR 0048). From C11 it names every object by a
+//! capability, in capability spaces with seL4's derivation tree, and gives
+//! all of untyped memory to the boot capability space (ADR 0049).
 //!
 //! The root server, and everything that runs on top of the kernel, come in
 //! later chunks of M2, and in M3.
@@ -16,6 +18,10 @@
 #![no_std]
 #![no_main]
 
+// C12 to C17 build on most of it: until their system calls exist, only the
+// boot and the in-QEMU tests use it.
+#[cfg_attr(not(aspis_test_build), allow(dead_code))]
+mod cap;
 mod console;
 mod entry;
 mod exceptions;
@@ -283,7 +289,7 @@ fn report_boot(info: &BootInfo<'_>, s: &settings::Settings, have_dt: bool) {
     klog!(
         Info,
         "memory",
-        "{} MiB untyped in {} pieces, {} device pieces; {} KiB of page tables; direct map {} MiB; {}-bit ASIDs; {}",
+        "{} MiB untyped in {} pieces, {} device pieces; {} KiB of boot pages; direct map {} MiB; {}-bit ASIDs; {}",
         m.untyped_bytes >> 20,
         m.ram_pieces,
         m.device_pieces,
@@ -296,11 +302,17 @@ fn report_boot(info: &BootInfo<'_>, s: &settings::Settings, have_dt: bool) {
             "PAN not implemented"
         }
     );
+    klog!(
+        Info,
+        "memory",
+        "boot capability space: {} untyped capabilities",
+        m.untyped_caps
+    );
     if m.dropped_pieces > 0 {
         klog!(
             Warning,
             "memory",
-            "{} untyped pieces ({} MiB) didn't fit the boot table and go unused",
+            "{} untyped pieces ({} MiB) didn't fit the boot capability space and go unused",
             m.dropped_pieces,
             m.dropped_bytes >> 20
         );

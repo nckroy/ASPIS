@@ -17,16 +17,18 @@
 //! type follows the frame: RAM is normal write-back, device memory is
 //! Device-nGnRE and never executable (rule 6).
 //!
-//! C11: capabilities name address spaces and frames; until then
-//! [`AddressSpace`] and [`Frame`] are kernel-internal handles. C12: the
-//! kernel lock guards the ASID allocator, and the current core's index
-//! replaces [`CORE`]. C15: memory objects make mapping records, and map
-//! their pages through these functions. C16: a job's pieces implement
-//! [`TableSource`].
+//! C11: capabilities name address spaces and frames ([`crate::cap`]).
+//! [`AddressSpace`] and [`Frame`] are the kernel's internal views of them,
+//! built from a decoded capability; a mapping made through capabilities
+//! keeps a copy of the frame capability in the space's record, and deleting
+//! that copy unmaps it. C12: the kernel lock guards the ASID allocator, and
+//! the current core's index replaces [`CORE`]. C15: memory objects make
+//! mapping records, and map their pages through these functions. C16: a
+//! job's pieces implement [`TableSource`].
 
 use super::phys::{DirectMem, Window};
-use super::untyped::{self, UntypedId};
 use super::{BootCell, arch};
+use crate::cap::DirectSlots;
 #[cfg(aspis_test_build)]
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -34,7 +36,6 @@ use kmem::PAGE_SIZE;
 use kmem::asid::{AsidAllocator, asid_of};
 use kmem::desc::{self, Half, LeafError, UserPerm};
 use kmem::table::{FrameSource, MapError, Tables, UnmapError};
-use kmem::untyped::{ObjectType, RetypeError};
 use kmem::user::{Access, UserError};
 
 /// The core the kernel runs on. C12: each core's own index.
@@ -70,62 +71,55 @@ fn with_asids<R>(f: impl FnOnce(&mut AsidAllocator) -> R) -> R {
 }
 
 /// A frame: RAM or device memory, of 4 KiB, 2 MiB or 1 GiB, that a user
-/// address space can map.
+/// address space can map: the kernel's view of a frame capability.
 ///
-/// C11: a frame capability. C15: memory objects own their frames.
+/// C15: memory objects own their frames.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Frame {
-    pub(in crate::mm) pa: u64,
-    pub(in crate::mm) size: u64,
+    pa: u64,
+    size: u64,
     /// Device memory: mapped Device-nGnRE, never executable, and "not RAM"
     /// to the kernel's walk.
-    pub(in crate::mm) device: bool,
+    device: bool,
 }
 
 impl Frame {
-    /// Makes a frame of type `ty` (`Frame4K`, `Frame2M` or `Frame1G`) from
-    /// piece `id`. A device piece makes a device frame.
-    pub fn retype(id: UntypedId, ty: ObjectType) -> Result<Frame, RetypeError> {
-        assert!(
-            matches!(
-                ty,
-                ObjectType::Frame4K | ObjectType::Frame2M | ObjectType::Frame1G
-            ),
-            "{ty:?} isn't a frame"
-        );
-        let pa = untyped::retype(id, ty, 1)?;
-        Ok(Frame {
-            pa,
-            size: 1 << ty.size_bits(),
-            device: untyped::get(id).is_device(),
-        })
-    }
-
-    pub fn pa(&self) -> u64 {
-        self.pa
-    }
-
-    pub fn is_device(&self) -> bool {
-        self.device
+    /// The frame of `size` bytes at `pa`, as a frame capability names it.
+    pub const fn new(pa: u64, size: u64, device: bool) -> Frame {
+        Frame { pa, size, device }
     }
 }
 
 /// Where an address space's page tables come from: the memory of the job
 /// responsible for it (ADR 0048, rule 1).
 ///
-/// C10 takes them from one untyped piece. C16 takes them from the address
-/// space's job, through the job's index of pieces.
+/// C11 takes them from an untyped capability that the caller of Map
+/// presents ([`UntypedTables`]). C16 takes them from the address space's
+/// job, through the job's index of pieces.
 pub trait TableSource {
     /// The physical address of a new, zeroed, 4 KiB translation table, or
     /// `None` if there is no memory.
     fn page_table(&mut self) -> Option<u64>;
 }
 
-impl TableSource for UntypedId {
+/// Page tables from the watermark of the untyped capability in a slot,
+/// whose piece must contain the address space they are for (kernel
+/// specification, "Mapping and unmapping"; `kcap::ops::take_page`). The
+/// address space then descends from that capability, so the piece can't be
+/// reset while the space lives, and once the space is destroyed nothing
+/// reaches its tables.
+pub struct UntypedTables {
+    /// The untyped capability's slot.
+    pub slot: kcap::SlotRef,
+    /// The address space the tables are for, by its object's address.
+    pub space: u64,
+}
+
+impl TableSource for UntypedTables {
     fn page_table(&mut self) -> Option<u64> {
         // Free untyped memory is zero, and its zeroes were made visible to
         // the walkers when it was cleared, at boot or at its last reset.
-        untyped::retype(*self, ObjectType::PageTable, 1).ok()
+        kcap::ops::take_page(&mut DirectSlots, self.slot, self.space).ok()
     }
 }
 
@@ -139,9 +133,8 @@ impl<S: TableSource> FrameSource for Source<'_, S> {
 }
 
 /// A user address space, named by the physical address of its object: the
-/// level-0 table, then the kernel record.
-///
-/// C11: an address-space capability.
+/// level-0 table, then the kernel record. It is the kernel's view of an
+/// address-space capability ([`crate::cap`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AddressSpace(u64);
 
@@ -150,10 +143,11 @@ pub struct AddressSpace(u64);
 const ASID_WORD: u64 = PAGE_SIZE;
 
 impl AddressSpace {
-    /// Makes an address space from piece `id`. Its tables are empty, and it
+    /// The address space whose object is at `pa`, as its capability names
+    /// it. Retype made it from zeroed memory: its tables are empty, and it
     /// has no ASID until it is first activated.
-    pub fn create(id: UntypedId) -> Result<AddressSpace, RetypeError> {
-        untyped::retype(id, ObjectType::AddressSpace, 1).map(AddressSpace)
+    pub const fn from_object(pa: u64) -> AddressSpace {
+        AddressSpace(pa)
     }
 
     /// The physical address of its level-0 table.
@@ -185,6 +179,11 @@ impl AddressSpace {
     /// Maps `frame` at user address `va` with `perm` (ADR 0048, rules 3
     /// and 6). Blocks are used where `va` and the frame are aligned. New
     /// tables come from `src`.
+    ///
+    /// This is the one encoder every user mapping goes through. Map through
+    /// capabilities ([`crate::cap::map`]) calls it with a virtual address
+    /// aligned to the frame's size, so every such mapping is one leaf; only
+    /// the kernel's own tests call it with others.
     ///
     /// A mapping that is writable and executable, or executable device
     /// memory, is refused, and so is a range that is partly mapped already:
@@ -284,15 +283,25 @@ impl AddressSpace {
         arch::ttbr0() & 0x0000_ffff_ffff_f000 == self.0
     }
 
+    /// Destroys the address space, when deleting its last capability has
+    /// cleared every binding slot of its record (kernel specification,
+    /// "Derivation and revocation"): deactivates it if this core runs it,
+    /// and releases its ASID. Its memory goes back with its untyped piece's
+    /// next reset.
+    ///
+    /// C12: every core that runs it deactivates it first.
+    pub fn finish(self) {
+        if self.is_active() {
+            deactivate();
+        }
+        self.release();
+    }
+
     /// Releases the address space's ASID, when the space is destroyed
     /// (kernel specification, "Address-space layout", "ASIDs"): `TLBI
     /// ASIDE1IS` with its number, whatever its generation, then `DSB ISH`
     /// and `ISB`. It must be active on no core.
-    ///
-    /// C10 has no derivation tree, so the memory isn't freed here: the
-    /// caller resets the pieces it came from. C11 destroys the object when
-    /// its last capability goes.
-    pub fn release(self) {
+    fn release(self) {
         assert!(!self.is_active(), "releasing the active address space");
         let word = self.asid_word();
         if let Some(asid) = with_asids(|a| a.release(self.0, word)) {

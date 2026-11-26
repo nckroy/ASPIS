@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "kcap"
+description = "The ASPIS kernel's capability system (ADR 0049), tested on the host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/revoke 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
+
+[dependencies]
+kmem.workspace = true
+
+[lints]
+workspace = true
+
+[[test]]
+name = "encode"
+path = "tests/encode.rs"
+
+[[test]]
+name = "lookup"
+path = "tests/lookup.rs"
+
+[[test]]
+name = "copy"
+path = "tests/copy.rs"
+
+[[test]]
+name = "retype"
+path = "tests/retype.rs"
+
+[[test]]
+name = "revoke"
+path = "tests/revoke.rs"
+
+[[test]]
+name = "random"
+path = "tests/random.rs"
+
+[[test]]
+name = "sessions"
+path = "tests/sessions.rs"
+
+[[test]]
+name = "transfer"
+path = "tests/transfer.rs"
+
+[[test]]
+name = "derivation"
+path = "tests/derivation.rs"

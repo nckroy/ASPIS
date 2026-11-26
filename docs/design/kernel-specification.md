@@ -3,7 +3,7 @@
 
 # The kernel specification
 
-*2026-11-25. The kernel specification: the mechanism behind the M2 kernel records, and every mechanism question still open. It follows ADRs 0047 to 0061.*
+*2026-11-25, updated 2026-11-26. The kernel specification: the mechanism behind the M2 kernel records, and every mechanism question still open. It follows ADRs 0047 to 0061, and records what C10 and C11 settled.*
 
 This note is the kernel specification that [0047](../decisions/0047-the-kernel-follows-sel4.md), rule 5 names. The records say what is decided, what is guaranteed, and why. This note says how the kernel does it: each object's operations and their arguments, the order of steps inside the kernel, and the queue and allocation strategies.
 
@@ -43,6 +43,8 @@ The departures of [0047](../decisions/0047-the-kernel-follows-sel4.md), rule 3 c
 - **Canceling a call takes the caller's scheduling context back.** In seL4 17.0.0, `cancelIPC` in `src/object/endpoint.c` calls `reply_remove_tcb` for a caller blocked on a reply, and the donated scheduling context stays with the server. In ASPIS the kernel invalidates the reply object, returns the context to the caller from wherever it has been donated along a chain of calls, and sends each passive server left without a context a context-withdrawn fault on its timeout endpoint. The steps are in [Passive servers and taking a context back](#passive-servers-and-taking-a-context-back).
 - **Suspending a thread doesn't cancel its wait.** seL4's `suspend` cancels the thread's IPC. ASPIS leaves the wait in place ([0061](../decisions/0061-debugging.md), rule 3; [Suspending a thread](#suspending-a-thread)).
 - **Up to three capabilities transfer in a message.** seL4's receiver names one receive slot in its IPC buffer, by a CNode, an index and a depth, and `transferCaps` in `src/kernel/thread.c` moves at most one capability into it. In ASPIS the receiver names up to three receive slots, and up to three capabilities move, each into its own slot, as a child of the sender's capability. The rest of transfer follows seL4, unwrapping included ([0054](../decisions/0054-ipc-endpoints.md), rule 7; [Capability transfer](#capability-transfer)).
+- **Every copy is a child of the capability it came from.** seL4's mapping database marks a new capability revocable only when it is untyped memory, a newly badged endpoint copy or made by retype (`isCapRevocable`), and a plain copy becomes its source's sibling, so revoking a plain copy deletes nothing. ASPIS records each slot's depth in the tree instead, and inserts every copy, badged copy, transfer, binding and retype one level below the capability it came from, as [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4 requires. When a capability that has children is deleted, its children stay under its parent, behind a barrier that keeps them out of any sibling's run. So revoking any capability reaches exactly what was derived from it, and the revocable and first-badged marks are gone ([Derivation and revocation](#derivation-and-revocation)).
+- **Deleting an object finishes the objects that only it reached.** seL4's `reduceZombie` (in `src/object/cnode.c`) moves the zombie of a nested object, such as a CNode whose last capability was in the CNode being deleted, into that object's own first slot, and leaves it there with its slots uncleared until a revocation of its untyped memory reaches it. [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4 says that when the last capability to an object is deleted, the object is destroyed, so ASPIS clears the nested object in the same deletion: waiting zombies are kept on a stack threaded through park slots, with bounded work per step and no recursion ([Derivation and revocation](#derivation-and-revocation)). Only objects that hold each other's last capabilities and that no lookup can name still wait for their untyped memory's revocation, as in seL4.
 - **Fault replies carry no register values.** seL4's fault replies may set some of the faulting thread's registers. In ASPIS the reply only resumes the thread, and the kernel reads none of its contents. A handler that changes registers does so through the thread's capability before it replies ([0061](../decisions/0061-debugging.md), rule 3; [0064](../decisions/0064-the-call-header-and-wire-encoding.md), rule 9; [Fault delivery](#fault-delivery)).
 - **A capability's kind and rights can be read.** seL4 reports a capability's type only through a call in debug builds. ASPIS adds identify, which any build offers ([Capability spaces and lookup](#capability-spaces-and-lookup); [0066](../decisions/0066-capability-parameters-and-server-streams.md), rules 1 and 4).
 - **Message lengths are in octets.** seL4's message info gives a message's length in words. ASPIS's gives octets, from 0 to 960, so every message has an exact end ([0054](../decisions/0054-ipc-endpoints.md), rule 3; [0064](../decisions/0064-the-call-header-and-wire-encoding.md), rule 2; [Endpoint operations and messages](#endpoint-operations-and-messages)).
@@ -108,7 +110,7 @@ Everything else in usable RAM goes to the root server as untyped memory, in the 
   - The kernel doesn't translate addresses through a bus's `ranges` yet. So it reads a `reg` as a physical address only where that is certain: the UART's node and the interrupt controller's node must be children of `/`, and the interrupt controller's children need its `ranges` to be empty, as QEMU `virt`'s is.
   - The kernel stops at boot, rather than give a frame of its own devices away, when it can't name them for certain: with no device tree, with no interrupt controller it knows, with one of these nodes elsewhere in the tree, or with a `reg` it can't read. C65 reads the same devices from ACPI's MADT and SPCR. The Pi 4's devices sit under `/soc`, whose `ranges` translate them, so booting it (MH) needs the translation first.
   - It is never zeroed, and never in the direct map.
-- **The table of boot pieces** holds up to 2048 pieces, RAM and device together. A piece beyond that panics in a test build. In production it goes unused, with a warning in the boot log.
+- **The boot capability space** holds up to 2048 pieces, RAM and device together, as untyped capabilities ([What the root server receives](#what-the-root-server-receives)). A piece beyond that panics in a test build. In production it goes unused, with a warning in the boot log.
 - **The boot core's stack and the log ring** are in the kernel image's `.bss`. The stack has a page-aligned section of its own, with an unmapped guard page below it, so an overflow takes a translation fault, which panics and names the overflow, rather than corrupting `.bss`. The exception entry's own frames then land below the guard page, in the bootstrap tables, which nothing uses after the switch. The empty table that `TTBR0_EL1` holds when no user address space is active is live, so it isn't among them: it is read-only data in the image, which the kernel's tables map read-only.
 
 ### Untyped memory and kernel records
@@ -117,6 +119,7 @@ This section gives the mechanism behind [0048](../decisions/0048-kernel-memory-a
 
 - **Retype.** Every object made after boot is made by retyping untyped memory, as in seL4. The object belongs to the job of the piece it came from. No call that makes an object names a job, and none needs a job's capability, except making a child job ([Job capabilities](#job-capabilities)).
 - **Where objects go in a piece.** As in seL4, a piece has a watermark: below it, memory has been retyped; above it, memory is free. A retype aligns the watermark up to the object's size, then places the objects one after another. Device untyped memory makes only frames and smaller device untyped pieces, so the kernel never keeps its own records in MMIO.
+- **Retype through capabilities (C11).** Retype takes an untyped capability, an object type with its size, and a run of empty slots in one CNode, as seL4's `Untyped_Retype` does. It makes at most 256 objects, seL4's default fan-out limit, and inserts each new capability as a child of the untyped capability. The watermark lives in the untyped capability, as in seL4. Copying an untyped capability marks the source full, as seL4's `setUntypedCapAsFull` does, so two capabilities to one piece never hand out the same memory, and an untyped capability with children can't be copied. Page tables get no capability ([Address-space layout](#address-space-layout)).
 - **Pieces.** A job holds its memory as pieces of untyped memory. Reserved memory is carved from the parent's reservation. Borrowed memory is lent from the pool in page-sized pieces, or in larger pieces for large objects, so that a piece the job empties can be returned whole. Which objects come from which size is open ([K04](#k04-piece-sizes)).
 - **The index of a job's pieces.** The kernel keeps, for each job, an index of the pieces it holds, so that it can find free memory on a fault, when no caller names any. Where the index's own memory comes from is open ([K03](#k03-the-index-of-a-jobs-pieces)).
 - **Small records.** A fault can need records that have no capability of their own: mapping records, nodes of an object's page index, pending marks and per-frame share counts. They come from the job responsible ([0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rule 2). seL4's untyped memory is a watermark allocator, so small records freed inside a piece can't be reused until the piece is empty. How the kernel keeps them is open ([K02](#k02-small-kernel-records)).
@@ -125,16 +128,20 @@ This section gives the mechanism behind [0048](../decisions/0048-kernel-memory-a
 - **Taking a piece back.** The memory server takes an empty piece back in one kernel operation. Under the kernel lock, the kernel checks that nothing has been made from the piece, and removes it from the job and its index in the same step. It fails if anything has been made from it. So taking back can't race with a retype or a fault.
 - **Clearing.** Free untyped memory is always zero, so a retype never needs to clear.
   - The kernel zeroes RAM untyped memory once at boot.
-  - A reset clears the used part from the top down, in 64 KiB chunks, and records its progress in the watermark, as seL4's `resetUntypedCap` does. So a reset is a long operation that resumes where it stopped ([The kernel lock and long operations](#the-kernel-lock-and-long-operations)). C10 has no preemption points yet, so it runs a reset to the end. Nothing made from the piece may still be in use; C10 has no derivation tree to check that, so its callers promise it, and C11 checks it as seL4 does.
+  - A reset clears the used part from the top down, in 64 KiB chunks, and records its progress in the watermark, as seL4's `resetUntypedCap` does. So a reset is a long operation that resumes where it stopped ([The kernel lock and long operations](#the-kernel-lock-and-long-operations)).
+  - As in seL4, a piece is reset only when nothing derives from its capability, which the derivation tree shows: a retype through an untyped capability with no children resets the piece first, then makes objects from its start. The kernel writes the lowered watermark back into the capability after each chunk, so a preempted retype resumes the reset where it stopped. A retype through a capability that has children makes objects from the watermark.
   - Device untyped memory is never cleared: a reset only lowers its watermark to zero.
-- **Cost.** This note will give, for each object type, its size in bytes, so that a size ([0058](../decisions/0058-jobs-and-budgets.md), rule 12) can leave room for kernel bookkeeping. Several sizes wait on open questions ([K07](#k07-where-binding-copies-live-and-object-sizes)). C10's objects:
+  - The kernel can also reset a piece that nothing derives from without making anything. seL4 has no such call, and no system call reaches it: the kernel's tests use it to leave a piece free and zero, and C16 may use it when the memory server takes an empty piece back (C11).
+- **Cost.** This note will give, for each object type, its size in bytes, so that a size ([0058](../decisions/0058-jobs-and-budgets.md), rule 12) can leave room for kernel bookkeeping. Several sizes wait on open questions ([K07](#k07-where-binding-copies-live-and-object-sizes)). C10's and C11's objects:
 
   | Object | Size |
   |---|---|
   | Untyped memory | 2^n bytes, from 4 KiB to 2^47 |
   | Frame | 4 KiB, 2 MiB or 1 GiB |
   | Page table, at any level | 4 KiB |
-  | Address space | 8 KiB: its level-0 table, then a 4 KiB kernel record that holds its ASID word, with room for what C15 and C16 add. The level-0 table needs all 512 entries for a 48-bit lower half, so the record can't live inside it |
+  | Address space | 8 KiB: its level-0 table, then a 4 KiB kernel record. The record is a 32-byte header, whose first word is the ASID word and whose other three are kept for C15 and C16, then 127 capability slots. Slot 0 is the park slot that deletion uses, and slots 1 to 126 hold the copies its mappings keep, until C15's mapping records replace them ([Kernel bindings that hold capabilities](#kernel-bindings-that-hold-capabilities)). The level-0 table needs all 512 entries for a 48-bit lower half, so the record can't live inside it |
+  | CNode | 2^(n+5) bytes: 2^n slots of 32 bytes, n from 1 to 42 |
+  | Endpoint | 64 bytes, provisional until C14 settles its layout ([K25](#k25-ordered-queue-structures)) |
 
 ### Address-space layout
 
@@ -183,8 +190,9 @@ This section gives the mechanism behind [0048](../decisions/0048-kernel-memory-a
   - **Releasing** a destroyed address space, which no core may be running: `TLBI ASIDE1IS` with its number, whatever its generation, then `DSB ISH`. The number is freed if its generation is current.
   - All of this runs under the kernel lock. QEMU flushes its whole TLB whenever `TTBR0_EL1` changes ASID, so it can't show a stale translation after a rollover. The rollover is checked by host tests of the allocator instead, against a model of which spaces can have TLB entries under which number. Invalidation after an unmap is checked in QEMU, which keeps a translation until a `TLBI` drops it: a test reads a page with an unprivileged load (`LDTR`), remaps the address to another frame, and reads it again. The test alone does this; the kernel never dereferences a user address ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 5).
 - **Mapping and unmapping.** Every user mapping is made through one encoder, so the rules above hold for all of them.
-  - A user address space is an object of its own, made by retype: its level-0 table, then its kernel record ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)). Each further table is a page retyped from the memory of the address space's job when a mapping first needs it ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 1). C10 takes them from one untyped piece; with jobs, C16 takes them from the job's pieces.
-  - A frame is mapped with blocks where the virtual address and the frame are aligned to the block's size, and with pages otherwise.
+  - A user address space is an object of its own, made by retype: its level-0 table, then its kernel record ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)). Each further table is a page retyped from the memory of the address space's job when a mapping first needs it ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 1). Until C16, Map takes them from an untyped capability the caller presents, whose piece must contain the address space itself (C11). The address space then descends from that capability, so the piece can't be reset while the space lives, and once the space is destroyed nothing reaches its tables. The tables come from the piece's watermark and get no capability. With jobs, C16 takes them from the job's pieces.
+  - The kernel's one encoder maps a frame with blocks where the virtual address and the frame are aligned to the block's size, and with pages otherwise. Only Map through a capability reaches it from outside the kernel, and that always gives an aligned address, so the page fallback serves the kernel's own tests.
+  - Map through a frame capability (C11, until C15's memory objects) needs the virtual address aligned to the frame's size, as seL4 requires, so every such mapping is one leaf and removing it clears one entry. It needs the read right on the frame for any mapping, the write right on the frame for a writable one, and the write right on the address space. Map keeps a copy of the frame capability as the mapping's binding ([Kernel bindings that hold capabilities](#kernel-bindings-that-hold-capabilities)). Deleting that copy, directly or by revoking the frame, its untyped memory or the address space's, unmaps the range and invalidates the TLB under the space's ASID. Unmapping a range revokes and then deletes the bindings inside it, so the copies derived from them go too, and refuses a range that cuts a mapping.
   - A mapping never replaces a valid entry. A request that would, or that is writable and executable, or executable device memory, is refused before any entry is written. If the job runs out of memory for a table partway, what was mapped is unmapped again before the call fails.
   - An unmap that would cut a block in two is refused. Tables that an unmap leaves empty stay until the address space goes, since each is an object of its own.
 - **Relocation first.** The kernel builds these tables only after the stub has applied its relocations, so read-only protection starts after relocation ([0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 3).
@@ -238,12 +246,15 @@ The caller of a call that failed with "not resident" touches the page in user mo
 
 This section gives the mechanism behind [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 1.
 
-- **CNodes.** A CNode is an array of 2^n slots, made by retyping untyped memory. The slot size, and the smallest and largest n, follow seL4 on AArch64 unless the prototype shows a reason to differ.
-- **A slot** holds one capability and the links that place it in the derivation tree ([Derivation and revocation](#derivation-and-revocation)). A capability records the object's type, a reference to the object, its rights and, where the type has one, its badge.
+- **CNodes.** A CNode is an array of 2^n slots, made by retyping untyped memory. As in seL4 on AArch64, a slot is 32 bytes and n runs from 1 to 42, so a CNode is 64 bytes to 2^47 bytes, the largest piece (C11).
+- **A slot** holds one capability and the links that place it in the derivation tree ([Derivation and revocation](#derivation-and-revocation)). It is four words, as seL4's `cte_t` is: two for the capability; then the previous slot in the tree's list with the slot's depth in the tree; then the next slot. All four words zero is an empty slot, so a CNode made from free memory, which is zero, starts empty. A capability records the object's type, its physical address, its rights and, where the type has one, its badge, bit-packed as seL4 packs `cap_t`. The bit layout is the kernel's own; the numbers the ABI reports for each kind are C17's ([K28](#k28-message-and-buffer-layout); [K30](#k30-results-and-error-names)).
 - **Lookup.** A capability address is a 64-bit word and a depth. Lookup starts at the thread's root CNode. At each CNode it consumes the guard bits that the CNode capability carries, then n bits of index, until the depth is used up. This is seL4's guarded lookup. A failed lookup is a capability fault on a fault path ([Fault delivery](#fault-delivery)), and an error result for a system call.
+  - A guard is 0 to 63 bits, as seL4 on 64-bit keeps its size in six bits, and a CNode capability's guard and radix together are at most 64 bits. Mint and mutate check both (C11).
+  - Lookup has seL4's two modes. A CNode operation names a slot with an explicit depth, from 1 to 64, which must be used up exactly. An invocation names a capability with depth 64, and lookup stops at the first capability that isn't a CNode.
+  - Each level consumes at least one bit, so a lookup ends after at most 64 levels, even through a CNode that holds its own capability.
 - **A thread's root CNode** is held in a slot of the thread, as seL4's `tcbCTable` is, so revoking it also reaches the thread's binding ([Kernel bindings that hold capabilities](#kernel-bindings-that-hold-capabilities)).
 - **Receive slots.** A receiver names up to three empty slots for the capabilities a message carries, in its IPC buffer, as seL4 names its one receive slot there ([Capability transfer](#capability-transfer)).
-- **Identify.** A thread can ask for the kind of object a capability in its own space names, and the capability's rights. Generated stubs use it to check the rights a call received, and the network server to decide how to translate a capability between nodes ([0047](../decisions/0047-the-kernel-follows-sel4.md), rule 3; [0066](../decisions/0066-capability-parameters-and-server-streams.md), rules 1 and 4). Whether it is a published method of the capability-space interface or internal to `aspis-rt` is open ([K75](#k75-the-identify-operation)).
+- **Identify.** A thread can ask for the kind of object a capability in its own space names, and the capability's rights. Generated stubs use it to check the rights a call received, and the network server to decide how to translate a capability between nodes ([0047](../decisions/0047-the-kernel-follows-sel4.md), rule 3; [0066](../decisions/0066-capability-parameters-and-server-streams.md), rules 1 and 4). It reports the kind and the rights only, never a badge or an ID ([0050](../decisions/0050-ids-for-kernel-objects.md), rule 1). An empty slot and a zombie both report the null kind. Untyped and CNode capabilities carry no rights, as in seL4, so identify reports none for them (C11). Whether it is a published method of the capability-space interface or internal to `aspis-rt` is open ([K75](#k75-the-identify-operation)).
 
 ### Rights by object type
 
@@ -259,18 +270,48 @@ This section gives the mechanism behind [0049](../decisions/0049-capability-spac
 | Address space | Read resident memory; list mappings as descriptions | Map, unmap, write resident memory through writable mappings, list mappings with capabilities | — | [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 2; [0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rule 3 |
 | Memory object | Map readable or executable; clone an immutable or pager-backed object | Map writable; make a snapshot clone of an anonymous object; make a clone of a clone; decommit a range of an anonymous object, any clone included | — | [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 2; [0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rules 3, 4 and 8 |
 | Job | Open ([K53](#k53-rights-on-a-jobs-capability)) | Open ([K53](#k53-rights-on-a-jobs-capability)) | — | [0058](../decisions/0058-jobs-and-budgets.md), rule 9 |
+| Frame (C11, until C15's memory objects) | Map readable or executable | Map writable | — | seL4 |
 | CNode, untyped memory, scheduling context, scheduling control, interrupt control and handler | seL4 | seL4 | seL4 | [0047](../decisions/0047-the-kernel-follows-sel4.md), rule 1 |
 
-A capability that listing yields for a mapping carries the read right, and the write right only if the mapping is writable. Execute is an attribute of a mapping, never a right. Making an object needs no job capability: the object belongs to the job whose untyped memory it is made from. The one exception is a child job, made through its parent's capability ([Job capabilities](#job-capabilities)).
+Untyped and CNode capabilities carry no rights, as in seL4: a copy of one keeps none, and identify reports none. A capability that listing yields for a mapping carries the read right, and the write right only if the mapping is writable. Execute is an attribute of a mapping, never a right. Making an object needs no job capability: the object belongs to the job whose untyped memory it is made from. The one exception is a child job, made through its parent's capability ([Job capabilities](#job-capabilities)).
 
 ### Derivation and revocation
 
 This section gives the mechanism behind [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4.
 
-- **The derivation tree.** Each slot links to its neighbors in a depth-first order of the tree, and marks whether it is a badged copy, as seL4's mapping database does. A copy, a badged copy, a transfer and a retype each insert the new capability as a child of the one it came from.
-- **What can't be derived.** As in seL4, an untyped capability that has children can't be copied, and the control capabilities (interrupt control, scheduling control and the like) can't be copied at all.
-- **Revoke** deletes every descendant of a capability, last first, and leaves the capability itself. **Delete** removes one slot. When it removes the last capability to an object, the object is destroyed, and each type's destruction step runs: an endpoint's queued threads are released, an eventcount's waiters are woken, a thread's bindings are dropped, and so on. What the waiters return is open ([K30](#k30-results-and-error-names)).
-- **Preemption.** Revoke and delete are long operations. At each preemption point the kernel leaves its progress in the tree itself: the descendants already deleted are gone, so a restarted revoke continues with the rest, as in seL4 ([The kernel lock and long operations](#the-kernel-lock-and-long-operations)).
+- **The derivation tree.** As in seL4's mapping database, the slots are linked in a list, in a depth-first order of the tree. Unlike seL4's, each slot records its depth in the tree, and a copy, a badged copy, a transfer, a binding and a retype each insert the new capability right after the one it came from, one level deeper, as its child ([How far the kernel follows seL4](#how-far-the-kernel-follows-sel4)). C11 settled this.
+  - A capability b descends from a when b lies in the run of slots right after a, each deeper than a, with no barrier at a's depth or shallower (below), and related to it: inside a's range when a is untyped memory; otherwise naming the same object, and carrying a's badge when a is a badged endpoint.
+  - A derivation more than 65,535 levels deep is refused.
+  - Deleting a capability that has children leaves the children in place, at their depth, and records a *barrier* on the slot after it: the deleted capability's depth. A slot's barrier is the shallowest depth among the capabilities deleted between it and the slot before it, while it lay in their runs; it is kept in the slot's fourth word, beside the next link. A run stops at a slot whose barrier is at the run's own depth or shallower. So the children stay in the run of every ancestor that remains, and join no other capability's run: revoking a capability deletes exactly its descendants, never a sibling's or a sibling's copies, even when they name the same object. A delete does O(1) work, since no depth is lowered (C11).
+  - The cost is depth. A capability keeps the depth it was made at after its ancestors go, so a chain of copies, each made from the last and the last then deleted, deepens by one per link.
+  - Every capability to one object is contiguous in the list: an object's first capability is inserted after its untyped memory, each copy after its source, and a removal keeps the rest together. So a capability is the last to its object when neither neighbor names the same object, as seL4's `isFinalCapability` checks.
+- **What can't be derived.** As in seL4, an untyped capability that has children can't be copied, a zombie can't, and the control capabilities (interrupt control, scheduling control and the like) can't be copied at all. A copy of a mapping's frame copy is the frame without its mapping, as seL4's `deriveCap` clears a frame capability's mapping, and a child of the mapping's copy: revoking the mapping's copy, or anything it derives from, reaches it, and Unmap revokes the mapping's copy before it deletes it. A copy keeps its source's badge. Mint may badge only an unbadged endpoint, and mutate changes only a CNode's guard, as seL4's `updateCapData` does.
+- **Revoke** deletes every descendant of a capability, in the tree's list order, most recently derived first, as seL4's `cteRevoke` does, and leaves the capability itself. It keeps no state of its own: each unit of work takes the first descendant afresh and takes one unit of deleting it. If the capability itself lies in an object that a descendant names, the revocation deletes it partway and stops, as seL4's does, and its remaining descendants stay under its parent.
+- **Delete** removes one slot. If the capability is a binding, its unbind step runs first, whether or not it is the last capability to its object ([Kernel bindings that hold capabilities](#kernel-bindings-that-hold-capabilities)). When it removes the last capability to an object, the object is destroyed, and each type's destruction step runs: an endpoint's queued threads are released, an eventcount's waiters are woken, a thread's bindings are dropped, and so on. What the waiters return is open ([K30](#k30-results-and-error-names)).
+- **Zombies.** When the last capability to an object with slots (a CNode or an address space; from C12 to C14 also a thread, a wait set and an interrupt handler) is deleted, it becomes a zombie in place and keeps its place in the tree, so the object's untyped memory can't be reset until the object is finished. Zombie(o, n) means that slots 0 to n − 1 of o's slot array are still to clear; slots n and up are empty, but for the zombie's own slot if it lies there. A CNode's slot array is the CNode; an address space's is its record's 127 slots. Slot 0 of each array is its *park slot*, which never holds a binding. A deletion runs from the slot S it started at. One step at a slot s that holds Zombie(o, n), with e the end slot o[n − 1] and o's park slot o[0]:
+  1. If n is 0, o's destruction step runs and s is emptied.
+  2. If e is s itself, or empty, n drops by 1.
+  3. If e holds a capability that isn't the last to its object, or is the last to an object without slots, e is deleted in place, as Delete says, and n drops by 1.
+  4. If e holds the last capability to an object p with slots, its unbind step runs if it is a binding, and e becomes Zombie(p) in place.
+  5. If e holds Zombie(p, m):
+     - if m is 0, the kernel takes one step at e instead, in place, which finishes p there;
+     - else, if s lies among o's own slots, the kernel takes one step at e instead, in place;
+     - else, if n is 1, s is S, and S doesn't lie among p's slots, the kernel takes one step at e instead, in place (a delegated step, which delegates no further);
+     - else, if n is 1, o is finished, s is emptied, and Zombie(p) moves into s (a hand-over). At S this happens only when S lies among p's slots: a cycle that the deletion entered;
+     - else, if p's park slot is s or S, o's park slot and e swap contents;
+     - else o's park slot takes Zombie(p), p's park slot takes what o's held, and e takes what p's held.
+- **Why deletion ends, and is complete.**
+  - Each object becomes a zombie at most once.
+  - The zombies that rule 5 sets aside wait on a stack: o's park slot, then the park slot of each zombie on it. A zombie joins the stack only from e, which is never the park slot of a zombie already on it, so it joins at most once. It leaves only by a hand-over, which finishes the object above it.
+  - A zombie whose n is 0 has swept every slot, its park slot included, so nothing may be moved into its slots: rule 5 finishes it where it is before any swap, deferral or hand-over.
+  - Every other step deletes a capability or lowers some n. So a deletion takes O(slots + objects) steps, each with bounded work: no recursion beyond one step at e, which never recurses further, and no memory of its own.
+  - When o's park slot is all that is left, S keeps Zombie(o) and the delegated steps clear the stack in o's park slot: a hand-over there finishes the object on top and brings up the one below, and a delegated step never moves S's contents, since a park slot that is S takes a swap instead of a deferral. So S keeps Zombie(o), with its place in the tree, until o and every object that only it reached are finished. Only a cycle that S lies in, objects holding each other's last capabilities with S among their slots, hands over into S, and S is then emptied when the cycle is finished whole. This departs from seL4's `reduceZombie` ([How far the kernel follows seL4](#how-far-the-kernel-follows-sel4)).
+  - Another deletion may adopt S's zombie: when S lies in an object that another deletion clears, that deletion's step at S defers or hands over S's zombie, which it then finishes. So a delete returns once its slot is empty, and the object it made a zombie is finished by it, or by the deletion that adopted it. C12 must not take a completed delete to mean that the object's destruction step has run.
+- **What moves.** Only zombies and the contents of park slots move, each with its place in the tree, as seL4's `cteSwap` moves them. Since a park slot never holds a binding, a binding never moves, and its unbind step may find its object from the binding slot's address. A binding's unbind step runs when its capability is deleted, or first made a zombie, and depends only on the capability, never on the slot's index. C12, C13b and C14 keep this rule for the bindings they add.
+- **Any operation may step any zombie.** Each zombie needs only its own object. A revocation that reaches a waiting zombie through the tree steps it where it is, and the deletion it waits in stays consistent. A revocation keeps no state between units, and a descendant it made a zombie keeps its place among the revoked capability's descendants until its object and every object only it reached are finished, so a restarted revocation does exactly what an unpreempted one does. The one exception is a cycle that the descendant's slot lies in: the hand-over gives the slot the nested zombie, with its place among its own untyped memory's descendants, and the revocation goes on without it. What is left of the cycle can be named by no lookup, and is an unreachable cycle, as below.
+- **Unreachable cycles.** Objects that hold each other's last capabilities, and that nothing else reaches, can't be named by any lookup. As in seL4, they stay until a revocation of their untyped memory reaches them and finishes them. Their memory is never reused before then, since their capabilities keep their place in the tree.
+- **Boot objects are never destroyed** ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 2; [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4). The kernel keeps the original capability to each boot object in a kernel page that no capability names, so no lookup reaches it, as a root of the tree. What the root server holds are copies, its children. A delete or a revocation through them never removes the last capability, so no boot object's destruction step runs. C11's boot objects are the boot CNodes ([The boot capability space](#what-the-root-server-receives)); later chunks keep their boot objects' originals the same way.
+- **Preemption.** Revoke and delete are long operations. One step of a deletion is one unit of work ([The kernel lock and long operations](#the-kernel-lock-and-long-operations)). At each preemption point the kernel leaves its progress in the tree itself and in its zombies: the descendants already deleted are gone, and each zombie records the slots still to clear. So a restarted revoke continues with the descendants left, and a restarted delete with whatever its slot holds, until the slot is empty, as in seL4.
 - **Memory reuse.** A destroyed object's memory can be retyped again once every object made from its untyped piece is gone. seL4's untyped memory is a watermark allocator, which is why jobs hold memory in page-sized pieces ([0058](../decisions/0058-jobs-and-budgets.md), rule 4).
 - **The ITS exception.** A deletion of the ITS command queue, device table or collection table fails while the ITS uses them, whether it is direct or part of a revocation ([0055](../decisions/0055-interrupt-objects.md), rule 4). These tables are made from the root job's memory, and the root job never ends, so ending any other job never meets them. A device's interrupt translation table isn't an exception: deleting it first unmaps the device in the ITS ([MSI and the GICv3 ITS](#msi-and-the-gicv3-its)). How a revocation reports a table it couldn't delete is open ([K40](#k40-a-revocation-that-meets-an-its-table)).
 
@@ -286,10 +327,13 @@ This section gives the mechanism behind [0049](../decisions/0049-capability-spac
 | A thread's bound eventcount | A slot of the thread | The eventcount is unbound, and the thread's receives no longer report its advances |
 | A wait-set entry's eventcount | A slot of the wait set, one per entry | The entry leaves the set. A wait in progress is open ([K08](#k08-removing-a-binding-in-use)) |
 | An interrupt handler's eventcount | A slot of the handler, as seL4 keeps a handler's notification | Interrupts on that handler advance nothing until a new eventcount is bound |
-| A mapping's memory object | The mapping record ([Memory objects and mappings](#memory-objects-and-mappings)) | The range is unmapped, as revoking an seL4 frame capability unmaps the frame. Capabilities that listing yielded for the mapping are its descendants, and go with it |
+| A mapping's memory object | The mapping record ([Memory objects and mappings](#memory-objects-and-mappings)) | The range is unmapped, as revoking an seL4 frame capability unmaps the frame. Capabilities that listing yielded for the mapping are its descendants, and go with it when it is unmapped or revoked ([K42](#k42-capabilities-yielded-by-listing)) |
 | A thread's IPC buffer | Open ([K29](#k29-ipc-buffer-registration-and-capabilities)) | Open ([K29](#k29-ipc-buffer-registration-and-capabilities)) |
+| A frame's mapping (C11, until C15's memory objects and mapping records) | A binding slot of the address space's record, slots 1 to 126 | The range is unmapped, and the TLB invalidated under the space's ASID. An address space holds at most 126 such mappings until C15 |
 
-Each object's size includes its slots, and each mapping record's size includes its slot. The sizes are open ([K07](#k07-where-binding-copies-live-and-object-sizes); [K02](#k02-small-kernel-records)).
+**The mechanism (C11).** When the kernel keeps a lasting reference from a presented capability, it derives a copy, as Copy does, and inserts it as the presented capability's child, in a slot of the binding object. The binding's state is that slot, so deleting or revoking the copy removes the binding. Where hardware state mirrors a binding, as page-table entries mirror a mapping, the copy's own encoding marks it as a binding, and its unbind step undoes that state when the copy is deleted or first made a zombie ([Derivation and revocation](#derivation-and-revocation)).
+
+Each object's size includes its slots, with slot 0 of its slot array kept as the park slot, and each mapping record's size includes its slot. C11 settled the address space's record ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)). The thread's, wait set's and handler's sizes are open ([K07](#k07-where-binding-copies-live-and-object-sizes); [K02](#k02-small-kernel-records)).
 
 ### Sessions and badges
 
@@ -303,6 +347,7 @@ This section gives the mechanism behind [0049](../decisions/0049-capability-spac
   2. cancels the sends still queued on the endpoint under that badge, as seL4's `CancelBadgedSends` does, which is preemptible;
   3. deletes the copy it kept.
 - Only after step 3 may the badge be reused, so no message from the old session is delivered under a new one. Ending a session takes these steps for each of its badges.
+- In the derivation tree, a badged copy is a child of the unbadged capability it was minted from, and the copies made from it carry its badge. A badged capability's descendants must carry its badge, so revoking a kept copy reaches exactly its badge's copies, even after another kept copy was deleted without a revoke (C11). Step 2 is C14's: C11's capability layer leaves a place for it between the revoke and the delete.
 - A scheduling context's badge is set when the context is configured, and timeout and context-withdrawn faults report it ([Scheduling contexts and budgets](#scheduling-contexts-and-budgets)).
 
 ### Copying a capability table
@@ -323,7 +368,7 @@ The kernel stores, checks and returns no ID ([0050](../decisions/0050-ids-for-ke
 - **A process learns its own ID at spawn.** The spawner writes the ID into the startup block, or a mark that the process has none yet ([The startup block](#the-startup-block)). How a process named later learns its ID is open ([K67](#k67-a-process-named-after-it-starts)).
 - **Threads without IDs are reached through the job.** The process's manager holds the job's capability, lists the threads in the job and its descendants with each thread's address space, and gets capabilities to them ([Job capabilities](#job-capabilities)).
 - **A kernel object without an ID** is inspected through its capability and its kernel interface ([0059](../decisions/0059-the-kernel-interface-library.md), rule 1).
-- **Two capabilities to one object.** seL4 has no operation that tells whether two capabilities name the same object. Whether ASPIS adds one, so that a server can avoid minting two IDs for one object, is open ([K11](#k11-telling-whether-two-capabilities-name-the-same-object)).
+- **Two capabilities to one object.** seL4 has no operation that tells whether two capabilities name the same object, and ASPIS adds none, which settles [K11](#k11-telling-whether-two-capabilities-name-the-same-object). A server presents only objects it made or received through its own sessions, and keys its table by its own slot or by badge. A new operation would be a departure from seL4 that [0047](../decisions/0047-the-kernel-follows-sel4.md), rule 3 doesn't list.
 - **Objects made after the entropy gate but before storage** can't take a sequence number from a durably recorded block. How they are named is a decision, not mechanism ([K12](#k12-naming-objects-made-after-the-entropy-gate-but-before-storage)).
 
 ## Threads and scheduling
@@ -427,15 +472,18 @@ This section gives the mechanism behind [0052](../decisions/0052-smp-bring-up-an
 
 - **The lock.** As in seL4, the lock is a CLH queue lock, so cores take it in the order they ask. Every system call, fault and interrupt from user mode takes it on entry and releases it on exit. The kernel runs with interrupts masked.
 - **Spinning serves requests.** A core waiting for the lock serves cross-core requests while it spins, as seL4's `clh_lock_acquire` does ([Cross-core signals and TLB maintenance](#cross-core-signals-and-tlb-maintenance)).
-- **Preemption points.** At a preemption point the kernel checks the interrupt controller for a pending interrupt, every so many units of work, as seL4's `preemptionPoint` does. If one is pending, the operation records its progress in the objects it works on, the kernel handles the interrupt, and the system call restarts from the start when the thread runs again, picking up the recorded progress. How many units of work fall between checks is open ([K22](#k22-preemption-granularity)).
+- **Preemption points.** At a preemption point the kernel checks the interrupt controller for a pending interrupt, every so many units of work, as seL4's `preemptionPoint` does. If one is pending, the operation records its progress in the objects it works on, the kernel handles the interrupt, and the system call restarts from the start when the thread runs again, picking up the recorded progress.
+  - The kernel checks every 100 units of work, seL4's default `CONFIG_MAX_NUM_WORK_UNITS_PER_PREEMPTION`, which settles [K22](#k22-preemption-granularity). A unit is one step of a deletion, one unlink, one copy, or 4 KiB of memory cleared, so a 64 KiB chunk of a reset counts 16.
+  - Work always comes before the check, so every call makes progress.
+  - C11 has no interrupt controller driver and no threads, so its kernel finds nothing pending and runs every operation to the end. C12 and C13a add the check and the restart. C11's tests stand in for both: they run revoke, delete and the clearing of untyped memory with a check that finds an interrupt pending after every unit, or at random, restart each until it ends, and check that it ends as a run without preemption does, nested objects from other untyped memory included.
 - **Long operations.** These have preemption points:
 
   | Operation | Record | How it keeps progress |
   |---|---|---|
-  | Revoking a capability | [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4 | As seL4's `cteRevoke` |
-  | Deleting an object | [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4 | As seL4's `cteDelete` and its zombies |
+  | Revoking a capability | [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4 | In the tree: the descendants already deleted are gone, as seL4's `cteRevoke` |
+  | Deleting an object | [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4 | In the zombies and the park slots ([Derivation and revocation](#derivation-and-revocation)) |
   | Canceling the sends queued under a badge | [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 5 | As seL4's `cancelBadgedSends` |
-  | Clearing untyped memory before it is retyped again | [0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 1 | As seL4's `resetUntypedCap` |
+  | Clearing untyped memory before it is retyped again | [0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 1 | In the untyped capability's watermark, as seL4's `resetUntypedCap` |
   | Ending a job | [0058](../decisions/0058-jobs-and-budgets.md), rule 10 | Open |
   | Stopping or resuming a job | [0058](../decisions/0058-jobs-and-budgets.md), rule 9 | Open |
   | Listing a job's threads | [0058](../decisions/0058-jobs-and-budgets.md), rule 9 | Open ([K41](#k41-listing-in-pages)) |
@@ -543,6 +591,7 @@ This section gives the mechanism behind [0054](../decisions/0054-ipc-endpoints.m
   - Otherwise, if the receiver has a named receive slot left, and that slot is empty, the kernel derives the capability, as seL4's `deriveCap` does, and inserts it in that slot as a child of the sender's.
   - If no slot is left, the slot isn't empty, or the capability can't be derived, transfer stops there, as in seL4.
 - **The receiver is told** how many capabilities were processed, and which of them were unwrapped, in the message info word.
+- **C11** provides transfer as a step inside the kernel, tested on its own: without the grant right it reports nothing, no count, no unwrapped bits and no badges. C14 calls it from the IPC path.
 - **Positions.** The receiver sees the capabilities in the order the sender named them. An unwrapped capability fills no receive slot, but keeps its position in that list, and the unwrapped mask shows it, so the IDL's capability indexes don't shift ([0066](../decisions/0066-capability-parameters-and-server-streams.md), rule 2).
 
 ### IPC deadlines and cancellation
@@ -1026,6 +1075,25 @@ The root server receives capabilities to all of them, and:
 
 Boot objects belong to no job, count against no reservation or limit, and are never destroyed ([0058](../decisions/0058-jobs-and-budgets.md), rule 1).
 
+**The boot capability space (C11).** The kernel builds it in `mm::seal`, before it seals the boot allocator, in pages it takes from that allocator. Its CNodes are boot objects: they are never destroyed, and no untyped capability covers their memory ([Derivation and revocation](#derivation-and-revocation), "Boot objects are never destroyed").
+
+- **The originals page** is one more page of 128 slots that no capability names. It holds the original capability to each boot CNode, each a root of the tree: the root CNode's in slot 0 and the untyped CNodes' in slots 1 to 16. The root CNode holds a copy of each, as its child, so deleting or revoking through the root CNode never destroys a boot CNode.
+
+- **The root CNode** is one page: radix 7, 128 slots. Its capability carries a 50-bit guard of zeros, so a 64-bit capability address is a root index shifted left by 7, then an index in the CNode found there. A root slot itself is named at depth 57.
+- **Root slots:**
+
+  | Slots | Hold |
+  |---|---|
+  | 0 | Nothing |
+  | 1 | A copy of the root CNode's capability |
+  | 2 to 15 | Kept for later boot capabilities: the first thread and its address space (C12), interrupt control (C13), the boot memory objects (C15) and the root job (C16) |
+  | 16 to 31 | Copies of the untyped CNodes' capabilities |
+  | 32 to 127 | Free for the root server |
+
+- **The untyped CNodes** are 16 one-page CNodes of radix 7, so they hold 2048 untyped capabilities, the most the kernel makes ([Boot memory](#boot-memory)). The kernel takes a fixed 16 pages for them before it divides the rest of RAM into pieces, since taking pages can split the free set into more pieces: a fixed count is what always fits.
+- **Each piece gets one untyped capability**, RAM pieces first, then device pieces, each in address order, from slot 0 of the first untyped CNode on. Each is a root of the derivation tree, with no parent, and a watermark of 0. Free RAM untyped memory is zero.
+- The boot log reports the number of untyped capabilities. C19 fixes what the root server receives in root slots 2 to 15, and how it learns the layout.
+
 ## Open questions
 
 These mechanism questions are open, except those marked settled. Each is settled alongside the prototype of chunks C10 to C16, or of C17 or C70 where it says so, and this note records the answer. A settled question keeps its number, and says where its answer is. A question whose answer would change a guarantee of the records needs an edit to that record instead ([0047](../decisions/0047-the-kernel-follows-sel4.md), rule 5). K12, K61 and K73 are decisions rather than mechanism. K10 and K61 belong to existing backlog entries, D95 and D115. The [design backlog](design-backlog.md#m2-kernel-objects) carries the rest as D150 to D160 under M2, D161 under [M3](design-backlog.md#m3-node-user-space-and-the-entropy-gate) for K12, and D162 under [M6](design-backlog.md#m6-a-console-you-can-log-in-to) for K73. "The third review" means the third review of the M2 records.
@@ -1082,7 +1150,8 @@ When a job's manager passes an untyped capability for one of the job's pieces to
 Which slots do the thread, the wait set and the interrupt handler carry for the capability copies their bindings hold ([Kernel bindings that hold capabilities](#kernel-bindings-that-hold-capabilities)), and so what is each object's size in bytes?
 
 - **Options:** seL4's thread layout, with the fault and timeout endpoints as slots of the thread, plus a slot for the bound eventcount; one slot per wait-set entry; one slot in the handler. Queue links ([Ordered kernel queues](#ordered-kernel-queues)) add to the same sizes.
-- **Blocks:** C11, C12, C13b, C14.
+- **Settled in part with C11:** the mechanism, a derived copy in a slot of the binding object with slot 0 of its slot array kept as the park slot, and the address space's record; see [Kernel bindings that hold capabilities](#kernel-bindings-that-hold-capabilities). The thread's, wait set's and handler's slots and sizes stay open.
+- **Blocks:** C12, C13b, C14.
 - **From:** [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4; the third review. **Backlog:** D151.
 
 ### K08. Removing a binding in use
@@ -1098,7 +1167,8 @@ What happens when a wait-set entry is removed, or its copy revoked, during a wai
 The library copies a capability space slot by slot, so the source can change during the copy. Is the copy defined only against a stopped process, as `fork` uses it, or must it tolerate changes? Is a batch call needed?
 
 - **Options:** define it for a stopped source only; or tolerate concurrent change. A batch call in the private ABI waits for measurements.
-- **Blocks:** C11, C17.
+- C11 needed no answer: the copy is built on Copy, which C11 provides.
+- **Blocks:** C17.
 - **From:** [Copying a capability table](#copying-a-capability-table); [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 7; [0059](../decisions/0059-the-kernel-interface-library.md), rule 1; the third review. **Backlog:** D159.
 
 ### K10. What fork copies
@@ -1113,8 +1183,7 @@ Does the capability-table copy skip or refuse capabilities that can't be derived
 
 A server that presents kernel objects it didn't make may receive a second capability to an object it already named. Does the kernel offer a way to tell, so that a server doesn't mint two IDs for one object?
 
-- **Options:** no such operation, so a server presents only objects it made, and keys its table by its own slot or badge; or an operation on two capabilities that says only whether they name the same object.
-- **Blocks:** C11, C19.
+- **Settled with C11:** no such operation, as in seL4; see [Kernel objects and IDs](#kernel-objects-and-ids).
 - **From:** [Kernel objects and IDs](#kernel-objects-and-ids); [0050](../decisions/0050-ids-for-kernel-objects.md), Consequences. **Backlog:** D152.
 
 ### K12. Naming objects made after the entropy gate but before storage
@@ -1201,8 +1270,7 @@ What does the kernel do when asked to reboot or power off and the firmware has n
 
 How many units of work does the kernel do between checks for a pending interrupt?
 
-- **Options:** seL4's default, `CONFIG_MAX_NUM_WORK_UNITS_PER_PREEMPTION`, which is 100; or a number measured per operation.
-- **Blocks:** C11.
+- **Settled with C11:** seL4's default, 100 units between checks; see [The kernel lock and long operations](#the-kernel-lock-and-long-operations).
 - **From:** [The kernel lock and long operations](#the-kernel-lock-and-long-operations); [0052](../decisions/0052-smp-bring-up-and-the-kernel-lock.md), rule 2. **Backlog:** D155.
 
 ### K23. How each long operation keeps its progress
@@ -1210,7 +1278,8 @@ How many units of work does the kernel do between checks for a pending interrupt
 For each long operation marked "Open" in [The kernel lock and long operations](#the-kernel-lock-and-long-operations), where is its progress recorded, and how does a restart resume it? Which memory operations need preemption points at all?
 
 - **Options:** to be settled with the prototype, operation by operation. Listings are [K41](#k41-listing-in-pages).
-- **Blocks:** C11, C12, C14, C15, C16. C10's only long operation, clearing untyped memory, keeps its progress as seL4's `resetUntypedCap` does ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)).
+- **Settled in part with C11:** revoke and delete keep their progress in the tree and its zombies, and revoke keeps no state of its own ([Derivation and revocation](#derivation-and-revocation)), and clearing untyped memory keeps it in the untyped capability's watermark, as seL4's `resetUntypedCap` does ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)). The other operations stay open.
+- **Blocks:** C12, C14, C15, C16.
 - **From:** [0052](../decisions/0052-smp-bring-up-and-the-kernel-lock.md), rule 2; [0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rules 4 and 8; [0058](../decisions/0058-jobs-and-budgets.md), rules 9 and 10; the third review; the project owner's decision to add decommit. **Backlog:** D155.
 
 ### K24. Batches of interrupt work
@@ -1282,7 +1351,8 @@ A system-call advance that stops at a preemption point has already changed the c
 Which rights on a wait set allow adding and removing entries, and which allow waiting?
 
 - **Options:** write to change entries and read to wait; or write for both.
-- **Blocks:** C11, C14.
+- C11 needed no answer: it makes no wait sets.
+- **Blocks:** C14.
 - **From:** [Rights by object type](#rights-by-object-type); [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 2; [0053](../decisions/0053-eventcounts.md), rule 4. **Backlog:** D152.
 
 ### K33. Wait-set size
@@ -1346,7 +1416,8 @@ The kernel polls `GITS_CREADR` under the lock. What bounds that wait, and what d
 A revocation that reaches the ITS's command queue, device table or collection table must leave it in place ([0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4; [0055](../decisions/0055-interrupt-objects.md), rule 4). How does it report that?
 
 - **Options:** the revocation deletes everything else, leaves those slots as children, and returns a result that names them; it refuses before it deletes anything; the memory that holds them can't be revoked at all once the ITS is enabled; or the kernel takes them over from the root job when it enables the ITS.
-- **Blocks:** C11, C13b.
+- C11 needed no answer: an object's destruction step, which C11's deletion runs, is where C13b adds the refusal ([Derivation and revocation](#derivation-and-revocation)).
+- **Blocks:** C13b.
 - **From:** [Derivation and revocation](#derivation-and-revocation); [MSI and the GICv3 ITS](#msi-and-the-gicv3-its); the third review. **Backlog:** D157.
 
 ### K41. Listing in pages
@@ -1359,10 +1430,11 @@ Listing an address space's mappings, or a job's threads, may yield more than one
 
 ### K42. Capabilities yielded by listing
 
-A memory-object capability got by listing mappings with the write right derives from the mapping's own copy of its memory-object capability ([0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rule 3), so revoking the object's capability, or unmapping, reaches it. It doesn't derive from the address-space capability used to list, so revoking a debugger's copy of that doesn't reach it ([0061](../decisions/0061-debugging.md), rule 4). Should it?
+A memory-object capability got by listing mappings with the write right derives from the mapping's own copy of its memory-object capability ([0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rule 3), so revoking the object's capability, or the mapping's copy, reaches it, and Unmap, which revokes the mapping's copy before it deletes it, does too. It doesn't derive from the address-space capability used to list, so revoking a debugger's copy of that doesn't reach it ([0061](../decisions/0061-debugging.md), rule 4). Should it?
 
 - **Options:** record each listed capability as a child of the address-space capability used to list, instead of the mapping's copy, which departs from seL4's tree, where children are copies of the same object or made from untyped memory, and changes [0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rule 3; or keep the gap, and let policy allow writing memory only where the lasting access is acceptable. 0061 rule 4 says a record closes the gap, so the first option needs one.
-- **Blocks:** C11, C15, C70.
+- C11 needed no answer. In C11's tree a copy of a mapping's copy is that copy's child, so revoking the mapping's copy, or anything it derives from, reaches it, as [0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rule 3 says. Deleting the mapping's copy alone doesn't: the copy stays under the object's capability. So C11's Unmap revokes each binding before it deletes it ([Derivation and revocation](#derivation-and-revocation)). Whether destroying an address space should also revoke its mappings' copies, rather than only delete them, is C15's to settle with the mapping records.
+- **Blocks:** C15, C70.
 - **From:** [Memory objects and mappings](#memory-objects-and-mappings); [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rules 2 and 4. **Backlog:** D152.
 
 ### K43. How a pager fills a frame
@@ -1426,7 +1498,8 @@ Does a fault message carry the raw `ESR_EL1` and `FAR_EL1` values, or decoded fi
 If the capability that set a thread's fault endpoint is revoked while the thread's fault is queued or delivered, what happens to the thread?
 
 - **Options:** the fault is withdrawn, the thread is suspended and the fault logged, as for a thread with no fault endpoint; or a delivered fault stands until it is replied to.
-- **Blocks:** C11, C15.
+- C11 needed no answer: a binding's state is its slot, and its unbind step leaves room for either option ([Kernel bindings that hold capabilities](#kernel-bindings-that-hold-capabilities)).
+- **Blocks:** C12, C15.
 - **From:** [Fault delivery](#fault-delivery); [0056](../decisions/0056-faults-and-page-fetch-deadlines.md), rule 1; the third review. **Backlog:** D151.
 
 ### K51. Memory waits on the fault path
@@ -1626,7 +1699,8 @@ Fail gives an error key of 36 octets for a range, and every thread waiting on a 
 Is identify, which reads a capability's kind and rights, a published method of the capability-space interface, `aspis.kernel.cspace`, or internal to `aspis-rt`?
 
 - **Options:** a published method of `aspis.kernel.cspace`, which the [call-language specification](call-language.md#l41-the-identify-operation) assumes meanwhile; or an operation internal to `aspis-rt`, which the network server and generated stubs both use.
-- **Blocks:** C11, C17.
+- C11 needed no answer: the kernel operation exists either way ([Capability spaces and lookup](#capability-spaces-and-lookup)).
+- **Blocks:** C17.
 - **From:** [Capability spaces and lookup](#capability-spaces-and-lookup); [0047](../decisions/0047-the-kernel-follows-sel4.md), rule 3; [0066](../decisions/0066-capability-parameters-and-server-streams.md), rules 1 and 4. **Backlog:** D152.
 
 ### K76. Older majors of the interfaces the kernel calls

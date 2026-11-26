@@ -3,7 +3,7 @@
 
 # Design backlog
 
-*2026-11-24, updated 2026-11-25. Every open design decision, in the order the build needs them. The companion to the [build plan](build-plan.md).*
+*2026-11-24, updated 2026-11-26. Every open design decision, in the order the build needs them. The companion to the [build plan](build-plan.md).*
 
 This note lists the design decisions that ASPIS still has to make. Each sits under the milestone it must be settled before, and the entries are numbered D01, D02, … in that order. Within a milestone they follow the order in which the build reaches them. The [build plan](build-plan.md) splits the build into chunks (C01, C02, …) and milestones, and says which chunk each decision unblocks.
 
@@ -157,7 +157,7 @@ Chunks C06, C07, C10 to C12, C13a, C13b, C14 to C17, C70 and C71 ([build plan](b
 - **Why open:** [0002](../decisions/0002-capability-security-model.md), rule 1 says capabilities can be copied with fewer rights, passed over IPC and revoked, and its Consequences say revocation needs careful design. Managers revoke the capabilities tagged with a revoked branch's policies ([0019](../decisions/0019-authzen-decision-protocol.md), rule 8).
 - **Options:** seL4 CNodes, with a capability derivation tree and badges; a flat handle table in Zircon's style.
 - **Blocks:** C11. **Depends on:** D14.
-- **Settled:** [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), accepted 2026-11-25: the structure (rule 1), the rights (rule 2), derivation tracking (rule 4) and sessions (rule 5). The slot layout and the rest are in the [kernel specification](kernel-specification.md#open-questions).
+- **Settled:** [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), accepted 2026-11-25: the structure (rule 1), the rights (rule 2), derivation tracking (rule 4) and sessions (rule 5). C11 settled the slot layout, lookup, the derivation tree and its deletion algorithm in the [kernel specification](kernel-specification.md#capabilities). What is still open is in its [open questions](kernel-specification.md#open-questions).
 
 **D16. Who mints IDs for processes, threads and endpoints**
 
@@ -310,14 +310,16 @@ D150 to D160 were added on 2026-11-25, after D149, so they break the numbering o
 - **Decide:** which slots the thread, the wait set and the interrupt handler carry for their bindings, and so each object's size (K07); what removing a binding in use does (K08); a scheduling context's size (K15); whether a registered IPC buffer holds a capability (K29); the wait set's size (K33); and what happens to a fault in flight when its endpoint is unset (K50).
 - **Why open:** [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4 makes every binding hold a copy of the capability presented, so that revocation removes it, and leaves where the copies live to the specification ([Kernel bindings that hold capabilities](kernel-specification.md#kernel-bindings-that-hold-capabilities)).
 - **Options:** seL4's thread layout extended with a slot for the bound eventcount, one slot per wait-set entry; refills as seL4 sizes them; see the specification for the rest.
-- **Blocks:** C11, C12, C13b, C14, C15, C16. **Depends on:** D15.
+- **Blocks:** C12, C13b, C14, C15, C16. **Depends on:** D15.
+- **Settled in part:** K07 with C11, in the [kernel specification](kernel-specification.md#kernel-bindings-that-hold-capabilities): a binding is a derived copy of the capability presented, in a slot of the binding object, and the address space's record holds its mappings' copies. The thread's, wait set's and handler's slots and sizes stay open, with K08, K15, K29, K33 and K50.
 
 **D152. Rights and capability identity**
 
 - **Decide:** whether the kernel can tell that two capabilities name one object (K11); the rights on wait sets (K32); whether capabilities yielded by listing mappings derive from the listing capability (K42); the rights on a job's capability, and how the memory server's is limited (K53); the rights of the main-thread capability that spawn returns (K63); and whether identify, which reads a capability's kind and rights, is a published method or internal to `aspis-rt` (K75).
 - **Why open:** [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 2 fixes the rights other records rely on, and leaves the rest to the specification ([Rights by object type](kernel-specification.md#rights-by-object-type)). [0061](../decisions/0061-debugging.md), rule 4 leaves open a gap in revoking a debugger's access, until a record closes it.
 - **Options:** as listed under each question in the specification. Closing the listing gap changes [0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rule 3, so it needs a record.
-- **Blocks:** C11, C14, C15, C16, C17, C19, C70. **Depends on:** D15.
+- **Blocks:** C14, C15, C16, C17, C19, C70. **Depends on:** D15.
+- **Settled in part:** K11 with C11, in the [kernel specification](kernel-specification.md#kernel-objects-and-ids): the kernel has no operation that tells whether two capabilities name one object, as in seL4. K32, K42, K53, K63 and K75 stay open.
 
 **D153. Scheduling, cores and firmware details**
 
@@ -338,7 +340,8 @@ D150 to D160 were added on 2026-11-25, after D149, so they break the numbering o
 - **Decide:** how many units of work fall between preemption checks (K22); how each long operation keeps its progress (K23); the size of a batch of interrupt work, and where each core keeps its pending work (K24); the structures of the ordered queues (K25); how a restarted advance avoids adding twice (K31); where word-wait queues live (K34); and how long lists of mappings and threads are returned (K41).
 - **Why open:** [0052](../decisions/0052-smp-bring-up-and-the-kernel-lock.md), rule 2 guarantees that the kernel lock is never held for unbounded time, and that ordered queues insert in bounded or logarithmic time, which seL4's code doesn't do. It leaves the mechanism to the specification ([The kernel lock and long operations](kernel-specification.md#the-kernel-lock-and-long-operations); [Ordered kernel queues](kernel-specification.md#ordered-kernel-queues)).
 - **Options:** seL4's preemption granularity of 100; per-priority lists with a bitmap, balanced trees, pairing heaps or timer wheels; listing with a cursor, or a preemptible call that fills a caller's memory object.
-- **Blocks:** C11, C12, C13b, C14, C15, C16. **Depends on:** D18.
+- **Blocks:** C12, C13b, C14, C15, C16. **Depends on:** D18.
+- **Settled in part:** K22 with C11, in the [kernel specification](kernel-specification.md#the-kernel-lock-and-long-operations): seL4's default, 100 units of work between checks. K23 in part: revoke and delete keep their progress in the derivation tree and its zombies, and clearing untyped memory keeps it in the untyped capability's watermark. How the other long operations keep theirs stays open, with K24, K25, K31, K34 and K41.
 
 **D156. The private ABI and the kernel's messages**
 
@@ -352,7 +355,7 @@ D150 to D160 were added on 2026-11-25, after D149, so they break the numbering o
 - **Decide:** how an MSI request names its device, and what authority it needs (K35); interrupt targets (K36); the number of LPIs (K37); the ITS tables' sizes (K38); what bounds a wait for the ITS (K39); and how a revocation that meets an ITS table reports it (K40).
 - **Why open:** [0055](../decisions/0055-interrupt-objects.md), rule 4 gives four guarantees for MSI and leaves these details, and the report of a revocation it can't finish, to the specification ([MSI and the GICv3 ITS](kernel-specification.md#msi-and-the-gicv3-its)).
 - **Options:** the ITS device ID, the PCIe requester ID or a capability to the PCIe function; a fixed LPI count, a kernel argument or one derived from the firmware's description; see the specification for the rest.
-- **Blocks:** C11, C13b, C20. **Depends on:** D21.
+- **Blocks:** C13b, C20. **Depends on:** D21.
 
 **D158. The pager protocol and reclaim at a limit**
 
@@ -366,7 +369,7 @@ D150 to D160 were added on 2026-11-25, after D149, so they break the numbering o
 - **Decide:** whether the capability-table copy is defined only for a stopped source (K09); how a spawner knows the job it spawns into (K62); what a runtime needs to make its own threads (K64); the startup block's layout (K65); how the tail of a writable segment is zeroed, and the segment alignment (K66); and how a process named after it starts learns its ID (K67).
 - **Why open:** [0060](../decisions/0060-processes-native-spawn-and-elf.md), rules 2 to 4 and 7 and [0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 7 decide spawn and the copy, and leave these to the specification ([Native spawn and program loading](kernel-specification.md#native-spawn-and-program-loading); [The startup block](kernel-specification.md#the-startup-block)).
 - **Options:** a kernel check of an untyped capability's job, a handle from the process manager, or a child job made on request; little-endian tagged records or a fixed header; see the specification for the rest.
-- **Blocks:** C11, C16, C17. **Depends on:** D29, D30.
+- **Blocks:** C16, C17. **Depends on:** D29, D30.
 
 **D160. The debugging mechanism**
 
