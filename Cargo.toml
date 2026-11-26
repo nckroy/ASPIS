@@ -8,6 +8,7 @@ members = [
     "kernel",
     "crates/bootinfo",
     "crates/kargs",
+    "crates/kmem",
     "crates/initfs",
     "crates/glyph-atlas",
     "tools/atlas",
@@ -26,6 +27,7 @@ rust-version = "1.100"
 [workspace.dependencies]
 bootinfo = { path = "crates/bootinfo" }
 kargs = { path = "crates/kargs" }
+kmem = { path = "crates/kmem" }
 initfs = { path = "crates/initfs" }
 glyph-atlas = { path = "crates/glyph-atlas" }
 

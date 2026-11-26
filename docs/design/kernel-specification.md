@@ -83,31 +83,120 @@ At boot the kernel reads the boot information's memory map ([0041](../decisions/
 
 Everything else in usable RAM goes to the root server as untyped memory, in the root job. Boot objects belong to no job, count against no reservation or limit, and are never destroyed. Page tables and mapping records made later for the root server's address space come from the root job ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 1).
 
+**How the kernel divides the memory map (C10).**
+
+- **Rounding.** Usable ranges are rounded inward to whole pages, and every other type outward.
+- **Precedence.** Where ranges overlap, the more restrictive type wins, in this order:
+  1. firmware-reserved, ACPI reclaimable, ACPI non-volatile, unusable, and any type the kernel doesn't know;
+  2. the seed;
+  3. the framebuffer;
+  4. the kernel image, the initial image and the boot information;
+  5. MMIO;
+  6. usable.
+- **Kept ranges are kept whole.** The kernel image, initial image and boot information ranges are kept with their slack pages. So the panic symbol table, inside the kernel image's range, is kept with the image. The stub's alignment slack, up to 2 MiB, is kept too.
+- **ACPI memory is left alone.** ACPI reclaimable memory is neither in the direct map nor untyped memory. Whether it is given out once the tables are read is C65's choice.
+- **RAM beyond the direct map's reach** isn't used. That is usable RAM at or above 2^47 ([Address-space layout](#address-space-layout)). The boot log says how much there was.
+- **The boot allocator** is the kernel's only page source before untyped memory exists.
+  - It hands out single pages of usable RAM, top-down from the highest usable range. The kernel zeroes each page it takes.
+  - Before the switch to the kernel's own tables, the kernel reaches each page it takes through the boot window ([Address-space layout](#address-space-layout), "Bootstrap tables and the switch"), so the allocator may take any usable page.
+  - It serves the kernel's own page tables, and later chunks' boot objects, other cores' stacks and the LPI tables.
+  - Once the boot objects are made, the kernel seals it. A request after that is a kernel bug, and panics ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 1).
+- **Untyped memory** is the usable RAM below 2^47 that the boot allocator never handed out. The kernel splits it into naturally aligned power-of-two pieces, from 4 KiB to 2^47 bytes, the largest that fit first, and zeroes it once ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)).
+- **Device untyped memory** follows seL4: everything up to the processor's physical address size that no memory-map range other than MMIO covers.
+  - The size comes from `ID_AA64MMFR0_EL1.PARange`, at most 48 bits. Every range is rounded outward here, so a page that holds any RAM is never device memory.
+  - It leaves out the devices the kernel drives ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 1): the PL011's `reg`, and every `reg` of the interrupt controller's node (`arm,cortex-a15-gic`, `arm,gic-400` or `arm,gic-v3`) and of its children (`arm,gic-v2m-frame`, `arm,gic-v3-its`).
+  - The kernel doesn't translate addresses through a bus's `ranges` yet. So it reads a `reg` as a physical address only where that is certain: the UART's node and the interrupt controller's node must be children of `/`, and the interrupt controller's children need its `ranges` to be empty, as QEMU `virt`'s is.
+  - The kernel stops at boot, rather than give a frame of its own devices away, when it can't name them for certain: with no device tree, with no interrupt controller it knows, with one of these nodes elsewhere in the tree, or with a `reg` it can't read. C65 reads the same devices from ACPI's MADT and SPCR. The Pi 4's devices sit under `/soc`, whose `ranges` translate them, so booting it (MH) needs the translation first.
+  - It is never zeroed, and never in the direct map.
+- **The table of boot pieces** holds up to 2048 pieces, RAM and device together. A piece beyond that panics in a test build. In production it goes unused, with a warning in the boot log.
+- **The boot core's stack and the log ring** are in the kernel image's `.bss`. The stack has a page-aligned section of its own, with an unmapped guard page below it, so an overflow takes a translation fault, which panics and names the overflow, rather than corrupting `.bss`. The exception entry's own frames then land below the guard page, in the bootstrap tables, which nothing uses after the switch. The empty table that `TTBR0_EL1` holds when no user address space is active is live, so it isn't among them: it is read-only data in the image, which the kernel's tables map read-only.
+
 ### Untyped memory and kernel records
 
 This section gives the mechanism behind [0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 1, and [0058](../decisions/0058-jobs-and-budgets.md), rules 1, 3 and 4.
 
 - **Retype.** Every object made after boot is made by retyping untyped memory, as in seL4. The object belongs to the job of the piece it came from. No call that makes an object names a job, and none needs a job's capability, except making a child job ([Job capabilities](#job-capabilities)).
+- **Where objects go in a piece.** As in seL4, a piece has a watermark: below it, memory has been retyped; above it, memory is free. A retype aligns the watermark up to the object's size, then places the objects one after another. Device untyped memory makes only frames and smaller device untyped pieces, so the kernel never keeps its own records in MMIO.
 - **Pieces.** A job holds its memory as pieces of untyped memory. Reserved memory is carved from the parent's reservation. Borrowed memory is lent from the pool in page-sized pieces, or in larger pieces for large objects, so that a piece the job empties can be returned whole. Which objects come from which size is open ([K04](#k04-piece-sizes)).
 - **The index of a job's pieces.** The kernel keeps, for each job, an index of the pieces it holds, so that it can find free memory on a fault, when no caller names any. Where the index's own memory comes from is open ([K03](#k03-the-index-of-a-jobs-pieces)).
 - **Small records.** A fault can need records that have no capability of their own: mapping records, nodes of an object's page index, pending marks and per-frame share counts. They come from the job responsible ([0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rule 2). seL4's untyped memory is a watermark allocator, so small records freed inside a piece can't be reused until the piece is empty. How the kernel keeps them is open ([K02](#k02-small-kernel-records)).
 - **Which piece a fault uses.** Whether the kernel takes a fault's memory from reserved pieces before borrowed ones is open ([K05](#k05-which-pieces-a-fault-uses-first)).
 - **Untyped capabilities a process holds.** A job's manager gives the job memory through the job's capability, and may pass untyped capabilities for those pieces to the job's processes, which make objects from them. How that relates to the pieces the kernel uses for faults is open ([K06](#k06-untyped-capabilities-and-fault-memory)).
 - **Taking a piece back.** The memory server takes an empty piece back in one kernel operation. Under the kernel lock, the kernel checks that nothing has been made from the piece, and removes it from the job and its index in the same step. It fails if anything has been made from it. So taking back can't race with a retype or a fault.
-- **Clearing.** Clearing untyped memory before it is retyped again is a long operation, as seL4's `resetUntypedCap` is ([The kernel lock and long operations](#the-kernel-lock-and-long-operations)).
-- **Cost.** This note will give, for each object type, its size in bytes, so that a size ([0058](../decisions/0058-jobs-and-budgets.md), rule 12) can leave room for kernel bookkeeping. Several sizes wait on open questions ([K07](#k07-where-binding-copies-live-and-object-sizes)).
+- **Clearing.** Free untyped memory is always zero, so a retype never needs to clear.
+  - The kernel zeroes RAM untyped memory once at boot.
+  - A reset clears the used part from the top down, in 64 KiB chunks, and records its progress in the watermark, as seL4's `resetUntypedCap` does. So a reset is a long operation that resumes where it stopped ([The kernel lock and long operations](#the-kernel-lock-and-long-operations)). C10 has no preemption points yet, so it runs a reset to the end. Nothing made from the piece may still be in use; C10 has no derivation tree to check that, so its callers promise it, and C11 checks it as seL4 does.
+  - Device untyped memory is never cleared: a reset only lowers its watermark to zero.
+- **Cost.** This note will give, for each object type, its size in bytes, so that a size ([0058](../decisions/0058-jobs-and-budgets.md), rule 12) can leave room for kernel bookkeeping. Several sizes wait on open questions ([K07](#k07-where-binding-copies-live-and-object-sizes)). C10's objects:
+
+  | Object | Size |
+  |---|---|
+  | Untyped memory | 2^n bytes, from 4 KiB to 2^47 |
+  | Frame | 4 KiB, 2 MiB or 1 GiB |
+  | Page table, at any level | 4 KiB |
+  | Address space | 8 KiB: its level-0 table, then a 4 KiB kernel record that holds its ASID word, with room for what C15 and C16 add. The level-0 table needs all 512 entries for a 48-bit lower half, so the record can't live inside it |
 
 ### Address-space layout
 
 This section gives the mechanism behind [0048](../decisions/0048-kernel-memory-and-address-spaces.md), rules 3, 4 and 6.
 
 - **Granule.** 4 KiB pages, with 2 MiB and 1 GiB block mappings where a range is aligned and has one set of attributes. Addresses are 48 bits in each half.
-- **Lower half (`TTBR0`).** Each address space has its own translation tables and an ASID. The ASID width is 16 bits where `ID_AA64MMFR0_EL1.ASIDBits` says the processor supports it, and 8 bits otherwise. No job can exhaust the ASIDs ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 4). How they are allocated so is open ([K01](#k01-asid-allocation)).
-- **Upper half (`TTBR1`).** At the base `0xffff_8000_0000_0000` that C05 chose: the kernel's image, the per-core stacks, the interrupt controller's frames and the UART, the boot framebuffer until it is retired ([0042](../decisions/0042-log-ring-and-panic-path.md), rule 6), and the direct map. The generic timer is reached through system registers and needs no mapping.
+- **Lower half (`TTBR0`).** Each address space has its own translation tables and an ASID. The ASID width is 16 bits where `ID_AA64MMFR0_EL1.ASIDBits` says the processor supports it, and 8 bits otherwise. No job can exhaust the ASIDs ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 4), because they are given out by generation rollover, below, which settles [K01](#k01-asid-allocation).
+- **Upper half (`TTBR1`).** It starts at `0xffff_0000_0000_0000`. It holds the kernel's image, at the base `0xffff_8000_0000_0000` that C05 chose, the stacks, the interrupt controller's frames and the UART, the boot framebuffer until it is retired ([0042](../decisions/0042-log-ring-and-panic-path.md), rule 6), and the direct map. The generic timer is reached through system registers and needs no mapping.
+
+  | Virtual address | Holds |
+  |---|---|
+  | `0xffff_0000_0000_0000` + PA | The direct map, for physical addresses below 2^47 |
+  | `0xffff_8000_0000_0000` | The kernel's image, at most 32 MiB. The boot core's stack and the log ring are in its `.bss` |
+  | `0xffff_8000_4000_0000` | The device window, 1 GiB: the UART, then the boot framebuffer, and from C13a the interrupt controller's frames. Addresses are handed out in order, and each mapping keeps its physical address's offset within 2 MiB, so blocks can be used |
+
+  Where the other cores' stacks are mapped is C12's.
 - **The direct map.** It covers usable RAM and the ranges that hold the boot objects. It is never executable. The kernel image's range is mapped read-only. It leaves out the UEFI runtime regions and other firmware-reserved memory ([0039](../decisions/0039-no-uefi-runtime-services.md), rules 1 and 2), the seed's page, the framebuffer and all MMIO.
 - **Attributes.** Kernel text is read-only and executable at EL1. Kernel read-only data is read-only. Everything else in the upper half is read-write and never executable. Every kernel mapping is UXN, and every user mapping is PXN. The kernel refuses a user mapping that is both writable and executable. PAN is set where the processor implements it (Armv8.1 and later).
+- **Memory types.** `MAIR_EL1` stays as M1 set it: attribute 0 is Device-nGnRE, 1 is normal write-back, 2 is normal non-cacheable.
+  - The image, the direct map and every translation table are normal write-back memory, inner shareable.
+  - The UART is Device-nGnRE.
+  - The boot framebuffer is normal non-cacheable, so scan-out needs no cache maintenance. It isn't in the direct map, so it has no alias with other attributes. Its cacheability changes at the switch, since the firmware had it write-back. So the kernel cleans and invalidates its range by address (`DC CIVAC`, then `DSB SY`) after the switch and before the console first draws.
+  - The memory type of a user mapping follows the frame, never the caller: RAM is normal write-back and inner shareable, as the direct map has it, and device memory is Device-nGnRE. Whether device memory objects may choose non-cacheable or write-combining memory is C15's.
+  - The kernel sets the access flag in every leaf. `TCR_EL1.HA` and `HD` stay 0, so there is no hardware access-flag or dirty-bit management.
+- **Descriptors.**
+  - Kernel mappings are global and always UXN. Text is read-only at EL1 (AP = `10`) and executable. Everything else is PXN: read-only data is AP = `10`, data and `.bss` AP = `00`.
+  - User mappings are non-global, always PXN, and open to EL0 (AP[1] = 1). Read-write is AP = `01` and UXN. Read-only is AP = `11` and UXN. Read-execute is AP = `11` without UXN. Write with execute is refused, and so is execute on device memory, which is always UXN.
+  - As a backstop for W^X, table descriptors carry UXNTable in the upper half and PXNTable in user tables. `TCR_EL1.HPD0` and `HPD1` stay 0, so the hardware honors them.
+  - Software bit 55 marks every user mapping of device memory, and every mapping in the device window. The walk in [Access to user memory](#access-to-user-memory) reads it.
+  - With the 4 KiB granule, the encoding `0b01` is a block at levels 1 and 2 only. At level 0 it is invalid and at level 3 reserved, and the kernel's own walks treat both as invalid. The kernel makes no leaf at level 0.
+- **Registers.**
+  - `TCR_EL1` is as M1 set it, plus `AS` = 1 where `ID_AA64MMFR0_EL1.ASIDBits` is `0b0010` (16-bit ASIDs), and `A1` = 0, so the ASID is the one in `TTBR0_EL1`. `EPD0` stays 0. With no user address space active, `TTBR0_EL1` holds an empty table and ASID 0, as Linux's `reserved_pg_dir` does, so no walk can make a lower-half TLB entry. The kernel writes `TCR_EL1` only at boot.
+  - `SCTLR_EL1` adds `WXN`, so the hardware treats any writable mapping as execute-never.
+  - Where `ID_AA64MMFR1_EL1.PAN` isn't 0, the kernel clears `SPAN`, so every exception taken to EL1 sets PAN, and sets `PSTATE.PAN` at boot. It never clears PAN. The Pi 4's Cortex-A72 has no PAN, and `SPAN` stays 1 there. [0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 5 makes the kernel safe without it, and whether to emulate it is C78's (rule 6).
+- **ASIDs.** They are given out by generation rollover, as Linux on arm64 does (`arch/arm64/mm/context.c`). So any number of address spaces share the ASIDs, and no job can exhaust them, whatever user space does. This settles [K01](#k01-asid-allocation).
+  - ASID 0 is never given out. It tags "no user address space".
+  - Each address space keeps an ASID word in its kernel record: a generation, and its ASID. A word of 0 means it has never had one.
+  - The allocator keeps the current generation, a bitmap of the numbers used in it, and for each core the space it runs and the space it ran at the last rollover, each with its word. It tracks 8 cores until C12 sizes this from the device tree.
+  - **Activating** an address space on a core:
+    1. If its word is of the current generation, it uses that number.
+    2. Otherwise it keeps its old number if that was reserved for this same space at the last rollover, as Linux's `check_update_reserved_asid` does, or if no one uses it in this generation. Else it takes the next free number.
+    3. If none is free, the generation rolls over. Every number is freed except 0 and the number each core is running, the current core's included, which stay reserved for the spaces running there. Then `TLBI VMALLE1IS`, `DSB ISH` and `ISB`.
+    4. The kernel writes `TTBR0_EL1` with the space's level-0 table and its ASID in bits 63:48, then issues `ISB`.
+  - **Deactivating** writes `TTBR0_EL1` with the empty table and ASID 0, then issues `ISB`.
+  - A space that runs on another core across a rollover keeps its number there, and its word moves to the new generation when it is next activated anywhere. So one address space never has two live ASIDs, and no number is given to a second space while a core still runs the first under it. Until then its word may be of an old generation while it runs, so TLB maintenance uses the word's number whatever its generation ([Cross-core signals and TLB maintenance](#cross-core-signals-and-tlb-maintenance)).
+  - **Releasing** a destroyed address space, which no core may be running: `TLBI ASIDE1IS` with its number, whatever its generation, then `DSB ISH`. The number is freed if its generation is current.
+  - All of this runs under the kernel lock. QEMU flushes its whole TLB whenever `TTBR0_EL1` changes ASID, so it can't show a stale translation after a rollover. The rollover is checked by host tests of the allocator instead, against a model of which spaces can have TLB entries under which number. Invalidation after an unmap is checked in QEMU, which keeps a translation until a `TLBI` drops it: a test reads a page with an unprivileged load (`LDTR`), remaps the address to another frame, and reads it again. The test alone does this; the kernel never dereferences a user address ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 5).
+- **Mapping and unmapping.** Every user mapping is made through one encoder, so the rules above hold for all of them.
+  - A user address space is an object of its own, made by retype: its level-0 table, then its kernel record ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)). Each further table is a page retyped from the memory of the address space's job when a mapping first needs it ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 1). C10 takes them from one untyped piece; with jobs, C16 takes them from the job's pieces.
+  - A frame is mapped with blocks where the virtual address and the frame are aligned to the block's size, and with pages otherwise.
+  - A mapping never replaces a valid entry. A request that would, or that is writable and executable, or executable device memory, is refused before any entry is written. If the job runs out of memory for a table partway, what was mapped is unmapped again before the call fails.
+  - An unmap that would cut a block in two is refused. Tables that an unmap leaves empty stay until the address space goes, since each is an object of its own.
 - **Relocation first.** The kernel builds these tables only after the stub has applied its relocations, so read-only protection starts after relocation ([0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 3).
-- **Replacing M1's tables.** C10 replaces M1's 2 MiB blocks for the kernel's 32 MiB, and M1's identity map of the first 4 GiB in the lower half, with this layout.
+- **Bootstrap tables and the switch.** M1's early tables in `entry.rs` become bootstrap tables, which run the kernel only until the switch.
+  - **They map the kernel's image and nothing else**, so even before the switch the kernel never maps the UEFI runtime regions or other firmware-reserved memory ([0039](../decisions/0039-no-uefi-runtime-services.md), rule 1), or the seed's page ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 2). The identity map in `TTBR0_EL1` covers only the image's first 2 MiB, which hold its text, wherever the stub put it. The high map covers the image from its first page to its last, with 2 MiB blocks where a whole block lies inside it and pages at its end.
+  - **They are W^X too**, so the invariant holds from the first instruction with the MMU on. The identity map and the high map share one level-3 table for the kernel's first 2 MiB, with text read-only and executable and the rest read-write and PXN. The rest of the image is read-write and PXN. `kernel/link.ld` asserts that text fits in 2 MiB, and that the image fits in 32 MiB.
+  - **The boot window.** Right above the image's 32 MiB, `_start` links four empty level-3 tables into `TTBR1_EL1`: 8 MiB of page slots, as Linux's early fixmap has. Before the switch the kernel maps there, one page at a time, exactly what it must reach: the boot information and the device tree read-only, the UART as device memory, and each page of its new tables read-write. Slots are used once and never reused, so no entry changes from one valid descriptor to another, and no TLB maintenance is needed before the switch. The pages of the tables may be anywhere in usable RAM. A memory map that needs more than 1024 pages of tables, or a window too small for the boot information and the device tree, stops the boot.
+  - **The kernel builds its own tables** after relocation, with pages from the boot allocator, written through the boot window.
+  - **A trampoline replaces `TTBR1_EL1`.** It runs from the identity map, as Linux's `idmap_cpu_replace_ttbr1` does. It points `TTBR1_EL1` at an empty table, invalidates every TLB entry, then points it at the new tables. So no TLB ever holds entries from both sets (break-before-make), and a change of block size or attributes can't conflict.
+  - **The kernel moves to upper-half addresses.** It finds the new addresses of the boot information, the device tree and the framebuffer while the boot window still maps the boot information. The boot window goes with the bootstrap tables at the switch, so the console moves to the UART's address in the device window as soon as the trampoline returns, before anything can print.
+  - **Then it retires the identity map.** `TTBR0_EL1` gets the empty table and ASID 0, `SCTLR_EL1` gets `WXN`, and PAN is set where there is PAN. Every TLB entry is invalidated.
+  - From then on the lower half belongs to user space, and nothing reads a physical pointer.
 - **TLB maintenance** is in [Cross-core signals and TLB maintenance](#cross-core-signals-and-tlb-maintenance).
 
 ### Access to user memory
@@ -128,6 +217,18 @@ The caller of a call that failed with "not resident" touches the page in user mo
 1. The write must go through a mapping with the write right, or, for a debugger, into a memory object for which it presents a capability with the write right, as it does for the private clone that holds software breakpoints ([Software breakpoints in a private clone](#software-breakpoints-in-a-private-clone)). Anything else is refused.
 2. If the page is shared copy-on-write, the written object takes a frame of its own from its own job, and the page is copied into it. If that job has no free memory, the call fails at once with "no memory". No memory request is sent.
 3. The kernel writes through the direct map, and marks the page dirty in its object's page tracking, as a user write would. So Query and Clean see the write.
+
+**The walk (C10).**
+
+- The kernel walks the address space's tables through its direct map, level by level, with the 4 KiB granule's encodings: an encoding the hardware treats as a fault is "not resident" too ([Address-space layout](#address-space-layout)).
+- An address at or above 2^48 isn't in the lower half, and is refused.
+- An invalid entry at any level is "not resident".
+- A leaf with the device bit is "not RAM".
+- As defense in depth, the kernel then checks the frame against its direct map. A read needs the frame in the direct map. A write needs it in the direct map's read-write part. A frame the direct map doesn't cover is "not RAM". A write to a frame the direct map holds read-only, such as a boot object's, is refused, never attempted, so a wrong mapping can't make the kernel fault.
+- A write needs a mapping writable at EL0, which is step 1 of Writing.
+- A span is checked page by page before any byte moves, so a call moves all of its bytes or none.
+- The bytes move with volatile accesses through the direct map, aligned words as words and the rest as bytes. User memory is shared with threads outside the kernel's own memory model: a thread on another core may write the frame meanwhile, and the copy then holds some mix of old and new bytes, never a fault.
+- Marking pages dirty and breaking copy-on-write come with memory objects (C15). The names of these results are internal until [K30](#k30-results-and-error-names) settles them.
 
 **IPC buffers** are pinned when they are registered, so the kernel can always write a received message ([IPC buffers](#ipc-buffers)). Eviction, decommit and reclaim skip a pinned frame ([0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rule 8).
 
@@ -383,7 +484,14 @@ This section gives the mechanism behind [0052](../decisions/0052-smp-bring-up-an
 
   Which SGI numbers the kernel uses is open ([K26](#k26-sgi-numbers)).
 - **A stop at a panic** reaches a core spinning for the lock, which serves it, and a core in user mode at once. A core in the kernel, with interrupts masked, sees it at its next preemption point or exit. Whether a stop should reach such a core sooner is open ([K27](#k27-stopping-a-core-that-has-interrupts-masked)).
-- **TLB maintenance** uses the broadcast inner-shareable `TLBI` instructions by ASID and address, such as `TLBI VAE1IS` and `TLBI ASIDE1IS`, then `DSB ISH`, then `ISB` on the issuing core. They reach every core in the inner-shareable domain and complete before the `DSB` does, so no core needs an interrupt to flush its TLB. How ASIDs are given out is open ([K01](#k01-asid-allocation)).
+- **TLB maintenance** uses the broadcast inner-shareable `TLBI` instructions by ASID and address, such as `TLBI VAE1IS` and `TLBI ASIDE1IS`, then `DSB ISH`, then `ISB` on the issuing core. They reach every core in the inner-shareable domain and complete before the `DSB` does, so no core needs an interrupt to flush its TLB. ASIDs are given out as [Address-space layout](#address-space-layout) says. The sequences:
+  - **A new user mapping:** store the descriptor, then `DSB ISHST` and `ISB`. The `DSB` makes the entry visible to every walker, and the `ISB` makes the issuing core's later instructions use it.
+  - **A new executable user mapping** first makes the frame's instructions coherent with what data stores wrote there, before the descriptor is stored. The frame may hold another job's old code, cleared since by data stores when its untyped memory was reset, or code the kernel wrote. Through the direct map, the kernel cleans each data-cache line to the point of unification (`DC CVAU`) unless `CTR_EL0.IDC` is set, then `DSB ISH`; invalidates each instruction-cache line (`IC IVAU`), or all of them (`IC IALLUIS`) for a range over 64 KiB, unless `CTR_EL0.DIC` is set; then `DSB ISH` and `ISB`. The Pi 4's Cortex-A72 sets neither bit. Its instruction cache is physically indexed, so maintenance through the direct map reaches every alias.
+  - **A new table** is zeroed, and the zeroes are made visible with `DSB ISHST`, before the table is linked.
+  - **Unmapping a user page or block:** store 0, `DSB ISHST`, `TLBI VAE1IS` with the address space's ASID and the address, `DSB ISH`, then `ISB`. The ASID is the number in the space's ASID word, whatever its generation, as Linux does: a space that runs on another core across a rollover keeps an old-generation word until it is next activated. A space that has never had an ASID has no TLB entries, and needs no invalidation.
+  - **Changing a kernel mapping after boot:** `TLBI VAALE1IS` for a last-level entry, and `TLBI VAAE1IS` for a table entry, since `VAALE1IS` keeps cached walks. C10 changes none.
+  - **A rollover, and the switch to the kernel's own tables:** `TLBI VMALLE1IS`.
+  - Tables are written through cacheable mappings and walked cacheably (`TCR_EL1` IRGN and ORGN are write-back), so tables need no cache maintenance beyond the barriers. An executable user mapping does, as above.
 
 ## IPC
 
@@ -920,14 +1028,13 @@ Boot objects belong to no job, count against no reservation or limit, and are ne
 
 ## Open questions
 
-These mechanism questions are open. Each is settled alongside the prototype of chunks C10 to C16, or of C17 or C70 where it says so, and this note records the answer. A question whose answer would change a guarantee of the records needs an edit to that record instead ([0047](../decisions/0047-the-kernel-follows-sel4.md), rule 5). K12, K61 and K73 are decisions rather than mechanism. K10 and K61 belong to existing backlog entries, D95 and D115. The [design backlog](design-backlog.md#m2-kernel-objects) carries the rest as D150 to D160 under M2, D161 under [M3](design-backlog.md#m3-node-user-space-and-the-entropy-gate) for K12, and D162 under [M6](design-backlog.md#m6-a-console-you-can-log-in-to) for K73. "The third review" means the third review of the M2 records.
+These mechanism questions are open, except those marked settled. Each is settled alongside the prototype of chunks C10 to C16, or of C17 or C70 where it says so, and this note records the answer. A settled question keeps its number, and says where its answer is. A question whose answer would change a guarantee of the records needs an edit to that record instead ([0047](../decisions/0047-the-kernel-follows-sel4.md), rule 5). K12, K61 and K73 are decisions rather than mechanism. K10 and K61 belong to existing backlog entries, D95 and D115. The [design backlog](design-backlog.md#m2-kernel-objects) carries the rest as D150 to D160 under M2, D161 under [M3](design-backlog.md#m3-node-user-space-and-the-entropy-gate) for K12, and D162 under [M6](design-backlog.md#m6-a-console-you-can-log-in-to) for K73. "The third review" means the third review of the M2 records.
 
 ### K01. ASID allocation
 
 How does the kernel allocate ASIDs so that no job can exhaust them ([0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 4)?
 
-- **Options:** generation-based rollover, which flushes the TLB when the generation changes, as Linux on arm64 does, so the number of address spaces isn't bounded by the ASID width; or seL4's ASID pools, which the root server hands out per job (`deleteASIDPool` and `nASIDPools` in seL4 17.0.0's `src/arch/arm/64/kernel/vspace.c`).
-- **Blocks:** C10.
+- **Settled with C10:** generation rollover, as Linux on arm64 does; see [Address-space layout](#address-space-layout).
 - **From:** [Address-space layout](#address-space-layout); the third review. **Backlog:** D150.
 
 ### K02. Small kernel records
@@ -935,7 +1042,7 @@ How does the kernel allocate ASIDs so that no job can exhaust them ([0048](../de
 How does the kernel keep the small, capability-less records it makes on faults (mapping records, page-index nodes, pending marks and frame share counts) in a job's memory? They are small and short-lived, and untyped memory is a watermark allocator, so a job's free memory would fragment.
 
 - **Options:** per-job slab pages, each a page-sized piece retyped into fixed-size records with a free list, returned to the job when empty, which [0047](../decisions/0047-the-kernel-follows-sel4.md), rule 3 would list as a departure from seL4; records reserved inside the object they describe, sized when it is made; or a fixed allowance per address space and memory object, set at creation.
-- **Blocks:** C10, C15, C16.
+- **Blocks:** C15, C16. C10 makes no small records: its page tables and address spaces are whole pages.
 - **From:** [How far the kernel follows seL4](#how-far-the-kernel-follows-sel4); [Untyped memory and kernel records](#untyped-memory-and-kernel-records); [0048](../decisions/0048-kernel-memory-and-address-spaces.md), rule 1; the third review. **Backlog:** D150.
 
 ### K03. The index of a job's pieces
@@ -1103,7 +1210,7 @@ How many units of work does the kernel do between checks for a pending interrupt
 For each long operation marked "Open" in [The kernel lock and long operations](#the-kernel-lock-and-long-operations), where is its progress recorded, and how does a restart resume it? Which memory operations need preemption points at all?
 
 - **Options:** to be settled with the prototype, operation by operation. Listings are [K41](#k41-listing-in-pages).
-- **Blocks:** C10, C11, C12, C14, C15, C16.
+- **Blocks:** C11, C12, C14, C15, C16. C10's only long operation, clearing untyped memory, keeps its progress as seL4's `resetUntypedCap` does ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)).
 - **From:** [0052](../decisions/0052-smp-bring-up-and-the-kernel-lock.md), rule 2; [0057](../decisions/0057-memory-objects-and-the-pager-protocol.md), rules 4 and 8; [0058](../decisions/0058-jobs-and-budgets.md), rules 9 and 10; the third review; the project owner's decision to add decommit. **Backlog:** D155.
 
 ### K24. Batches of interrupt work

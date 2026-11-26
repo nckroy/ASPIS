@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "kmem"
+description = "The pure parts of the ASPIS kernel's memory management (ADR 0048), tested on the host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/reject 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
+
+[lints]
+workspace = true
+
+[[test]]
+name = "asid"
+path = "tests/asid.rs"
+
+[[test]]
+name = "boot_alloc"
+path = "tests/boot_alloc.rs"
+
+[[test]]
+name = "desc"
+path = "tests/desc.rs"
+
+[[test]]
+name = "memmap"
+path = "tests/memmap.rs"
+
+[[test]]
+name = "ranges"
+path = "tests/ranges.rs"
+
+[[test]]
+name = "table"
+path = "tests/table.rs"
+
+[[test]]
+name = "untyped"
+path = "tests/untyped.rs"
+
+[[test]]
+name = "user"
+path = "tests/user.rs"

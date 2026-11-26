@@ -44,7 +44,7 @@ Claude drafted this record from the project owner's choices of 2026-11-25.
 3. **Pages are 4 KiB.** The translation granule is 4 KiB everywhere, with 2 MiB and 1 GiB block mappings where a range allows. Addresses are 48 bits in each half.
 4. **The address space is split in two.**
    - **The lower half (`TTBR0`)** belongs to user space. Each address space has its own tables and its own ASID.
-   - **No job can use up the node's ASIDs.** The hardware has 65,536 or 256 of them, and memory accounting doesn't bound how many address spaces a job makes. So ASIDs are allocated in a way that one job can't exhaust. How is open in the [kernel specification](../design/kernel-specification.md#address-space-layout).
+   - **No job can use up the node's ASIDs.** The hardware has 65,536 or 256 of them, and memory accounting doesn't bound how many address spaces a job makes. So ASIDs are allocated in a way that one job can't exhaust: by generation rollover, as Linux on arm64 does, which the [kernel specification](../design/kernel-specification.md#address-space-layout) describes.
    - **The upper half (`TTBR1`)** belongs to the kernel, at the base C05 fixed. It holds the kernel's image, its stacks, the devices it drives (rule 1), the boot framebuffer until it is retired ([0042](0042-log-ring-and-panic-path.md), rule 6), and a direct map.
    - **The direct map covers RAM only, and is never executable.** It covers usable RAM and the ranges that hold rule 2's immutable objects. The kernel image's range is mapped read-only there, so the kernel's code has no writable alias. It leaves out the UEFI runtime regions and other firmware-reserved memory ([0039](0039-no-uefi-runtime-services.md), rules 1 and 2), the seed's page ([0041](0041-boot-abi.md), rule 4), the framebuffer and all MMIO.
 5. **The kernel never dereferences a user address, and never takes a page fault in kernel mode.**
@@ -77,7 +77,7 @@ Claude drafted this record from the project owner's choices of 2026-11-25.
   - The translation granule: 4 KiB (rule 3).
   - The address-space layout: rule 4.
   - D145 for the first page tables: W^X and PXN from C10, PAN where the hardware has it, and no writable alias of the kernel's code (rule 6). Randomizing the kernel's placement, and the rest of D145, stay with C78.
-  - Open in the kernel specification, to be settled with the prototype of C10 to C16: how ASIDs are allocated (rule 4), how a job's small kernel records are kept in its pieces, and how the index of a job's pieces is paid for (rule 1).
+  - Open in the kernel specification, to be settled with the prototype of C10 to C16: how a job's small kernel records are kept in its pieces, and how the index of a job's pieces is paid for (rule 1).
 
 ## References
 

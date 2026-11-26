@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: 2026 Nicole Roy
 // SPDX-License-Identifier: MPL-2.0
 
-//! Exception vectors. In M1 no exception is expected: every one is
-//! reported and ends in a panic, which reaches the UART and the
-//! framebuffer (ADR 0009, rule 5; ADR 0042, rule 7).
+//! Exception vectors. Until there are threads (C12) and interrupts (C13a),
+//! no exception is expected: every one is reported and ends in a panic,
+//! which reaches the UART and the framebuffer (ADR 0009, rule 5; ADR 0042,
+//! rule 7). A synchronous abort taken at EL1 stays a panic after that: the
+//! kernel never takes a page fault (ADR 0048, rule 5).
 
 use core::arch::global_asm;
 
@@ -68,6 +70,9 @@ global_asm!(
 
 unsafe extern "C" {
     static aspis_vectors: u8;
+    // The boot stack's guard page, from `link.ld`.
+    static __stack_guard_start: u8;
+    static __stack_guard_end: u8;
 }
 
 /// Points VBAR_EL1 at the vectors.
@@ -90,6 +95,12 @@ const FROM: [&str; 4] = ["EL1 with SP_EL0", "EL1", "EL0 (AArch64)", "EL0 (AArch3
 extern "C" fn aspis_exception(frame: &Frame, idx: u64, esr: u64, elr: u64, far: u64) -> ! {
     let kind = KINDS[(idx % 4) as usize];
     let from = FROM[(idx / 4 % 4) as usize];
+    // A data abort at EL1 on the boot stack's guard page, which the
+    // kernel's tables leave unmapped: the stack overflowed.
+    let guard = (&raw const __stack_guard_start) as u64..(&raw const __stack_guard_end) as u64;
+    if esr >> 26 == 0x25 && guard.contains(&far) {
+        panic!("kernel stack overflow: FAR {far:#x}, ELR {elr:#x}");
+    }
     panic!(
         "unexpected {kind} exception from {from}: ESR {esr:#x} (class {:#x}), ELR {elr:#x}, FAR {far:#x}, x0 {:#x}, x30 {:#x}",
         esr >> 26,
