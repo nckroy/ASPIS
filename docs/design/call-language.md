@@ -1852,7 +1852,7 @@ What is the text form of an object ID? Call targets, the JSON mapping, Cedar ent
 
 ### L02. Reserved numbers
 
-What is the reserved authority's value, and what are the well-known sequence numbers of `aspis.rpc`, `aspis.catalog` and every `aspis.kernel.*` interface? C17 needs the kernel ones in M2, ahead of D35's milestone. D29 also confirms the list of kernel interfaces.
+What is the reserved authority's value, and what are the well-known sequence numbers of `aspis.rpc`, `aspis.catalog`, `aspis.memory` ([0058](../decisions/0058-jobs-and-budgets.md), rule 6) and every `aspis.kernel.*` interface? C17 needs the kernel ones in M2, ahead of D35's milestone. D29 also confirms the list of kernel interfaces.
 
 - **Owner:** D35 (C09, C19), with D29.
 - **Meanwhile:** `reserved(n)` placeholders, such as `0x0103` and `0x0201` in the examples.
@@ -2183,6 +2183,6 @@ What is the Cedar mapping of each attribute type? How are entity tags used, and 
 
 ### L45. The memory server's answers
 
-Settled by [0058](../decisions/0058-jobs-and-budgets.md), rule 6: the memory server's answers (lend, free, refuse) are operations on the job's capability, never a reply, and `memory_request` is `[oneway]`. The number is kept so that links to it still resolve.
+Settled by [0058](../decisions/0058-jobs-and-budgets.md), rule 6: the memory server's answers to a memory request (lend, free, refuse) are operations on the job's capability, never a reply, and `memory_request` is `[oneway]`. A runtime whose explicit call failed with "no memory" asks on the two-way `[local]` interface `aspis.memory/1`, which C83 defines, and gets a reply. The number is kept so that links to it still resolve.
 
 - **From:** [Messages the kernel sends](#messages-the-kernel-sends).

@@ -63,7 +63,7 @@ Claude drafted this record from the project owner's choices of 2026-11-25.
 - **POSIX "hard" subtrees need no unbounded wait.** The POSIX process server, as the fault handler, resumes the thread after each page-deadline fault, and the thread waits for the page again ([0012](0012-posix-compatibility-layer.md), rule 7). To deliver a signal, it cancels the wait, so a signal never waits for a fetch timeout.
 - **A fetch timeout isn't the end of the page.** A pager that has received a request keeps fetching, so a handler can resume the thread and expect success.
 - **A reader can't make a cache's faults fail.** Touching a pager-backed object's pages charges the object's job, such as a file or build cache. When that job can't get more memory, its own pagers evict its clean pages first, and a memory fault comes only if nothing can be evicted ([0058](0058-jobs-and-budgets.md), rules 6, 7 and 11).
-- **Fault handlers are ordinary servers**: the process manager for native processes, the POSIX process server for POSIX ones, and a debugger while it is attached.
+- **Fault handlers are ordinary servers**: the process's manager, which is the root server for the servers it starts before the process manager runs, the process manager for the native processes it spawns, and the POSIX process server for POSIX ones ([0061](0061-debugging.md), rule 4); and a debugger while it is attached.
 - **D22 is settled.** The fields of each message and the steps of a page wait are mechanism, which the kernel specification settles with the prototype of C15.
 
 ## References

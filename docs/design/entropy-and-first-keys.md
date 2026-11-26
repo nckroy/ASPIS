@@ -66,6 +66,7 @@ sequenceDiagram
     participant RS as Root server
     participant HW as RNG drivers
     participant ES as Entropy service
+    participant MS as Memory server
     participant KS as Key service
     participant NS as Network server
     participant CA as Realm RPC CA
@@ -73,6 +74,7 @@ sequenceDiagram
     Stub->>K: boot information, with the seed in a page of its own
     K->>RS: start the root server and hand on the seed's page unread
     RS->>ES: start the entropy service first, with the seed
+    RS->>MS: start the memory server second
     RS->>HW: start the hardware generator and jitter drivers
     HW->>ES: health-tested samples
     Note over ES: The gate opens at 384 bits of credited min-entropy

@@ -47,6 +47,7 @@ C4Component
         Component(drivers, "Drivers", "User space", "Storage, NIC, RNG, display, input")
         Component(root, "Root server", "First process", "Starts servers, hands out capabilities")
         Component(kernel, "Kernel", "EL1", "Capabilities, IPC, memory, scheduling")
+        Component(mem, "Memory server", "Node's pool", "Lends memory, drives reclaim")
     }
     Rel(users, ui, "Work at")
     BiRel(peers, net, "ASPIS RPC")
@@ -58,6 +59,7 @@ C4Component
     Rel(kernel, drivers, "Interrupts")
     Rel(kernel, root, "Starts")
     Rel(root, keys, "Starts entropy first")
+    Rel(kernel, mem, "Requests")
     UpdateRelStyle(users, ui, $offsetX="6", $offsetY="-40")
     UpdateRelStyle(peers, net, $offsetX="-40")
     UpdateRelStyle(realm, pm, $offsetY="-40")
@@ -67,6 +69,7 @@ C4Component
     UpdateRelStyle(kernel, store, $offsetX="8")
     UpdateRelStyle(kernel, root, $offsetX="-16", $offsetY="-16")
     UpdateRelStyle(root, keys, $offsetX="8")
+    UpdateRelStyle(kernel, mem, $offsetY="-16")
     UpdateLayoutConfig($c4ShapeInRow="3", $c4BoundaryInRow="1")
 ```
 
@@ -81,7 +84,8 @@ C4Component
 | Entropy and key services | The entropy service holds the node's root DRBG, the only source of randomness for ASPIS code, and answers nothing until it has 384 bits of credited min-entropy. Cryptography runs outside the kernel, in the key service and the network server. On first boot the key service mints the node's genesis key, and so its UUID ([the entropy design note](entropy-and-first-keys.md#3-where-the-first-keys-and-certificates-are-minted)). [Section 2](#2-boot-time-core) shows how they start | [0001](../decisions/0001-object-identifiers.md), rule 3; [0003](../decisions/0003-hybrid-post-quantum-cryptography.md), rule 6; [0021](../decisions/0021-entropy-before-keys.md), rules 1, 2 and 5 |
 | Object store and pagers | Storage servers bring up the node's storage at boot. A process maps an object through a capability; the kernel forwards a page fault on it to the object's pager, in user space, which supplies the page from local storage or, through the network server, from a remote node. A page that can't be fetched by its deadline becomes a typed fault | [0004](../decisions/0004-network-transparency-and-failure.md), rule 4; [0005](../decisions/0005-single-level-store.md), rules 1 and 2; [0006](../decisions/0006-uefi-boot-image.md), rule 2 |
 | Drivers | Run in user space, and reach device memory and interrupts only through capabilities. They drive the devices of QEMU `virt` and the Pi 4, such as virtio devices, the RNG sources and the display. DMA isolation is developed with QEMU's SMMUv3, which covers only PCIe devices such as virtio-pci ([QEMU `virt`](https://www.qemu.org/docs/master/system/arm/virt.html)), so ASPIS's QEMU configurations put every virtio device on PCIe; the Pi 4 probably has no IOMMU | [0002](../decisions/0002-capability-security-model.md), rule 1; [0007](../decisions/0007-initial-hardware-targets.md), rules 1 and 2, and Consequences; [0009](../decisions/0009-text-as-graphics-console.md), Context and rule 4; [0021](../decisions/0021-entropy-before-keys.md), rule 12; [0036](../decisions/0036-qemu-configuration-and-test-builds.md), rule 2 |
-| Root server | The first user process, which the kernel starts from the initial image. It starts the entropy service first, then the other servers the node needs at boot. It hands out the boot-time capabilities: until the first PDP runs, they are the only authority on the node. [Section 2](#2-boot-time-core) zooms in | [0006](../decisions/0006-uefi-boot-image.md), rule 2; [0018](../decisions/0018-cedar-policy-language.md), rule 5; [0021](../decisions/0021-entropy-before-keys.md), rule 1 |
+| Root server | The first user process, which the kernel starts from the initial image. It starts the entropy service first, then the memory server, then the other servers the node needs at boot. It hands out the boot-time capabilities: until the first PDP runs, they are the only authority on the node. [Section 2](#2-boot-time-core) zooms in | [0006](../decisions/0006-uefi-boot-image.md), rule 2; [0018](../decisions/0018-cedar-policy-language.md), rule 5; [0021](../decisions/0021-entropy-before-keys.md), rule 1 |
+| Memory server | Holds the node's pool of untyped memory, and lends it to jobs above their reservations when the kernel's memory requests or runtimes ask. Frees memory before it refuses. The root server starts it second | [0058](../decisions/0058-jobs-and-budgets.md), rules 4, 6 and 7 |
 | Kernel | Runs at EL1 and uses capabilities only, with seL4 as the reference model. It holds no policy, never parses tokens, does no cryptography and knows nothing about the network. [Inside the kernel](kernel-components.md) shows its parts | [0002](../decisions/0002-capability-security-model.md), rule 1 and Consequences; [0003](../decisions/0003-hybrid-post-quantum-cryptography.md), rule 6; [0004](../decisions/0004-network-transparency-and-failure.md), rule 5; [0006](../decisions/0006-uefi-boot-image.md), rule 4; [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), rule 1 |
 
 **Open**
@@ -119,16 +123,18 @@ C4Component
         ComponentDb(initfs, "Initial image", "initfs.img", "Root server and core servers")
         Component(bootfb, "bootfb", "Display driver", "Adopts the boot framebuffer")
         Component(entropy, "Entropy service", "Started first", "The gate, root DRBG")
+        Component(mem, "Memory server", "Started second", "Node's memory pool")
         Component(rng, "RNG drivers", "virtio-rng, SoC, RNDRRS", "Health-tested samples")
-        Component(store, "Storage servers", "Core servers", "Bring up storage")
         Component(keys, "Key service", "Composite keys", "Genesis and operational keys")
         Component(net, "Network server", "RPC over QUIC", "Secure channel")
+        Component(store, "Storage servers", "Core servers", "Bring up storage")
     }
     Rel(fw, stub, "Loads")
     Rel(stub, kernel, "Boot information")
     Rel(kernel, root, "Starts")
     Rel(root, initfs, "Reads")
     Rel(root, entropy, "Starts first")
+    Rel(root, mem, "Starts second")
     Rel(rng, entropy, "Samples")
     Rel(root, bootfb, "Framebuffer")
     Rel(entropy, keys, "After the gate")
@@ -138,7 +144,7 @@ C4Component
     UpdateRelStyle(kernel, root, $offsetX="-16", $offsetY="-16")
     UpdateRelStyle(root, initfs, $offsetX="-18", $offsetY="-16")
     UpdateRelStyle(root, entropy, $offsetX="8")
-    UpdateRelStyle(rng, entropy, $offsetX="-24", $offsetY="-16")
+    UpdateRelStyle(rng, entropy, $offsetX="-110", $offsetY="-20")
     UpdateRelStyle(root, bootfb, $offsetX="-52")
     UpdateRelStyle(entropy, keys, $offsetX="8")
     UpdateRelStyle(keys, net, $offsetX="-42", $offsetY="-16")
@@ -149,9 +155,10 @@ C4Component
 |---|---|---|
 | Boot stub | Rust code inside `aspis.efi`, a PE32+ image built for `aarch64-unknown-uefi` that carries the kernel's ELF in a `.kernel` section. GRUB's `linux` command loads it from an ESP slot, such as `/aspis/a/aspis.efi`; `chainloader` and direct firmware boot work too. It reads the command line and collects the memory map, the device tree, ACPI tables or both, the initial image, a linear framebuffer and, where the firmware offers one, a seed from `EFI_RNG_PROTOCOL`. It checks the initial image against a SHA-512 digest embedded in the signed `aspis.efi`, refuses one that doesn't match, and measures it into PCR 9 where a TPM exists. It uses the seed only for its own needs. It places and relocates the kernel, passes what it collected as tagged boot-information records, with the seed bytes it hasn't used in a page of their own, exits boot services and enters the kernel at EL1 with the MMU off. No UEFI runtime service is called after that | [0006](../decisions/0006-uefi-boot-image.md), rules 1, 3 and 4; [0009](../decisions/0009-text-as-graphics-console.md), rule 2; [0021](../decisions/0021-entropy-before-keys.md), rule 3; [0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rules 2, 3 and 6; [0039](../decisions/0039-no-uefi-runtime-services.md), rule 1; [0040](../decisions/0040-the-stub-checks-the-initial-image.md), rules 1–3; [0041](../decisions/0041-boot-abi.md), rules 1–4 and 6 |
 | Kernel | Draws its console, text as graphics, on the boot framebuffer from the first message, and also writes it to the serial UART and the log ring. Reading the log ring needs a capability, which the kernel gives only to the root server. Starts the root server from the initial image ([the entropy design note](entropy-and-first-keys.md#3-where-the-first-keys-and-certificates-are-minted)). It uses no randomness: it never reads the seed's page, hands it on toward the entropy service and keeps no copy | [0009](../decisions/0009-text-as-graphics-console.md), rules 1 and 3; [0021](../decisions/0021-entropy-before-keys.md), rules 1 and 3; [0041](../decisions/0041-boot-abi.md), rule 4; [0042](../decisions/0042-log-ring-and-panic-path.md), rules 1 and 5 |
-| Root server | The first user process. Starts the entropy service first, then the RNG drivers, bootfb and the core servers. Hands out the boot-time capabilities: until the first PDP runs, they are the only authority on the node | [0006](../decisions/0006-uefi-boot-image.md), rule 2; [0009](../decisions/0009-text-as-graphics-console.md), rule 4; [0018](../decisions/0018-cedar-policy-language.md), rule 5; [0021](../decisions/0021-entropy-before-keys.md), rule 1 |
-| Initial image | `initfs.img`, which GRUB serves as the initrd; under `chainloader` or direct boot the stub finds it at the path in the `initfs` argument, or beside `aspis.efi` in its slot. It uses an ASPIS format: each entry is page-aligned and has its own SHA-512 digest, and one entry is the boot manifest. It carries everything the root server starts before storage is up: the root server and the boot manifest, the entropy service and the RNG drivers, `bootfb`, the key service, the drivers that storage and networking need, and the storage servers and the network server. Executables are static ELF programs, mapped in place. Like every boot or disk image, it holds no genesis key, no CA key and no credited seed | [0006](../decisions/0006-uefi-boot-image.md), rules 1–3; [0021](../decisions/0021-entropy-before-keys.md), rule 11; [0037](../decisions/0037-initial-image-format-and-contents.md), rules 1 and 3–6; [0041](../decisions/0041-boot-abi.md), rule 6 |
+| Root server | The first user process. Starts the entropy service first, then the memory server, then the RNG drivers, bootfb and the core servers. Holds the node's memory pool until the memory server starts. Hands out the boot-time capabilities: until the first PDP runs, they are the only authority on the node | [0006](../decisions/0006-uefi-boot-image.md), rule 2; [0009](../decisions/0009-text-as-graphics-console.md), rule 4; [0018](../decisions/0018-cedar-policy-language.md), rule 5; [0021](../decisions/0021-entropy-before-keys.md), rule 1 |
+| Initial image | `initfs.img`, which GRUB serves as the initrd; under `chainloader` or direct boot the stub finds it at the path in the `initfs` argument, or beside `aspis.efi` in its slot. It uses an ASPIS format: each entry is page-aligned and has its own SHA-512 digest, and one entry is the boot manifest. It carries everything the root server starts before storage is up: the root server and the boot manifest, the entropy service and the RNG drivers, the memory server, `bootfb`, the key service, the drivers that storage and networking need, and the storage servers and the network server. Executables are static ELF programs, mapped in place. Like every boot or disk image, it holds no genesis key, no CA key and no credited seed | [0006](../decisions/0006-uefi-boot-image.md), rules 1–3; [0021](../decisions/0021-entropy-before-keys.md), rule 11; [0037](../decisions/0037-initial-image-format-and-contents.md), rules 1 and 3–6; [0041](../decisions/0041-boot-abi.md), rule 6 |
 | Entropy service | Holds the node's root DRBG, HMAC_DRBG with SHA-512 at security strength 256, and is the only source of randomness for ASPIS code. It answers no request until the DRBG has been instantiated with at least 384 bits of credited min-entropy: the gate. Requests wait until then, and once the gate opens it never blocks again. The firmware's seed counts only up to a limit set for each platform. Objects that exist before the gate are the node's well-known objects | [0021](../decisions/0021-entropy-before-keys.md), rules 1–4 and 8 |
+| Memory server | Holds the node's pool of untyped memory: the root job's memory that no child's reservation holds. Answers the kernel's one-way memory requests and runtimes' `aspis.memory/1` calls, lending page-sized pieces to jobs above their reservations, within their limits. Frees memory before it refuses, and never takes memory within a reservation. Starts second, right after the entropy service, from the initial image | [0058](../decisions/0058-jobs-and-budgets.md), rules 4, 6 and 7; [0037](../decisions/0037-initial-image-format-and-contents.md), rule 5 |
 | RNG drivers | Read the hardware generators: virtio-rng, which QEMU configurations always attach; the Pi 4's SoC generator; and `RNDRRS` where the CPU has FEAT_RNG. Each is credited at its estimated rate once SP 800-90B health tests pass on its output. CPU timing jitter counts only at a rate measured on each platform | [0021](../decisions/0021-entropy-before-keys.md), rules 4 and 12 |
 | bootfb | The first display driver, in user space. Adopts the boot framebuffer through a capability to its memory, which the root server gives it. The kernel keeps drawing the console until Display SVG claims the display. Hardware drivers, virtio-gpu first, later add mode setting and page flipping ([section 4](#4-graphics-and-the-console)) | [0009](../decisions/0009-text-as-graphics-console.md), rule 4 |
 | Storage servers | Core servers that bring up the node's storage, from which pagers supply the pages of mapped objects | [0005](../decisions/0005-single-level-store.md), rule 2; [0006](../decisions/0006-uefi-boot-image.md), rule 2 |
