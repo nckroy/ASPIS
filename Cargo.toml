@@ -11,6 +11,7 @@ members = [
     "crates/kmem",
     "crates/initfs",
     "crates/glyph-atlas",
+    "crates/abnf",
     "tools/atlas",
     "tools/logo",
     "xtask",
@@ -30,6 +31,7 @@ kargs = { path = "crates/kargs" }
 kmem = { path = "crates/kmem" }
 initfs = { path = "crates/initfs" }
 glyph-atlas = { path = "crates/glyph-atlas" }
+abnf = { path = "crates/abnf" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

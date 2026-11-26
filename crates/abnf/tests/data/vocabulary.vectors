@@ -1,0 +1,136 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+#
+# Vectors for vocabulary.abnf: "ok", "errc" for each form, and "err" where
+# the context-free grammar can't match (ADR 0062, rule 8).
+
+# ---- header words R ----
+# One word of header and a body.
+ok@request	\x01\x01\x00\x07\x00\x00\x00\x00AB
+# Two words: word 0 and an extension of no further words.
+ok@request	\x01\x02\x00\x07\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07AB
+# Three words: word 0 and an extension of one further word, no body.
+ok@request	\x01\x03\x00\x07\x00\x00\x00\x00\x01\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f
+# Two words said, but no extension fills the second.
+errc@request	\x01\x02\x00\x07\x00\x00\x00\x00ABCDEFGH
+# hwords 0 breaks "in 1..32".
+errc@request	\x01\x00\x00\x07\x00\x00\x00\x00AB
+# An extension of one further word, where the header has room for none.
+errc@request	\x01\x02\x00\x07\x00\x00\x00\x00\x01\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f
+err@request	\x02\x01\x00\x07\x00\x00\x00\x00
+err@request	\x01\x01\x00
+
+# ---- exactly R words ----
+ok@ext	\x00\x01\x02\x03\x04\x05\x06\x07
+ok@ext	\x01\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f
+errc@ext	\x01\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b
+errc@ext	\x00\x01\x02\x03\x04\x05\x06\x07\x08
+err@ext	\x00\x01\x02
+
+# ---- remaining octets ----
+ok@body	
+ok@body	abc
+# The first frame's body ends with the frame, not the message.
+ok@frames	\x02\x00\xaa\x01\x00
+ok@frame	\x03\x00\xaa\xbb
+# The second frame says 2 octets, but only 1 is left.
+errc@frames	\x02\x00\xaa\x02\x00
+errc@frame	\x03\x00\xaa
+# frame-length is matched by frame; tested alone, frame-rest has no R.
+errc@frame-rest	\x00\xaa
+err@frame	\x03\x01\xaa\xbb
+
+# ---- Decimal readings ----
+ok@number	0
+ok@number	65535
+errc@number	65536
+errc@number	99999
+err@number	012
+err@number	123456
+ok@digits	18446744073709551615
+errc@digits	18446744073709551616
+errc@digits	9999999999999999999999999999999999999999
+ok@counted	3:abc
+ok@counted	0:
+errc@counted	3:ab
+errc@counted	18446744073709551616:
+errc@counted	9999999999999999999999999999999999999999:
+ok@maybe-digits	5
+errc@maybe-digits	
+errc@maybe-digits	10
+
+# ---- Signed and wide readings ----
+ok@signed-len	\x02\xaa\xbb
+ok@signed-len	\x00
+errc@signed-len	\xff
+errc@signed-len	\xff\xaa
+ok@offset	\xfe\xd4
+ok@offset	\x01\x2c
+ok@offset	\x00\x00
+errc@offset	\xfe\xd3
+errc@offset	\x01\x2d
+errc@offset	\x80\x00
+errc@offset	\x7f\xff
+ok@trace-id	\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01
+ok@trace-id	\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff
+errc@trace-id	\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00
+err@trace-id	\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00
+
+# ---- The other value forms ----
+ok@port	\x04\x00
+ok@port	\xff\xff
+errc@port	\x03\xff
+errc@port	\x00\x00
+ok@small	\x01
+ok@small	\x09
+errc@small	\x00
+errc@small	\x0a
+ok@level	\x01
+ok@level	\xfe
+errc@level	\x00
+errc@level	\xff
+ok@label	abc
+ok@label	abcdefgh
+ok@label	iff
+ok@label	whil
+errc@label	abcdefghi
+errc@label	if
+errc@label	while
+err@label	
+err@label	ABC
+
+# ---- ascending R, with exactly R E elements on the same target ----
+ok@batch	\x00\x00\x00\x00
+# Positions 1 then 5.
+ok@batch	\x00\x00\x00\x02\x01\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x02\x00\x00\x00\x00\x00\x00\x00\x05
+# Positions 5 then 1; 1 then 1.
+errc@batch	\x00\x00\x00\x02\x02\x00\x00\x00\x00\x00\x00\x00\x05\x01\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00
+errc@batch	\x00\x00\x00\x02\x02\x00\x00\x00\x00\x00\x00\x00\x01\x02\x00\x00\x00\x00\x00\x00\x00\x01
+# Counts that disagree with the entries, in order.
+errc@batch	\x00\x00\x00\x03\x02\x00\x00\x00\x00\x00\x00\x00\x01\x02\x00\x00\x00\x00\x00\x00\x00\x02
+errc@batch	\x00\x00\x00\x01\x02\x00\x00\x00\x00\x00\x00\x00\x01\x02\x00\x00\x00\x00\x00\x00\x00\x02
+# An entry alone is in no frame.
+ok@entry	\x02\x00\x00\x00\x00\x00\x00\x00\x00
+ok@trio	\x00\x00\x00\x03\x01\x02\x03
+# A count above the repetition's own bound of 3.
+errc@trio	\x00\x00\x00\x04\x01\x02\x03
+err@trio	\x00\x00\x00\x04\x01\x02\x03\x04
+
+# ---- capability index in whole bodies ----
+# A whole body names its indexes in ascending order, each once, and every
+# index below the count. A core rule is a fragment and is checked only for
+# range and repeats.
+# With no directive the count is 0.
+errc@one	\x00
+# caps: 2
+ok@pair	\x00\x01
+errc@pair	\x01\x00
+errc@pair	\x00\x00
+errc@pair	\x00\x02
+errc@one	\x00
+ok@cap-ref	\x01
+# caps: 3
+errc@pair	\x00\x01
+# caps: 1
+ok@one	\x00
+errc@one	\x01

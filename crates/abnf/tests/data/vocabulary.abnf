@@ -1,0 +1,84 @@
+; SPDX-FileCopyrightText: 2026 Nicole Roy
+; SPDX-License-Identifier: MPL-2.0
+; uses: core
+;
+; A test grammar for crates/abnf: a small rule for each form of the
+; constraint vocabulary that core.abnf doesn't use, and for the edge cases
+; of "How constraints bind" in docs/design/call-language.md (ADR 0062,
+; rule 7). It is test data, outside grammars/, so CI's walk of grammars/
+; doesn't load it; crates/abnf/tests/matcher.rs does.
+
+; ---- header words R, exactly R words, remaining octets ----------------
+; A mini request: a version octet, the header's length in words, a u16 and
+; four reserved octets fill word 0. Extensions follow, each a whole number
+; of words, then the body, to the end of the message.
+request      = %x01 hwords u16 4OCTET *ext body
+               ; constraint: header words hwords
+hwords       = u8
+               ; constraint: in 1..32
+ext          = ext-words 7OCTET ext-rest
+ext-words    = u8
+ext-rest     = *OCTET
+               ; constraint: exactly ext-words words
+body         = *OCTET
+               ; constraint: remaining octets
+
+; ---- remaining octets inside a frame, and R from the calling rule ------
+; frame-rest has no variable repetition, so its whole match is the target.
+; Inside it, the message ends where the frame does.
+frames       = frame frame
+frame        = frame-length frame-rest
+frame-length = u8
+frame-rest   = %x00 body
+               ; constraint: exactly frame-length octets
+
+; ---- Decimal readings ----------------------------------------------------
+number       = "0" / %x31-39 *4DIGIT
+               ; constraint: at most 65535
+; A decimal above 2^64 - 1 compares greater than every bound.
+digits       = 1*DIGIT
+               ; constraint: at most 18446744073709551615
+; A decimal R as a length: one too large fits no input.
+counted      = count-text ":" counted-rest
+count-text   = 1*DIGIT
+counted-rest = *OCTET
+               ; constraint: exactly count-text octets
+; An empty match has no value, so a value form fails on it.
+maybe-digits = *DIGIT
+               ; constraint: at most 9
+
+; ---- Signed and wide readings ---------------------------------------------
+; A negative R in an exactly-form matches nothing.
+signed-len   = i8 signed-rest
+signed-rest  = *OCTET
+               ; constraint: exactly i8 octets
+offset       = i16
+               ; constraint: in -300..300
+; 16 octets read as an unsigned 128-bit integer.
+trace-id     = 16OCTET
+               ; constraint: not 0
+
+; ---- The other value forms ------------------------------------------------
+port         = u16
+               ; constraint: at least 1024
+small        = u8
+               ; constraint: in 1..9
+level        = u8
+               ; constraint: not one of 0, 255
+label        = 1*%x61-7A
+               ; constraint: length at most 8
+               ; constraint: not word if while
+
+; ---- ascending R, and a count outside the repetition's bounds -----------
+batch        = count32 *entry
+               ; constraint: exactly count32 entry elements
+               ; constraint: ascending position
+entry        = %x01 position octets / %x02 position
+position     = u64
+trio         = count32 *3item
+               ; constraint: exactly count32 item elements
+item         = u8
+
+; ---- capability index in whole bodies -------------------------------------
+pair         = cap-ref cap-ref
+one          = cap-ref

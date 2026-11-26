@@ -1,0 +1,48 @@
+; SPDX-FileCopyrightText: 2026 Nicole Roy
+; SPDX-License-Identifier: MPL-2.0
+;
+; The constraint vocabulary (ADR 0062, rule 7): the closed set of forms a
+; "; constraint:" comment may take in a generated grammar. The call-language
+; specification gives each form's meaning (docs/design/call-language.md,
+; "The constraint vocabulary").
+;
+; Notation: RFC 5234 ABNF, updated by RFC 7405. The text is ASCII. Keywords
+; are case-sensitive (%s), and words are separated by exactly one space.
+; ALPHA, DIGIT and SP are the RFC 5234 core rules.
+;
+; constraint-comment is a whole comment. constraint is its text: what follows
+; "constraint:" and one or more spaces, up to the end of the line, without
+; trailing spaces or tabs. A constraint comment that doesn't match is prose,
+; which only a hand-written grammar may hold.
+
+constraint-comment = ";" *WSP %s"constraint:" 1*SP constraint *WSP
+
+constraint       = exactly-octets / exactly-elements / exactly-words
+                 / header-words / value-bound / not-one-of
+                 / length-at-most / not-word / ascending / ascending-tags
+                 / capability-index / canonical-float / remaining-octets
+
+exactly-octets   = %s"exactly" SP rule-ref SP %s"octets"
+exactly-elements = %s"exactly" SP rule-ref SP rule-ref SP %s"elements"
+exactly-words    = %s"exactly" SP rule-ref SP %s"words"
+header-words     = %s"header" SP %s"words" SP rule-ref
+value-bound      = %s"at" SP %s"most" SP integer
+                 / %s"at" SP %s"least" SP integer
+                 / %s"in" SP integer ".." integer
+                 / %s"not" SP integer
+not-one-of       = %s"not" SP %s"one" SP %s"of" SP integer 1*( "," SP integer )
+length-at-most   = %s"length" SP %s"at" SP %s"most" SP natural
+not-word         = %s"not" SP %s"word" 1*( SP word )
+ascending        = %s"ascending" SP rule-ref
+                   ; "ascending tags" is always ascending-tags, so a rule
+                   ; named "tags" can't be ascending's rule-ref.
+ascending-tags   = %s"ascending" SP %s"tags"
+capability-index = %s"capability" SP %s"index"
+canonical-float  = %s"canonical" SP %s"float"
+remaining-octets = %s"remaining" SP %s"octets"
+
+rule-ref         = ALPHA *( ALPHA / DIGIT / "-" )   ; an RFC 5234 rulename
+integer          = natural / "-" positive           ; no "-0"
+natural          = "0" / positive
+positive         = %x31-39 *DIGIT                   ; no leading zeros
+word             = 1*( %x21-2B / %x2D-7E )          ; printable, no comma

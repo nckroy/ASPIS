@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "abnf"
+description = "ABNF checker for ASPIS grammars, with the constraint vocabulary (ADR 0062)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/parse 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
+
+[lints]
+workspace = true
+
+[[test]]
+name = "parse"
+path = "tests/parse.rs"
+
+[[test]]
+name = "vectors"
+path = "tests/vectors.rs"
+
+[[test]]
+name = "budgets"
+path = "tests/budgets.rs"
+
+[[test]]
+name = "repo"
+path = "tests/repo.rs"
+
+[[test]]
+name = "constraints"
+path = "tests/constraints.rs"
+
+[[test]]
+name = "matcher"
+path = "tests/matcher.rs"

@@ -4,7 +4,7 @@
 # 0062. Core rules: big-endian, fixed-width binary conventions
 
 - **Status:** Accepted
-- **Date:** 2026-11-25
+- **Date:** 2026-11-25, updated 2026-11-26
 
 ## Context
 
@@ -60,7 +60,7 @@ This record states decisions and invariants. The grammar, tables and vector form
 - One encoding per value lets reply caches and signatures compare octets, and lets the fuzzing gate require exact re-encoding ([0068](0068-the-fuzzing-and-differential-testing-gate.md), rule 5).
 - A bridge to NDR or SSH, which accept any nonzero boolean, normalizes values before encoding them.
 - Fixed widths cost octets on small values, and in return each field's offset is known without parsing.
-- Both items D11 asks are decided, in rule 2. Two adjacent questions stay open in the specification: [L22](../design/call-language.md#l22-the-constraint-vocabularys-grammar-and-the-rust-checker), the vocabulary's own ABNF and the Rust checker's design (C06); and [L34](../design/call-language.md#l34-wall-clock-times-in-messages), the unit and sign of wall-clock times in messages (the time service, C34).
+- Both items D11 asks are decided, in rule 2. C06 settled the vocabulary's own ABNF and the Rust checker's design ([L22](../design/call-language.md#l22-the-constraint-vocabularys-grammar-and-the-rust-checker)). One adjacent question stays open in the specification: [L34](../design/call-language.md#l34-wall-clock-times-in-messages), the unit and sign of wall-clock times in messages (the time service, C34).
 
 ## References
 
