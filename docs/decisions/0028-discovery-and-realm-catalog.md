@@ -31,7 +31,7 @@ Facts this decision relies on (details and sources in the [design note](../desig
 ## Decision
 
 1. **Discovery has three layers.**
-   - **Each object** implements the base discovery interface ([0014](0014-versioned-object-apis.md), rule 5). Besides its interfaces, versions, type and attributes, it reports the object's publisher, and the object's catalog entry if it has one.
+   - **Each object that has an ID** implements the base discovery interface ([0014](0014-versioned-object-apis.md), rule 5). Besides its interfaces, versions, type and attributes, it reports the object's publisher, and the object's catalog entry if it has one.
    - **Each manager** implements an enumeration interface:
      - it lists the objects the manager holds, one page at a time;
      - it lists them only to callers allowed to see them;
@@ -45,7 +45,7 @@ Facts this decision relies on (details and sources in the [design note](../desig
      - mounts at system names, and default providers.
 
      Every entry names its publisher.
-   - **Every other object** is enumerated on request through its manager. The catalog answers such requests by delegating to the collection's manager. Enumeration therefore reaches every object, without the catalog copying every object or holding a complete map of the realm.
+   - **Every other object that has an ID** is enumerated on request through its manager. The catalog answers such requests by delegating to the collection's manager. Enumeration therefore reaches every object that has an ID, without the catalog copying every object or holding a complete map of the realm.
 3. **The catalog is an object.**
    - It has a versioned interface, `aspis.catalog`, and a well-known ID under the reserved authority ([0001](0001-object-identifiers.md), rule 7). It lists itself.
    - Every node holds a replica.
