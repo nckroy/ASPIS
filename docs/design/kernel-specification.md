@@ -685,7 +685,7 @@ The fetch timeout's unit and range are open ([K52](#k52-the-fetch-timeouts-repre
 
 This section gives the mechanism behind [0058](../decisions/0058-jobs-and-budgets.md), rules 1, 3, 4 and 9.
 
-- **Who holds them.** A job's capability is held by its manager, which made the job: the root server, or the process manager. The memory server holds a capability to each job it lends to, which lets it give and take back memory only. A process doesn't hold its own job's capability. It holds untyped memory of its job ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)).
+- **Who holds them.** A job's capability is held by its manager, which made the job: the root server for the jobs it spawns into before the process manager runs, the process manager for the native processes it spawns, or the POSIX process server for POSIX processes ([0061](../decisions/0061-debugging.md), rule 4). The memory server holds a capability to each job it lends to, which lets it give and take back memory only. A process doesn't hold its own job's capability. It holds untyped memory of its job ([Untyped memory and kernel records](#untyped-memory-and-kernel-records)).
 - **Operations:**
   - make a child job, from the job's memory, with a reservation carved from the job's reservation, a limit no more than the job's, and a CPU share carved from the job's;
   - give the job a piece of untyped memory, which the kernel records as the job's and indexes, and which yields an untyped capability for the piece;
@@ -706,11 +706,11 @@ This section gives the mechanism behind [0058](../decisions/0058-jobs-and-budget
 
 1. The kernel sends a memory request to the job's memory endpoint, on the faulting thread's behalf, as it sends a page request: the thread is queued as a sender, and no scheduling context is donated. The request is a one-way request of `aspis.kernel.memory_request/1` on the common call header ([0064](../decisions/0064-the-call-header-and-wire-encoding.md), rule 9).
 2. The request carries the job's badge, the amount needed, what it is for (a page frame, a page-table page, or a kernel record), and whether the job, or an ancestor, is at its limit. How the request says which job is at its limit is open ([K54](#k54-reclaim-at-a-limit)).
-3. The memory server answers through its capability to the job, not with a reply, with one of: memory lent, and the kernel adds the pieces to the job, and the thread repeats its access; memory freed within the job, and the thread repeats its access; or a refusal, and the thread gets a memory fault. Whether these answers are operations on the job's capability, as the one-way request assumes, or a reply is open ([K54](#k54-reclaim-at-a-limit)).
+3. The memory server answers through its capability to the job, not with a reply, with one of: memory lent, and the kernel adds the pieces to the job, and the thread repeats its access; memory freed within the job, and the thread repeats its access; or a refusal, and the thread gets a memory fault.
 
 A memory fault says whether the refusal came with the job or an ancestor at its limit, and whether the thread's wait timed out or was canceled ([Fault delivery](#fault-delivery)). The mapping's fetch timeout bounds the wait, and a cancel ends it at once ([Waiting for a page](#waiting-for-a-page)). How a memory request is withdrawn, and whether it passes between threads, is open ([K51](#k51-memory-waits-on-the-fault-path)).
 
-An explicit call that needs memory, such as making an object, never sends a memory request. It fails at once with "no memory".
+**A runtime's request.** An explicit call that needs memory, such as making an object, never sends a memory request. It fails at once with "no memory". The runtime then calls `aspis.memory/1` on the job's memory endpoint, which its startup block carries ([The startup block](#the-startup-block)). The memory server lends as it does for a fault and then replies, or refuses with a typed error ([0058](../decisions/0058-jobs-and-budgets.md), rule 6). The interface's methods and errors are C83's.
 
 **Reclaim below a limit.** The memory server frees memory in the order [0058](../decisions/0058-jobs-and-budgets.md), rule 7 gives, stopping as soon as it has enough:
 
@@ -808,7 +808,7 @@ It returns the process's ID, or a mark that it has none, and a capability to the
 5. It makes the main thread's stack, as an anonymous memory object, and the main thread's IPC buffer, which it touches and registers ([IPC buffers](#ipc-buffers)).
 6. It maps the kernel interface library ([The kernel interface library](#the-kernel-interface-library)).
 7. It fills the startup block, and maps it read-only.
-8. It installs the initial capabilities in the new capability space.
+8. It installs the initial capabilities, and the job's memory endpoint, in the new capability space.
 9. It sets the main thread's fault endpoint to itself, its program counter to the entry point, its stack pointer, and `x0` to the startup block's address.
 10. It starts the main thread.
 
@@ -822,6 +822,7 @@ This section gives what [0060](../decisions/0060-processes-native-spawn-and-elf.
 - the kernel interface library's address ([0059](../decisions/0059-the-kernel-interface-library.md), rule 5);
 - each initial capability's name and slot;
 - the environment block's address and length;
+- the slot of the job's memory endpoint, a capability badged for the job, on which the runtime asks for more memory ([0058](../decisions/0058-jobs-and-budgets.md), rule 6);
 - the process's ID, or a mark that it has none;
 - the main thread's stack, and its thread-pointer area.
 
@@ -892,7 +893,7 @@ Whether the clone covers the whole code mapping is open ([K71](#k71-the-private-
 
 ### User crash dumps
 
-This section gives the mechanism behind [0061](../decisions/0061-debugging.md), rule 5. A crash dump is an ELF core file. The fault handler finds every thread of the process through its job, and writes each thread's registers as notes, and the process's resident memory as loadable segments. It writes the dump as an object owned by the process's owner. Writing dumps needs storage, so it starts in M3. The dump's contents are open ([K72](#k72-crash-dump-contents)).
+This section gives the mechanism behind [0061](../decisions/0061-debugging.md), rule 5. A crash dump is an ELF core file. The fault handler finds every thread of the process through its job, and writes each thread's registers as notes, and the process's resident memory as loadable segments. It writes the dump as an object owned by the process's owner. Writing dumps needs storage and a Cedar decision, so it starts in M4, when the node's PDP runs. Before then, only test builds write dumps, from their own test code. The dump's contents are open ([K72](#k72-crash-dump-contents)).
 
 ## Boot hand-off
 
@@ -1118,7 +1119,7 @@ Work started from an interrupt runs in bounded batches: interrupt advances, dead
 Which structures meet [0052](../decisions/0052-smp-bring-up-and-the-kernel-lock.md), rule 2's bound for the endpoint, release, deadline, eventcount-target and word-waiter queues ([Ordered kernel queues](#ordered-kernel-queues))?
 
 - **Options:** for endpoint queues, an intrusive balanced tree keyed by priority and arrival, or a list for each priority with a bitmap, which costs a 256-entry table in every endpoint; for the release and deadline queues, an intrusive balanced tree, a pairing heap or a timer wheel; for eventcount waiters, an intrusive tree keyed by target, linked through the thread and the wait-set entries; for word waiters, a tree in each memory object keyed by offset. Each choice sets part of a thread's, an endpoint's, a wait set's and a memory object's size.
-- **Blocks:** C12, C14.
+- **Blocks:** C12, C14, C15.
 - **From:** [0053](../decisions/0053-eventcounts.md), rule 2; [0054](../decisions/0054-ipc-endpoints.md), rule 1; the third review. **Backlog:** D155.
 
 ### K26. SGI numbers
@@ -1158,7 +1159,7 @@ Registration names an address, so no capability to the buffer's memory object is
 What does a waiter return when its eventcount, its word's memory object or its endpoint is destroyed? What are the names of the errors "not resident", "not RAM", "misaligned", "no mapping", "count at maximum", "no memory" and "no caller"?
 
 - **Options:** one "object destroyed" result for every wait; or seL4's restart, which makes the thread find a missing capability.
-- **Blocks:** C14.
+- **Blocks:** C14, C15.
 - **From:** [0053](../decisions/0053-eventcounts.md), rules 3 and 6; [0054](../decisions/0054-ipc-endpoints.md), rule 6; the third review. **Backlog:** D156.
 
 ### K31. Restarting an advance
@@ -1190,7 +1191,7 @@ Does every wait set hold 60 entries, or can it be made smaller, and what does ea
 The kernel has no heap. Where do the queues keyed by memory object and offset live?
 
 - **Options:** in the memory object's page tracking, charged to its job; or a fixed-size hash table the kernel takes at boot, with the queue links in each waiting thread.
-- **Blocks:** C14.
+- **Blocks:** C15.
 - **From:** [Word waits](#word-waits); [0053](../decisions/0053-eventcounts.md), rule 6. **Backlog:** D155.
 
 ### K35. Naming a device for MSI
@@ -1347,7 +1348,7 @@ Which rights does each job operation need, and how is the memory server's capabi
 
 ### K54. Reclaim at a limit
 
-How does the memory server learn that a job, or which ancestor, is at its limit, and how does it find the pagers of the objects in that job? Its answers (lend, free, refuse) are operations on the job's capability, not a reply ([0058](../decisions/0058-jobs-and-budgets.md), rule 6).
+How does the memory server learn that a job, or which ancestor, is at its limit, and how does it find the pagers of the objects in that job? Its answers to a memory request (lend, free, refuse) are operations on the job's capability, not a reply; only a runtime's `aspis.memory/1` call gets a reply ([0058](../decisions/0058-jobs-and-budgets.md), rule 6).
 
 - **Options:** the memory request names the job at its limit; pagers register the jobs they keep for their objects with the memory server; or a cache job's memory endpoint is its own pager's, which evicts directly.
 - **Blocks:** C16.
@@ -1494,7 +1495,7 @@ Does the breakpoint clone cover the whole code mapping, or only the pages that h
 Which notes does a dump carry (`NT_PRSTATUS`, `NT_FPREGSET`, `NT_ARM_TLS` and others)? Are pages that aren't resident fetched or left out? How large may a dump be?
 
 - **Options:** none named yet beyond those notes.
-- **Blocks:** C70, in M3.
+- **Blocks:** C70, in M4.
 - **From:** [User crash dumps](#user-crash-dumps); [0061](../decisions/0061-debugging.md), rule 5. **Backlog:** D160.
 
 ### K73. Dynamic linking

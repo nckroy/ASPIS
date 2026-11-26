@@ -36,6 +36,7 @@ The project owner decided on 2026-11-25: a format of ASPIS's own. The rules belo
 5. **The image carries everything the root server starts before storage is up**, as the boot manifest lists. [0006](0006-uefi-boot-image.md), rule 2's list is read as a minimum, not as the whole. For the first targets, the image holds:
    - the root server and the boot manifest;
    - the entropy service and the RNG drivers;
+   - the memory server, which the root server starts right after the entropy service ([0058](0058-jobs-and-budgets.md), rule 4);
    - `bootfb`;
    - the key service;
    - the drivers that the storage and network servers need, starting with the PCIe and SMMUv3 drivers and the virtio-blk and virtio-net drivers;
