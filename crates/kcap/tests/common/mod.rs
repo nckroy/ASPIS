@@ -89,6 +89,14 @@ pub fn key(cap: &Cap) -> ObjKey {
             ..
         } => 4,
         Cap::Endpoint { .. } => 5,
+        Cap::Thread { .. }
+        | Cap::Zombie {
+            kind: ZombieKind::Thread,
+            ..
+        } => 6,
+        Cap::SchedContext { .. } => 7,
+        Cap::SchedControl { core } => return (8, *core as u64, 0),
+        Cap::Reply { .. } => 9,
         Cap::Null => 0,
     };
     let (base, size) = cap.object().unwrap_or((0, 0));
@@ -103,6 +111,10 @@ pub struct Log {
     pub finished: Vec<Cap>,
     /// Every unbind, in order.
     pub unbound: Vec<(SlotRef, Cap)>,
+    /// Every object made a zombie, in order (C12).
+    pub zombified: Vec<Cap>,
+    /// Every hook call, in order: 'z' zombify, 'u' unbind, 'f' finish.
+    pub order: Vec<char>,
     /// Objects made and not yet finished.
     pub live: BTreeSet<ObjKey>,
 }
@@ -115,6 +127,13 @@ impl Hooks for Log {
             "finished {cap:x?}, which isn't live: finished twice, or never made"
         );
         self.finished.push(*cap);
+        self.order.push('f');
+    }
+
+    fn zombify(&mut self, cap: &Cap) {
+        assert!(cap.has_slots(), "zombify of {cap:x?}, which has no slots");
+        self.zombified.push(*cap);
+        self.order.push('z');
     }
 
     fn unbind(&mut self, slot: SlotRef, cap: &Cap) {
@@ -122,10 +141,21 @@ impl Hooks for Log {
             cap.is_binding(),
             "unbind of {cap:x?}, which isn't a binding"
         );
-        // A binding sits in a binding slot of an address-space record.
-        let array = SlotArray::of_address_space(slot.0 & !0x1fff);
-        assert!(array.contains(slot) && slot != array.park());
+        match cap.binding() {
+            // A frame's binding sits in a binding slot of an address-space
+            // record.
+            None => {
+                let array = SlotArray::of_address_space(slot.0 & !0x1fff);
+                assert!(array.contains(slot) && slot != array.park());
+            }
+            // A thread's binding sits in its role's slot of the thread.
+            Some(role) => {
+                let array = SlotArray::of_thread(slot.0 & !0x7ff);
+                assert_eq!(slot, array.slot(role.thread_slot()), "{cap:x?}");
+            }
+        }
         self.unbound.push((slot, *cap));
+        self.order.push('u');
     }
 }
 
@@ -368,7 +398,8 @@ impl World {
     /// - every full slot lies in the boot root CNode, or among the slots of
     ///   a CNode or address space that a capability or zombie still names,
     ///   so no slot of a finished object holds anything;
-    /// - a binding lies only in a binding slot of an address-space record.
+    /// - a frame's binding lies only in a binding slot of an address-space
+    ///   record, and a thread's binding only in its role's slot of a thread.
     pub fn check(&self) {
         let full = self.mem.full();
         if let Err(e) = mdb::verify(&self.mem, full.iter().copied()) {
@@ -382,7 +413,9 @@ impl World {
                 _ => None,
             })
             .collect();
-        let mut arrays: Vec<(u64, u64, bool)> = vec![(BOOT, 1 << BOOT_RADIX, false)];
+        // (base, count, kind): 0 a CNode, 1 an address-space record, 2 a
+        // thread.
+        let mut arrays: Vec<(u64, u64, u8)> = vec![(BOOT, 1 << BOOT_RADIX, 0)];
         for (s, c) in &caps {
             if let Cap::Zombie { kind, ptr, n } = c {
                 let (b, _) = c.object().unwrap_or((0, 0));
@@ -402,14 +435,23 @@ impl World {
                         self.cap(x)
                     );
                 }
-                arrays.push((a.base, a.count, matches!(kind, ZombieKind::AddressSpace)));
+                let k = match kind {
+                    ZombieKind::CNode { .. } => 0,
+                    ZombieKind::AddressSpace => 1,
+                    ZombieKind::Thread => 2,
+                };
+                arrays.push((a.base, a.count, k));
             }
             if let Cap::CNode { ptr, radix, .. } = c {
-                arrays.push((*ptr, 1 << radix, false));
+                arrays.push((*ptr, 1 << radix, 0));
             }
             if let Cap::AddressSpace { base, .. } = c {
                 let a = SlotArray::of_address_space(*base);
-                arrays.push((a.base, a.count, true));
+                arrays.push((a.base, a.count, 1));
+            }
+            if let Cap::Thread { ptr, .. } = c {
+                let a = SlotArray::of_thread(*ptr);
+                arrays.push((a.base, a.count, 2));
             }
         }
         arrays.sort();
@@ -420,7 +462,16 @@ impl World {
                 .find(|&&(b, n, _)| s.0 >= b && s.0 - b < n * 32)
                 .unwrap_or_else(|| panic!("slot {:#x} ({c:x?}) lies in no live object", s.0));
             if c.is_binding() {
-                assert!(home.2, "binding at {:#x} isn't in an address space", s.0);
+                match c.binding() {
+                    None => {
+                        assert_eq!(home.2, 1, "binding at {:#x} isn't in an address space", s.0)
+                    }
+                    Some(role) => assert_eq!(
+                        (home.2, s.0),
+                        (2, home.0 + role.thread_slot() * 32),
+                        "binding {c:x?} isn't in its slot of a thread"
+                    ),
+                }
                 assert_ne!(s.0, home.0, "binding at {:#x} is in a park slot", s.0);
             }
         }

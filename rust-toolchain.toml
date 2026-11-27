@@ -5,5 +5,7 @@
 [toolchain]
 channel = "1.100.0"
 targets = ["aarch64-unknown-uefi", "aarch64-unknown-none"]
-components = ["rustfmt", "clippy", "llvm-tools"]
+# rust-analyzer and rust-src serve editors' language servers; the build
+# uses neither.
+components = ["rustfmt", "clippy", "llvm-tools", "rust-analyzer", "rust-src"]
 profile = "minimal"

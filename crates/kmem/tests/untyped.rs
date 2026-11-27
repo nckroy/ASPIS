@@ -6,7 +6,10 @@
 mod common;
 
 use common::Lcg;
-use kmem::untyped::{MAX_BITS, MAX_RADIX, MIN_BITS, ObjectType, RetypeError, Untyped, decompose};
+use kmem::untyped::{
+    MAX_BITS, MAX_RADIX, MAX_SCHED_CONTEXT_BITS, MIN_BITS, MIN_SCHED_CONTEXT_BITS, ObjectType,
+    RetypeError, THREAD_BITS, Untyped, decompose,
+};
 
 const KIB: u64 = 1024;
 
@@ -140,6 +143,41 @@ fn cnodes_and_endpoints_have_their_sizes() {
     }
     assert_eq!(u.retype(ObjectType::CNode(10), 1), Err(RetypeError::TooBig));
     assert_eq!(u.watermark(), 0x2080);
+}
+
+#[test]
+fn threads_contexts_and_replies_have_their_sizes() {
+    // C12: a thread is 2 KiB, a scheduling context 256 bytes to 4 KiB, and
+    // a reply object 128 bytes (kernel specification K07 and K15).
+    assert_eq!(ObjectType::Thread.size_bits(), THREAD_BITS);
+    assert_eq!(THREAD_BITS, 11);
+    assert_eq!(ObjectType::Reply.size_bits(), 7);
+    for bits in MIN_SCHED_CONTEXT_BITS..=MAX_SCHED_CONTEXT_BITS {
+        assert_eq!(ObjectType::SchedContext(bits).size_bits(), bits);
+        assert!(ObjectType::SchedContext(bits).size_ok());
+    }
+    let mut u = Untyped::new(0x4000_0000, 14, false).unwrap();
+    for bits in [0, 7, 13, u8::MAX] {
+        assert_eq!(
+            u.retype(ObjectType::SchedContext(bits), 1),
+            Err(RetypeError::BadSize)
+        );
+    }
+    assert_eq!(u.retype(ObjectType::Reply, 1), Ok(0x4000_0000));
+    // Aligned to its size, past the reply.
+    assert_eq!(u.retype(ObjectType::Thread, 1), Ok(0x4000_0800));
+    assert_eq!(u.retype(ObjectType::SchedContext(8), 2), Ok(0x4000_1000));
+    assert_eq!(u.retype(ObjectType::SchedContext(12), 1), Ok(0x4000_2000));
+    assert_eq!(u.watermark(), 0x3000);
+    // The kernel keeps none of them in MMIO.
+    let mut d = Untyped::new(0x900_0000, 21, true).unwrap();
+    for ty in [
+        ObjectType::Thread,
+        ObjectType::SchedContext(8),
+        ObjectType::Reply,
+    ] {
+        assert_eq!(d.retype(ty, 1), Err(RetypeError::DeviceMemory));
+    }
 }
 
 #[test]

@@ -18,6 +18,9 @@
 //! removes the last capability to a boot CNode, so none is ever destroyed
 //! (ADR 0048, rule 2; ADR 0049, rule 4). The originals page holds the root
 //! CNode's original in slot 0 and the untyped CNodes' in slots 1 to 16.
+//! From C12 it also holds the scheduler's boot objects' originals: the
+//! scheduling-control CNode's in slot 17, the first thread's in slot 18 and
+//! its scheduling context's in slot 19 ([`place_scheduling`]).
 //!
 //! **The root CNode** is one page: radix 7, 128 slots. Its capability has a
 //! 50-bit guard of zeros, so that a 64-bit capability address is the root
@@ -28,7 +31,11 @@
 //! |---|---|
 //! | 0 | Nothing |
 //! | 1 | A copy of the root CNode's capability |
-//! | 2 to 15 | Kept for later boot capabilities: C12's first thread and address space, C13's interrupt control, C15's boot memory objects, C16's root job |
+//! | 2 | The first thread (C12), suspended, at priority and maximum controlled priority 255 |
+//! | 3 | Kept for the first thread's address space (C17 loads the root server's image) |
+//! | 4 | The scheduling-control CNode (C12): slot n holds core n's scheduling control |
+//! | 5 | The first thread's scheduling context (C12), bound to it |
+//! | 6 to 15 | Kept for later boot capabilities: C13's interrupt control, C15's boot memory objects, C16's root job |
 //! | 16 to 31 | Copies of the untyped CNodes' capabilities; each CNode is one page of 128 slots |
 //! | 32 to 127 | Free: the tests use them now, and later the root server |
 //!
@@ -68,6 +75,16 @@ pub const FIRST_UNTYPED_CNODE: u64 = 16;
 pub const UNTYPED_CNODES: usize = 16;
 /// The first free root slot.
 pub const FIRST_FREE: u64 = 32;
+/// The root slot of the first thread (C12).
+pub const FIRST_THREAD: u64 = 2;
+/// The root slot of the scheduling-control CNode (C12).
+pub const SCHED_CONTROL: u64 = 4;
+/// The root slot of the first thread's scheduling context (C12).
+pub const FIRST_CONTEXT: u64 = 5;
+/// The originals of the scheduler's boot objects (C12).
+pub const ORIGINAL_SCHED_CONTROL: u64 = 17;
+pub const ORIGINAL_FIRST_THREAD: u64 = 18;
+pub const ORIGINAL_FIRST_CONTEXT: u64 = 19;
 
 const _: () = assert!(UNTYPED_CNODES as u64 * SLOTS >= MAX_PIECES as u64);
 const _: () = assert!(FIRST_UNTYPED_CNODE + UNTYPED_CNODES as u64 <= FIRST_FREE);
@@ -177,6 +194,40 @@ impl BootSpace {
     /// How many untyped capabilities the space holds.
     pub fn untyped_count(&self) -> usize {
         self.count
+    }
+}
+
+/// Places the scheduler's boot objects (C12; `crate::sched::boot`), in
+/// zeroed boot pages that `mm::seal` took before it sealed the allocator:
+/// each original is a root of the tree in the originals page, and the root
+/// CNode holds a copy of each. The first thread's context is one page, of
+/// 2^12 bytes.
+pub fn place_scheduling(p: crate::sched::boot::Pages) {
+    let mem = &mut DirectSlots;
+    let cnode = Cap::CNode {
+        ptr: p.control,
+        radix: RADIX,
+        guard_size: 0,
+        guard: 0,
+    };
+    let thread = Cap::Thread {
+        ptr: p.thread,
+        rights: kcap::rights::Rights::ALL,
+    };
+    let context = Cap::SchedContext {
+        ptr: p.context,
+        bits: kmem::untyped::MAX_SCHED_CONTEXT_BITS,
+        binding: None,
+    };
+    for (o, r, c) in [
+        (ORIGINAL_SCHED_CONTROL, SCHED_CONTROL, cnode),
+        (ORIGINAL_FIRST_THREAD, FIRST_THREAD, thread),
+        (ORIGINAL_FIRST_CONTEXT, FIRST_CONTEXT, context),
+    ] {
+        mdb::insert_root(mem, original(o), c);
+        if let Err(e) = ops::copy(&mut DirectSlots, original(o), root_slot(r)) {
+            panic!("can't copy boot object {o} into root slot {r}: {e:?}");
+        }
     }
 }
 

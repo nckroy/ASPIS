@@ -13,8 +13,10 @@ pub enum DeriveError {
     /// The slot is empty.
     Empty,
     /// The capability can't be copied: a zombie, or an untyped capability
-    /// that has children, which must be revoked first, as in seL4. C12 and
-    /// C13b add the control capabilities, which can't be copied at all.
+    /// that has children, which must be revoked first, as in seL4. A
+    /// scheduling-control capability copies like any other, as in seL4
+    /// 17.0.0's `deriveCap`, whose default case returns the capability
+    /// unchanged (C12); C13b decides interrupt control's, which seL4 nulls.
     NotDerivable,
 }
 
@@ -28,6 +30,10 @@ pub enum DeriveError {
 /// under the frame capability. The kernel's Unmap revokes each binding
 /// before it deletes it, so unmapping reaches the copy too (kernel
 /// specification K42).
+///
+/// A thread's copy of an endpoint or a scheduling context (C12) copies the
+/// same way: the copy is the plain capability, without its role, and a child
+/// of the thread's copy.
 pub const fn derive(cap: &Cap, has_children: bool) -> Result<Cap, DeriveError> {
     match *cap {
         Cap::Null => Err(DeriveError::Empty),
@@ -45,6 +51,26 @@ pub const fn derive(cap: &Cap, has_children: bool) -> Result<Cap, DeriveError> {
             device,
             rights,
             mapping: None,
+        }),
+        Cap::Endpoint {
+            ptr,
+            rights,
+            badge,
+            binding: Some(_),
+        } => Ok(Cap::Endpoint {
+            ptr,
+            rights,
+            badge,
+            binding: None,
+        }),
+        Cap::SchedContext {
+            ptr,
+            bits,
+            binding: Some(_),
+        } => Ok(Cap::SchedContext {
+            ptr,
+            bits,
+            binding: None,
         }),
         other => Ok(other),
     }

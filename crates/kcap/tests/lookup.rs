@@ -29,6 +29,7 @@ fn ep(ptr: u64) -> Cap {
         ptr,
         rights: Rights::ALL,
         badge: 0,
+        binding: None,
     }
 }
 

@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       code: ${{ steps.kind.outputs.code }}
+      specs: ${{ steps.kind.outputs.specs }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -195,6 +196,47 @@ jobs:
             build/fuzz/differential
           retention-days: 7
           if-no-files-found: ignore
+
+  # TLC over the TLA+ specs, with CI-sized constants, and trace validation
+  # of ksched's donation, when a spec or the traced code changes (ADR 0068,
+  # rule 10; call-language specification, "Per change"), within one
+  # 10-minute budget that `cargo xtask tlc` enforces.
+  #
+  # The JRE is the runner image's Eclipse Temurin 21, under GPL-2.0-only WITH
+  # Classpath-exception-2.0. It runs only here, is never linked into ASPIS
+  # code and never ships, so ADR 0008, rule 4 doesn't govern it (the
+  # call-language specification's "CI-only tools and ADR 0008, rule 4").
+  # TLC itself is MIT.
+  tlc:
+    name: Model checking
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.specs != 'false' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The runner image's preinstalled Java 21 (Temurin), not an action.
+      # xtask checks the version again (11 or later).
+      - name: Use the runner's Java 21
+        run: |
+          for h in "${JAVA_HOME_21_arm64:-}" "${JAVA_HOME_21_ARM64:-}"; do
+            if [ -n "$h" ] && [ -x "$h/bin/java" ]; then
+              echo "JAVA_HOME=$h" >> "$GITHUB_ENV"
+              "$h/bin/java" -version
+              exit 0
+            fi
+          done
+          echo "::error::the runner image has no Java 21 (JAVA_HOME_21_arm64 is unset)"
+          exit 1
+      - uses: ./.github/actions/setup
+        with:
+          qemu: "false"
+      # The jar, by its pinned SHA-256, which xtask checks again.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/tla/tla2tools.jar
+          key: tla2tools-v1.7.4-936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+      - run: cargo xtask tlc
 
   reproducible:
     name: Reproducible images

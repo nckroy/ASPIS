@@ -92,6 +92,14 @@ pub trait Hooks {
     /// deleted or made a zombie. C11's kernel unmaps a frame binding from
     /// the address space whose record holds `slot`.
     fn unbind(&mut self, slot: SlotRef, cap: &Cap);
+
+    /// The last capability to an object with slots, `cap`, is about to
+    /// become a zombie: before any of the object's slots is cleared (C12).
+    /// A thread's object stops here: the kernel takes it out of every queue
+    /// and ends its wait, so it never runs again while its zombie clears its
+    /// slots across preemptions, as seL4's `finaliseCap` suspends a thread
+    /// when it makes its zombie. A CNode and an address space need nothing.
+    fn zombify(&mut self, _cap: &Cap) {}
 }
 
 /// One unit of deleting the slot `s`: delete or zombify its capability, or
@@ -114,7 +122,10 @@ fn remove<M: Mem, H: Hooks>(mem: &mut M, hooks: &mut H, s: SlotRef, cap: Cap) {
         hooks.unbind(s, &cap);
     }
     match (last, cap.zombie()) {
-        (true, Some(z)) => slot::set_cap(mem, s, z),
+        (true, Some(z)) => {
+            hooks.zombify(&cap);
+            slot::set_cap(mem, s, z);
+        }
         _ => {
             if last {
                 hooks.finish(&cap);

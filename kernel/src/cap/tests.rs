@@ -49,7 +49,8 @@ fn poke(pa: u64, v: u64) {
 }
 
 /// The slots of the root CNode, the originals page and the untyped CNodes,
-/// as the boot made them.
+/// and of C12's first thread and scheduling-control CNode, as the boot made
+/// them.
 fn boot_slots() -> impl Iterator<Item = SlotRef> + Clone {
     let cnodes: [u64; UNTYPED_CNODES] =
         core::array::from_fn(
@@ -58,9 +59,15 @@ fn boot_slots() -> impl Iterator<Item = SlotRef> + Clone {
                 c => panic!("root slot {} holds {c:x?}", FIRST_UNTYPED_CNODE + i as u64),
             },
         );
+    // C12's boot objects: the first thread's slots (its context's binding
+    // is a child of root slot 5), and the scheduling-control CNode's.
+    let first = crate::sched::object::Tcb(crate::sched::boot::first_thread());
+    let control = crate::sched::boot::control_slot(0);
     (0..SLOTS)
         .map(boot::root_slot)
         .chain((0..SLOTS).map(boot::original))
+        .chain((0..kcap::cap::THREAD_SLOTS).map(move |i| first.slot(i)))
+        .chain((0..SLOTS).map(move |i| control.offset(i)))
         .chain(
             (0..UNTYPED_CNODES as u64 * SLOTS)
                 .map(move |k| SlotRef(cnodes[(k / SLOTS) as usize]).offset(k % SLOTS)),
@@ -149,7 +156,24 @@ crate::kernel_test!(boot_cspace_holds_every_untyped_piece, {
     // The root CNode's layout.
     assert!(cap(boot::root_slot(0)).is_null());
     assert_eq!(cap(boot::root_slot(ROOT_SELF)), boot::root());
-    for i in (2..FIRST_UNTYPED_CNODE).chain(FIRST_FREE..SLOTS) {
+    // C12's: the first thread, the scheduling-control CNode and the first
+    // thread's context; slot 3 is kept for its address space.
+    assert!(matches!(
+        cap(boot::root_slot(boot::FIRST_THREAD)),
+        Cap::Thread { .. }
+    ));
+    assert!(matches!(
+        cap(boot::root_slot(boot::SCHED_CONTROL)),
+        Cap::CNode { radix: RADIX, .. }
+    ));
+    assert!(matches!(
+        cap(boot::root_slot(boot::FIRST_CONTEXT)),
+        Cap::SchedContext { bits: 12, .. }
+    ));
+    for i in (3..4)
+        .chain(6..FIRST_UNTYPED_CNODE)
+        .chain(FIRST_FREE..SLOTS)
+    {
         assert!(cap(boot::root_slot(i)).is_null(), "root slot {i} is full");
     }
     for i in FIRST_UNTYPED_CNODE..FIRST_UNTYPED_CNODE + UNTYPED_CNODES as u64 {
@@ -224,10 +248,11 @@ crate::kernel_test!(lookup_resolves_the_boot_cspace, {
         lookup_slot(FIRST_UNTYPED_CNODE, boot::ROOT_DEPTH),
         Ok(boot::root_slot(FIRST_UNTYPED_CNODE))
     );
-    assert_eq!(lookup_slot(5, boot::ROOT_DEPTH), Ok(boot::root_slot(5)));
-    // An empty slot stops a capability lookup.
+    assert_eq!(lookup_slot(3, boot::ROOT_DEPTH), Ok(boot::root_slot(3)));
+    // An empty slot stops a capability lookup: root slot 3, kept for the
+    // first thread's address space (C17), is empty.
     assert_eq!(
-        lookup_cap(boot::address(5, 0)),
+        lookup_cap(boot::address(3, 0)),
         Err(LookupError::MissingCapability)
     );
     // The guard must match: a high bit set, or the root's own capability in

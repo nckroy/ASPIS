@@ -147,6 +147,7 @@ fn mutate_never_sets_a_badge() {
             ptr,
             rights,
             badge: 0,
+            binding: None,
         }
     });
 }

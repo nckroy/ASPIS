@@ -4,7 +4,7 @@
 # 0051. Scheduling, the timer and deadlines
 
 - **Status:** Accepted
-- **Date:** 2026-11-25
+- **Date:** 2026-11-25, updated 2026-11-26
 
 ## Context
 
@@ -37,7 +37,7 @@ Claude drafted this record from the project owner's choice of seL4 as the model,
      3. system servers;
      4. applications.
 
-     Their numeric ranges are open ([kernel specification](../design/kernel-specification.md#priorities-and-bands)).
+     Their default ranges are a convention in the [kernel specification](../design/kernel-specification.md#priorities-and-bands), which the kernel doesn't enforce.
 3. **Shared servers are passive where they can be.**
    - A passive server runs on its caller's scheduling context, so a busy server can't starve its callers, and each caller pays for its own requests.
    - A shared server runs at a priority at least as high as any of its callers. Callers wait in priority order, so a high-priority caller isn't queued behind a low-priority one.
@@ -57,7 +57,7 @@ Claude drafted this record from the project owner's choice of seL4 as the model,
 
 ## Consequences
 
-- **D17 is settled.** Every item it asked for is decided here, except two details the kernel specification lists as open: the numeric range of each priority band, and how a job's share is checked when a context is configured ([kernel specification](../design/kernel-specification.md#scheduling-contexts-and-budgets)).
+- **D17 is settled.** Every item it asked for is decided here. Two details are settled in the kernel specification: the default range of each priority band ([Priorities and bands](../design/kernel-specification.md#priorities-and-bands)), and how a job's share is checked when a context is configured ([Scheduling contexts and budgets](../design/kernel-specification.md#scheduling-contexts-and-budgets)).
 - **Budgets are enforced by the kernel.** A job can't use more CPU than its share, and a server's work is charged to the caller that asked for it.
 - **Priority inversion through shared servers is bounded** by the servers' priorities, their callers' budgets and the handlers on their timeout endpoints.
 - **Passive servers bear the cost of prompt cancellation.** One can lose its context mid-request, and the handler on its timeout endpoint cleans up.

@@ -5,7 +5,9 @@
 # at 1, 4 and 8 cores and 1 and 3 GiB, plus a run with the firmware at EL2.
 # Beside it, the nightly fuzzing (C71; ADR 0068, rule 8): every fuzz
 # target for 10 minutes on the merged, cached corpus, and the ABNF
-# differential on 20,000 generated cases.
+# differential on 20,000 generated cases; and TLC with the nightly
+# constants (C12; ADR 0068, rule 10), after crates/ksched's seeded host
+# tests at 20 times their per-change runs.
 
 name: Nightly
 
@@ -152,3 +154,37 @@ jobs:
           path: build/fuzz/differential
           retention-days: 7
           if-no-files-found: ignore
+
+  tlc:
+    name: Model checking, nightly constants
+    runs-on: ubuntu-24.04-arm
+    # `cargo xtask tlc --nightly` stops itself at 60 minutes. The JRE is a
+    # CI-only tool, as in ci.yml's tlc job.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The runner image's preinstalled Java 21 (Temurin), not an action.
+      # xtask checks the version again (11 or later).
+      - name: Use the runner's Java 21
+        run: |
+          for h in "${JAVA_HOME_21_arm64:-}" "${JAVA_HOME_21_ARM64:-}"; do
+            if [ -n "$h" ] && [ -x "$h/bin/java" ]; then
+              echo "JAVA_HOME=$h" >> "$GITHUB_ENV"
+              "$h/bin/java" -version
+              exit 0
+            fi
+          done
+          echo "::error::the runner image has no Java 21 (JAVA_HOME_21_arm64 is unset)"
+          exit 1
+      - uses: ./.github/actions/setup
+        with:
+          qemu: "false"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/tla/tla2tools.jar
+          key: tla2tools-v1.7.4-936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+      - name: Seeded scheduler runs, 20 times the per-change count
+        run: cargo test --locked --release -p ksched
+        env:
+          KSCHED_RUNS_SCALE: "20"
+      - run: cargo xtask tlc --nightly

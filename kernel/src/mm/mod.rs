@@ -20,8 +20,8 @@
 //! The pure parts are in the `kmem` and `kcap` crates, which are tested on
 //! the host.
 //!
-//! C12: the kernel lock guards the statics here; until then one CPU runs,
-//! with exceptions masked.
+//! The kernel lock guards the statics here (C12), with exceptions masked.
+//! Before the other cores start, only the boot core runs.
 
 pub(crate) mod arch;
 mod boot_objects;
@@ -56,9 +56,10 @@ use kmem::{BLOCK_2M, PAGE_SIZE};
 
 /// A static the kernel writes during boot and reads afterwards.
 ///
-/// C12: the kernel lock guards these. Until then one CPU runs, with
-/// exceptions masked, and only the panic path interrupts the kernel, which
-/// never touches them.
+/// The kernel lock guards these (C12; `crate::smp::lock`): every access
+/// after boot is on a path that holds it, with exceptions masked, and only
+/// the panic path, which never touches them, runs without it. Before the
+/// other cores start, only the boot core runs.
 pub struct BootCell<T>(UnsafeCell<T>);
 
 // SAFETY: see the type's comment: no two CPUs, and no reentry.
@@ -360,6 +361,26 @@ pub fn init(info_range: (u64, u64), info: &BootInfo<'_>, fdt: Option<&fdt::Fdt<'
         }
     }
 
+    // Each core's slot in the per-core window (C12): its entry stack, its
+    // scheduler data, its start record and its emergency stack, for every
+    // core the device tree
+    // names; and the four tables of the identity map a secondary core turns
+    // its MMU on through (`crate::smp::start`). Counted before the seal,
+    // since the boot allocator gives nothing after it.
+    let cores = fdt.map_or(1, crate::irq::count_cores);
+    crate::sched::percore::map_slots(cores, |va| {
+        let Some(pa) = src.table() else {
+            panic!("no usable RAM left for the per-core window")
+        };
+        kernel_map::map_page_rw(&t, &mut src, va, pa)
+            .unwrap_or_else(|e| map_failed("the per-core window", e));
+        pa
+    });
+    crate::smp::start::take_identity_pages(|| {
+        src.table()
+            .unwrap_or_else(|| panic!("no usable RAM left for the secondary cores' identity map"))
+    });
+
     // The new addresses of what the kernel still reads, found while the
     // boot window still maps the boot information.
     let direct = |pa: u64| {
@@ -457,7 +478,7 @@ pub fn boot_page() -> u64 {
 ///    page that keeps the boot CNodes' original capabilities, and a fixed
 ///    [`crate::cap::boot::UNTYPED_CNODES`] untyped CNodes, enough for
 ///    [`untyped::MAX_PIECES`] pieces whatever the pages taken do to the free
-///    set;
+///    set; and the scheduler's boot objects' pages (C12);
 /// 2. seals the boot allocator;
 /// 3. divides what is left, and the device memory, into pieces, zeroing the
 ///    RAM, and puts an untyped capability to each piece in the untyped
@@ -476,11 +497,19 @@ pub fn seal() {
     let root = boot_page();
     let originals = boot_page();
     let cnodes: [u64; crate::cap::boot::UNTYPED_CNODES] = core::array::from_fn(|_| boot_page());
+    // The scheduler's boot objects (C12): the scheduling-control CNode, the
+    // first thread and its scheduling context, a page each.
+    let sched = crate::sched::boot::Pages {
+        control: boot_page(),
+        thread: boot_page(),
+        context: boot_page(),
+    };
     // SAFETY: the one call, after `init` has returned; it holds the only
     // references to these until it returns.
     let (alloc, state, c) = unsafe { (BOOT_ALLOC.get_mut(), STATE.get_mut(), CLASSIFIED.get()) };
     alloc.seal();
     let mut space = crate::cap::boot::BootSpace::new(root, originals, cnodes);
+    crate::cap::boot::place_scheduling(sched);
     let t = untyped::build(alloc.free(), &c.device, |piece| space.add_untyped(&piece));
     state.report.untyped_bytes = t.ram_bytes;
     state.report.ram_pieces = t.ram;
@@ -522,8 +551,8 @@ pub fn device_va(pa: u64, size: u64) -> Option<u64> {
         .map(|&(base, _, va)| va + (pa - base))
 }
 
-/// The device tree, through the direct map, for tests that read it again.
-#[cfg(aspis_test_build)]
+/// The device tree, through the direct map: for the bring-up of the other
+/// cores (C12), and for tests that read it again.
 pub fn device_tree() -> Option<fdt::Fdt<'static>> {
     // SAFETY: `init` recorded the boot information's direct-map address.
     let (info, _) = unsafe { crate::boot_info(state().boot_info) }?;

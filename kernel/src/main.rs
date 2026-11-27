@@ -14,7 +14,11 @@
 //! it drives the interrupt controller, GICv2 or GICv3, takes its own
 //! software-generated interrupts, keeps its clock on the virtual count, arms
 //! the virtual timer only for a deadline, and stops the other cores when it
-//! panics (ADRs 0007, 0051, 0052 and 0055).
+//! panics (ADRs 0007, 0051, 0052 and 0055). From C12 it has threads, which
+//! run at EL0 on MCS scheduling contexts with fixed priorities, makes the
+//! root server's first thread, and brings the other cores up through PSCI,
+//! each running its own threads under one kernel lock (ADRs 0047, 0051,
+//! 0052 and 0061).
 //!
 //! The root server, and everything that runs on top of the kernel, come in
 //! later chunks of M2, and in M3.
@@ -29,16 +33,22 @@ mod cap;
 mod console;
 mod entry;
 mod exceptions;
-// C12 and C13b build on most of it: until then, only the boot, the panic
-// path and the in-QEMU tests use it.
+// C13b builds on most of it: until then, only the boot, the scheduler, the
+// panic path and the in-QEMU tests use it.
 #[cfg_attr(not(aspis_test_build), allow(dead_code))]
 mod irq;
 mod log;
 mod mm;
+// C12's threads and scheduling. Until C17's system calls reach it, only the
+// boot and the in-QEMU tests use most of it.
+#[cfg_attr(not(aspis_test_build), allow(dead_code))]
+mod sched;
 mod settings;
+mod smp;
 #[cfg(aspis_test_build)]
 mod testing;
-// C12 arms deadlines: until then, only the in-QEMU tests do.
+// The scheduler arms the timer for its deadlines (C12); some of the rest
+// only the in-QEMU tests use.
 #[cfg_attr(not(aspis_test_build), allow(dead_code))]
 mod timer;
 mod uart;
@@ -48,12 +58,14 @@ use console::{Console, FbState};
 use core::cell::UnsafeCell;
 use core::fmt::Write as _;
 use core::panic::PanicInfo;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 struct ConsoleSlot(UnsafeCell<Option<Console>>);
-// SAFETY: M1 runs one CPU with exceptions masked.
+// SAFETY: the kernel lock guards it: every log record is written under the
+// lock (`log`), with exceptions masked. The panic path draws without the
+// lock, after it has stopped the other cores or waited a bounded time.
 unsafe impl Sync for ConsoleSlot {}
 static CONSOLE: ConsoleSlot = ConsoleSlot(UnsafeCell::new(None));
 
@@ -63,8 +75,8 @@ pub fn with_console(f: impl FnOnce(&mut Console)) {
     if console::state() != FbState::Kernel {
         return;
     }
-    // SAFETY: one CPU, and no reentry except from the panic path, which
-    // doesn't come back.
+    // SAFETY: under the kernel lock (see `ConsoleSlot`), and no reentry
+    // except from the panic path, which doesn't come back.
     if let Some(c) = unsafe { (*CONSOLE.0.get()).as_mut() } {
         f(c);
     }
@@ -193,6 +205,12 @@ pub extern "C" fn kernel_main(boot_info_phys: u64) -> ! {
     if s.test_panic {
         FORCED_PANIC.store(true, Ordering::Relaxed);
     }
+    #[cfg(aspis_test_build)]
+    if let Some(Some(kargs::Value::Bare(only))) =
+        kargs::lookup(info.command_line(), "test.only").value
+    {
+        testing::set_only(only);
+    }
 
     // The console, from the first message (ADR 0009, rule 1).
     // There is a console whenever there is a framebuffer, so a panic can
@@ -201,7 +219,8 @@ pub extern "C" fn kernel_main(boot_info_phys: u64) -> ! {
     if let (Some(fb), Some(base)) = (info.framebuffer(), moved.framebuffer) {
         // The framebuffer is in the device window now.
         let fb = bootinfo::Framebuffer { base, ..fb };
-        // SAFETY: one CPU; nothing else holds the slot yet.
+        // SAFETY: at boot, before the other cores start; nothing else holds
+        // the slot yet.
         unsafe { *CONSOLE.0.get() = Console::new(fb, s.cell) };
     }
     if s.console_fb {
@@ -243,23 +262,46 @@ pub extern "C" fn kernel_main(boot_info_phys: u64) -> ! {
     // for a deadline.
     irq::init(fdt.as_ref());
     timer::init(fdt.as_ref());
+    // The scheduler on the boot core, and the first thread (C12). From here
+    // the boot core holds the kernel lock whenever it runs kernel code.
+    sched::init();
+    // The firmware's PSCI, for the other cores (K21).
+    smp::init(fdt.as_ref());
 
+    // The tests of one core run before the others start: they use the
+    // other cores' interfaces, and send them SGIs, while those are off.
     #[cfg(aspis_test_build)]
     if !s.test_panic {
-        testing::run();
-        testing::exit(0);
+        testing::run(testing::Phase::BootCore);
     }
 
+    // The other cores, through PSCI (ADR 0052, rule 1). Each idles until a
+    // thread is ready on its run queue.
+    smp::start_secondaries();
+
+    // With every core up, and each waiting for the kernel lock, which the
+    // boot core holds: so the stop must reach cores that spin for it.
     if s.test_panic {
         panic!("forced by test.panic, to show the panic path");
     }
 
-    klog!(
-        Info,
-        "kernel",
-        "M1 ends here. The root server and the node's servers come in M2 and M3. Idling."
-    );
-    halt()
+    #[cfg(aspis_test_build)]
+    {
+        testing::run(testing::Phase::AllCores);
+        testing::exit(0);
+    }
+
+    #[allow(unreachable_code)]
+    {
+        klog!(
+            Info,
+            "kernel",
+            "M1 ends here. The root server and the node's servers come in M2 and M3. Idling."
+        );
+        // The boot core's scheduler, on its entry stack, as every core's:
+        // it idles until a thread is ready.
+        sched::run::enter()
+    }
 }
 
 fn report_boot(info: &BootInfo<'_>, s: &settings::Settings, have_dt: bool) {
@@ -418,7 +460,8 @@ fn report_boot(info: &BootInfo<'_>, s: &settings::Settings, have_dt: bool) {
     );
 }
 
-static PANICKING: AtomicBool = AtomicBool::new(false);
+/// The core that is panicking, plus one; 0 while none is.
+static PANICKING: AtomicUsize = AtomicUsize::new(0);
 
 /// The panic path (ADR 0009, rule 5; ADR 0042, rule 7): always the UART,
 /// the framebuffer unless it is retired, and the ring. It takes no lock.
@@ -429,9 +472,17 @@ static PANICKING: AtomicBool = AtomicBool::new(false);
 fn panic(p: &PanicInfo<'_>) -> ! {
     // SAFETY: masking exceptions.
     unsafe { core::arch::asm!("msr daifset, #0xf", options(nomem, nostack)) };
-    if PANICKING.swap(true, Ordering::Relaxed) {
-        uart::write("\npanic while panicking\n");
-        halt()
+    let me = sched::percore::index() + 1;
+    match PANICKING.compare_exchange(0, me, Ordering::AcqRel, Ordering::Acquire) {
+        Ok(_) => {}
+        // A panic inside this core's panic path.
+        Err(p) if p == me => {
+            uart::write("\npanic while panicking\n");
+            halt()
+        }
+        // Another core is panicking: this one stops, counted, and writes
+        // nothing over that core's report.
+        Err(_) => irq::stop_this_core(),
     }
     let mut line = log::Line::new();
     let _ = write!(line, "{}", p.message());
@@ -439,7 +490,8 @@ fn panic(p: &PanicInfo<'_>) -> ! {
         let _ = write!(line, " ({}:{})", loc.file(), loc.line());
     }
     #[cfg(aspis_test_build)]
-    // SAFETY: one CPU.
+    // SAFETY: the boot core's test runner writes it, under the kernel lock,
+    // before each test; a stale name only misnames a failure.
     if let Some(t) = unsafe { testing::CURRENT } {
         uart::write("test ");
         uart::write(t);
@@ -449,8 +501,16 @@ fn panic(p: &PanicInfo<'_>) -> ! {
     uart::write(line.as_str());
     uart::write("\n");
     // The UART line first, then the stop: the report is out whatever the
-    // stop does. Before `irq::init` has finished, nothing is sent.
+    // stop does. The flag first, so a core that spins for the kernel lock,
+    // or idles, stops too (kernel specification, "Cross-core signals and
+    // TLB maintenance", the stop flag); then the SGI. Before
+    // `irq::init` has finished, no SGI is sent.
+    let before = irq::STOPPED.load(Ordering::Relaxed);
+    smp::remote::stop();
     irq::send_stop_to_others();
+    stop_report(before);
+    // The others have stopped, or had a bounded time to: the ring's writer
+    // is alone.
     log::push(log::Level::Panic, "panic", line.as_str());
 
     if console::state() != FbState::Retired {
@@ -469,6 +529,23 @@ fn panic(p: &PanicInfo<'_>) -> ! {
         testing::exit(101);
     }
     halt()
+}
+
+/// Waits at most 100 ms of the count for the other online cores to stop,
+/// then reports how many did on the UART (ADR 0052, rule 4). `before` is
+/// the stop count before the stop was sent.
+fn stop_report(before: u32) {
+    let me = sched::percore::index();
+    let others = smp::online_count() - usize::from(smp::is_online(me));
+    let stopped = || (irq::STOPPED.load(Ordering::Relaxed) - before) as usize;
+    let freq = timer::frequency();
+    let start = timer::now();
+    while stopped() < others && timer::now() - start < freq / 10 {
+        core::hint::spin_loop();
+    }
+    let mut line = log::Line::new();
+    let _ = writeln!(line, "stopped {} of {others} other cores", stopped());
+    uart::write(line.as_str());
 }
 
 #[cfg(aspis_test_build)]

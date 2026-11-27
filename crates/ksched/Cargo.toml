@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "ksched"
+description = "The ASPIS kernel's scheduling, donation and SMP logic (ADRs 0051 and 0052), tested on the host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/tree 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
+
+[lints]
+workspace = true
+
+[[test]]
+name = "time"
+path = "tests/time.rs"
+
+[[test]]
+name = "refill"
+path = "tests/refill.rs"
+
+[[test]]
+name = "share"
+path = "tests/share.rs"
+
+[[test]]
+name = "runq"
+path = "tests/runq.rs"
+
+[[test]]
+name = "tree"
+path = "tests/tree.rs"
+
+[[test]]
+name = "worklist"
+path = "tests/worklist.rs"
+
+[[test]]
+name = "batch"
+path = "tests/batch.rs"
+
+[[test]]
+name = "donation"
+path = "tests/donation.rs"
+
+[[test]]
+name = "donation_random"
+path = "tests/donation_random.rs"
+
+[[test]]
+name = "donation_batched"
+path = "tests/donation_batched.rs"
+
+[[test]]
+name = "donation_traces"
+path = "tests/donation_traces.rs"
+
+[[test]]
+name = "clh"
+path = "tests/clh.rs"
+
+[[test]]
+name = "remote"
+path = "tests/remote.rs"
+
+[[test]]
+name = "psci"
+path = "tests/psci.rs"

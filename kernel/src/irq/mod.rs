@@ -19,14 +19,15 @@
 //! redistributor walk, the SGI encodings and the dispatch, are in the
 //! `kirq` crate, which is tested on the host.
 //!
-//! C12: the kernel lock guards the static here, and each secondary core
-//! calls [`Irq::init_cpu`] for itself. Until then one CPU runs, with
-//! interrupts masked outside the windows. After [`init`], the static is
-//! only ever read, through shared references, so the IRQ path and the
-//! panic path never meet a mutable one. On a GICv3, a core that panics
-//! before its own `init_cpu` sends no stop ([`send_stop_to_others`]); C12
-//! must set `ICC_SRE_EL2.Enable` on each secondary core entered at EL2 before
-//! the kernel runs there, as the stub does on the boot core.
+//! [`init`] runs on the boot core before any other core starts, and each
+//! secondary core calls [`Irq::init_cpu`] for itself as it starts (C12;
+//! `crate::smp::start`). After [`init`], the static is only ever read,
+//! through shared references, so the IRQ path and the panic path never meet
+//! a mutable one, on any core. The interrupt counts are kept per core
+//! ([`stats_of`]). On a GICv3, a core that panics before its own `init_cpu`
+//! sends no stop ([`send_stop_to_others`]); the secondary entry sets
+//! `ICC_SRE_EL2.Enable` on a core entered at EL2 before the kernel runs
+//! there, as the stub does on the boot core.
 
 mod arch;
 mod gicv2;
@@ -77,9 +78,8 @@ impl Cores {
         self.affinity[..self.len].iter().position(|&x| x == a)
     }
 
-    /// Every enabled cpu node under `/cpus`: `device_type` "cpu", and a
-    /// `status` that is absent or "okay". C12 owns the real table, in its
-    /// per-core data.
+    /// Every enabled cpu node under `/cpus` ([`is_cpu`]), in order. Each
+    /// core's per-core data is by its index here (`crate::sched::percore`).
     fn from_device_tree(fdt: &fdt::Fdt<'_>) -> Cores {
         let Some(cpus) = fdt.find_node("/cpus") else {
             panic!("the device tree has no /cpus node");
@@ -94,9 +94,7 @@ impl Cores {
             boot: 0,
         };
         for n in cpus.children() {
-            if n.property("device_type").and_then(|p| p.as_str()) != Some("cpu")
-                || !dt::is_enabled(n.property("status").map(|p| p.value))
-            {
+            if !is_cpu(&n) {
                 continue;
             }
             let Some(a) = n
@@ -124,6 +122,22 @@ impl Cores {
     }
 }
 
+/// Whether a child of `/cpus` is an enabled core: `device_type` "cpu", and
+/// a `status` that is absent or "okay".
+pub fn is_cpu(n: &fdt::node::FdtNode<'_, '_>) -> bool {
+    n.property("device_type").and_then(|p| p.as_str()) == Some("cpu")
+        && dt::is_enabled(n.property("status").map(|p| p.value))
+}
+
+/// How many enabled cores the device tree names, at most [`MAX_CORES`]:
+/// what `mm::init` maps per-core slots for, before the seal (kernel
+/// specification, "Boot memory"). [`init`] builds the core table from the same nodes.
+pub fn count_cores(fdt: &fdt::Fdt<'_>) -> usize {
+    fdt.find_node("/cpus")
+        .map_or(1, |cpus| cpus.children().filter(|n| is_cpu(n)).count())
+        .clamp(1, MAX_CORES)
+}
+
 /// Whom an SGI goes to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -141,7 +155,7 @@ pub enum SendError {
     /// No core has that index.
     NoSuchCore,
     /// A GICv2 core that hasn't set up its interface yet, so its mask
-    /// isn't known. C12 records it as each core starts.
+    /// isn't known. Its `init_cpu` records it as the core starts.
     NotStarted,
     Sgi(SgiError),
 }
@@ -290,7 +304,8 @@ pub fn init(fdt: Option<&fdt::Fdt<'_>>) {
     };
     let irq = Irq { gic, cores };
     irq.init_dist();
-    irq.init_cpu(irq.cores.boot());
+    let found = irq.init_cpu(irq.cores.boot());
+    log_cpu_init(irq.cores.boot(), found);
     irq.prepare_stop();
     let (name, lines, n) = (
         match irq.gic {
@@ -311,6 +326,26 @@ pub fn init(fdt: Option<&fdt::Fdt<'_>>) {
         if n == 1 { "core" } else { "cores" },
         get().map_or(0, |i| i.cores.boot())
     );
+}
+
+/// What setting up one core's interface found, for [`log_cpu_init`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CpuInit {
+    /// The GICv3 redistributor's LPIs stayed enabled when cleared: whether
+    /// `GICR_CTLR.EnableLPIs` can be cleared is implementation defined.
+    pub lpis_stuck: bool,
+}
+
+/// Logs what [`Irq::init_cpu`] found on core `core`. Called with the
+/// kernel lock held, or on the boot core before any other core runs.
+pub fn log_cpu_init(core: usize, found: CpuInit) {
+    if found.lpis_stuck {
+        crate::klog!(
+            Notice,
+            "interrupts",
+            "core {core}'s redistributor has LPIs enabled, and won't disable them"
+        );
+    }
 }
 
 impl Irq {
@@ -352,18 +387,28 @@ impl Irq {
     /// Sets up core `core`'s part of the GIC: on a GICv2 its banked
     /// distributor registers and CPU interface, recording its mask; on a
     /// GICv3 its redistributor, woken, and its system-register CPU
-    /// interface. It runs on that core: the boot core in [`init`], and C12
-    /// calls it on each secondary core before the core joins, so that the
-    /// core's SGIs are Group 1 and enabled.
-    pub fn init_cpu(&self, core: usize) {
+    /// interface. It runs on that core: the boot core in [`init`], and each
+    /// secondary core as it starts, before it is online, so that the core's
+    /// SGIs are Group 1 and enabled (`crate::smp::start`).
+    ///
+    /// It writes no log record: a secondary core doesn't hold the kernel
+    /// lock yet, and every record but the panic path's is written under it.
+    /// So it returns what the caller logs once it may, [`log_cpu_init`].
+    #[must_use]
+    pub fn init_cpu(&self, core: usize) -> CpuInit {
         assert_eq!(
             core,
             self.this_core(),
             "a core's interface is set up from that core"
         );
         match &self.gic {
-            Gic::V2(g) => g.init_cpu(core),
-            Gic::V3(g) => g.init_cpu(core),
+            Gic::V2(g) => {
+                g.init_cpu(core);
+                CpuInit { lpis_stuck: false }
+            }
+            Gic::V3(g) => CpuInit {
+                lpis_stuck: g.init_cpu(core),
+            },
         }
     }
 
@@ -434,7 +479,7 @@ pub fn send_sgi(sgi: Sgi, target: Target) -> Result<(), SendError> {
     get().ok_or(SendError::NotReady)?.send_sgi(sgi, target)
 }
 
-/// The kernel's interrupt counts. C12 makes them per core.
+/// A core's interrupt counts (C12 keeps one set per core).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Stats {
     /// Acknowledges that returned a special INTID (1020 to 1023).
@@ -465,19 +510,37 @@ struct Counters {
     extended: AtomicU64,
 }
 
-static COUNTERS: Counters = Counters {
-    spurious: AtomicU64::new(0),
-    remote_call: AtomicU64::new(0),
-    reschedule: AtomicU64::new(0),
-    stop: AtomicU64::new(0),
-    timer: AtomicU64::new(0),
-    stale_timer: AtomicU64::new(0),
-    unclaimed: AtomicU64::new(0),
-    extended: AtomicU64::new(0),
-};
+static COUNTERS: [Counters; MAX_CORES] = [const {
+    Counters {
+        spurious: AtomicU64::new(0),
+        remote_call: AtomicU64::new(0),
+        reschedule: AtomicU64::new(0),
+        stop: AtomicU64::new(0),
+        timer: AtomicU64::new(0),
+        stale_timer: AtomicU64::new(0),
+        unclaimed: AtomicU64::new(0),
+        extended: AtomicU64::new(0),
+    }
+}; MAX_CORES];
 
+/// This core's index in the core table, from its affinity; 0 before
+/// [`init`].
+fn me() -> usize {
+    get().map_or(0, |i| {
+        i.cores
+            .index_of(Affinity::from_mpidr(arch::mpidr()))
+            .unwrap_or(0)
+    })
+}
+
+/// This core's counts.
 pub fn stats() -> Stats {
-    let c = &COUNTERS;
+    stats_of(me())
+}
+
+/// Core `core`'s counts.
+pub fn stats_of(core: usize) -> Stats {
+    let c = &COUNTERS[core.min(MAX_CORES - 1)];
     let r = |a: &AtomicU64| a.load(Ordering::Relaxed);
     Stats {
         spurious: r(&c.spurious),
@@ -495,24 +558,19 @@ fn count(a: &AtomicU64) {
     a.fetch_add(1, Ordering::Relaxed);
 }
 
-/// Set by a reschedule SGI; C12's exit path takes it.
-static RESCHEDULE: AtomicBool = AtomicBool::new(false);
+/// Set by a reschedule SGI, per core. The exit path reschedules at every
+/// kernel entry anyway, so only the tests take it.
+static RESCHEDULE: [AtomicBool; MAX_CORES] = [const { AtomicBool::new(false) }; MAX_CORES];
 
-/// Whether a reschedule SGI arrived since the last call, clearing it.
+/// Whether a reschedule SGI arrived at this core since the last call,
+/// clearing it.
 pub fn take_reschedule() -> bool {
-    RESCHEDULE.swap(false, Ordering::Relaxed)
+    RESCHEDULE[me()].swap(false, Ordering::Relaxed)
 }
 
-/// The cores that took the stop SGI and halted. C12 can wait for it, with a
-/// bound, at a panic.
+/// The cores that took the stop and halted. The panic path waits for it,
+/// with a bound, and reports it.
 pub static STOPPED: AtomicU32 = AtomicU32::new(0);
-
-/// The seams C12 fills.
-pub mod hooks {
-    /// A remote-call SGI arrived: C12 runs the requests queued for this
-    /// core.
-    pub fn remote_call() {}
-}
 
 /// One bit per INTID below 1024 that has been logged as unclaimed, so each
 /// is logged once.
@@ -527,27 +585,29 @@ static EXTENDED_LOGGED: AtomicBool = AtomicBool::new(false);
 pub fn handle() -> Action {
     let Some(irq) = get() else {
         // Interrupts stay masked until `init` has finished.
-        count(&COUNTERS.spurious);
+        count(&COUNTERS[0].spurious);
         return Action::Spurious;
     };
+    let me = me();
+    let counters = &COUNTERS[me];
     let (raw, intid) = irq.ack();
     let action = classify(intid, crate::timer::intid(), irq.lines());
     match action {
         // Nothing was acknowledged: no end of interrupt.
         Action::Spurious => {
-            count(&COUNTERS.spurious);
+            count(&counters.spurious);
             return action;
         }
-        Action::RemoteCall => {
-            count(&COUNTERS.remote_call);
-            hooks::remote_call();
-        }
+        // The request is served where the core waits for the kernel lock,
+        // which every entry from EL0 and the idle loop take
+        // (`crate::smp::remote`): the SGI only brings the core there.
+        Action::RemoteCall => count(&counters.remote_call),
         Action::Reschedule => {
-            count(&COUNTERS.reschedule);
-            RESCHEDULE.store(true, Ordering::Relaxed);
+            count(&counters.reschedule);
+            RESCHEDULE[me].store(true, Ordering::Relaxed);
         }
         Action::Stop => {
-            count(&COUNTERS.stop);
+            count(&counters.stop);
             irq.eoi(raw);
             #[cfg(aspis_test_build)]
             if STOP_INTERCEPT.swap(false, Ordering::Relaxed) {
@@ -560,14 +620,14 @@ pub fn handle() -> Action {
         }
         // The timer disarms itself before the end of interrupt below.
         Action::Timer => count(if crate::timer::on_fire() {
-            &COUNTERS.timer
+            &counters.timer
         } else {
-            &COUNTERS.stale_timer
+            &counters.stale_timer
         }),
         Action::Unclaimed(i) => {
             // As seL4 masks an interrupt with no bound notification.
             irq.disable(i);
-            count(&COUNTERS.unclaimed);
+            count(&counters.unclaimed);
             let word = (i.0 / 32) as usize;
             if word < LOGGED.len()
                 && LOGGED[word].fetch_or(1 << (i.0 % 32), Ordering::Relaxed) & 1 << (i.0 % 32) == 0
@@ -584,7 +644,7 @@ pub fn handle() -> Action {
         // disabled what it could at setup. The end of interrupt still drops
         // the priority, for an LPI too.
         Action::Extended(i) => {
-            count(&COUNTERS.extended);
+            count(&counters.extended);
             if !EXTENDED_LOGGED.swap(true, Ordering::Relaxed) {
                 crate::klog!(
                     Warning,
@@ -665,8 +725,8 @@ pub fn send_stop_to_others() -> bool {
             unsafe { core::ptr::write_volatile(at, value as u32) };
         }
         // ICC_SRE_EL1 can be read at EL1 once EL2 has set
-        // ICC_SRE_EL2.Enable, which the stub does, and C12 on each
-        // secondary core; SRE is set by this core's `init_cpu`.
+        // ICC_SRE_EL2.Enable, which the stub does, and the secondary entry
+        // on each other core; SRE is set by this core's `init_cpu`.
         STOP_V3 if arch::icc_sre() & regs::icc::SRE_SRE != 0 => {
             arch::dsb_ishst();
             // SAFETY: this core's system-register interface is enabled, and
@@ -716,8 +776,7 @@ impl kcap::preempt::Pending for IrqPending {
 
 /// A critical section with IRQs masked, which puts `DAIF` back as it was
 /// when dropped. It nests. The kernel runs with IRQs masked anyway (ADR
-/// 0052, rule 2), and takes them only in [`window`] and [`wait`]; C12
-/// wraps it around code that runs both in idle and in kernel paths.
+/// 0052, rule 2), and takes them only in [`window`] and [`wait`].
 #[must_use]
 pub struct Masked {
     daif: u64,
@@ -775,9 +834,11 @@ pub fn window() {
     };
 }
 
-/// Waits for an interrupt, then takes it and masks IRQs again: C12's idle
-/// loop. WFI wakes on a pending interrupt even while `PSTATE.I` masks it,
-/// and unmasking only after it avoids the lost-wakeup race.
+/// Waits for an interrupt, then takes it and masks IRQs again, for the
+/// tests: the scheduler's idle loop instead handles what is pending with
+/// IRQs masked (`crate::sched::run`). WFI wakes on a pending interrupt even
+/// while `PSTATE.I` masks it, and unmasking only after it avoids the
+/// lost-wakeup race.
 pub fn wait() {
     // SAFETY: as for `window`.
     unsafe {

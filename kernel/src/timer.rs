@@ -13,12 +13,12 @@
 //! the kernel programs ([`set_deadline`]), and nothing is armed otherwise
 //! ([`CVAL_DISARMED`]). When it fires, [`on_fire`] disarms it before the
 //! end of interrupt, so the level-sensitive line drops, as seL4's
-//! `ackDeadlineIRQ` does, then calls C12's hook. C12 programs the earliest
-//! of the running context's budget end, the next release and the earliest
-//! deadline on the core.
+//! `ackDeadlineIRQ` does, then calls the scheduler's hook. The scheduler
+//! programs the earliest of the running context's budget end, the next
+//! release and the earliest deadline on the core (`crate::sched::run`).
 //!
-//! C12: each secondary core runs [`init_cpu`] for its own timer, after its
-//! interrupt controller interface.
+//! Each secondary core runs [`init_cpu`] for its own timer as it starts,
+//! after its interrupt controller interface (C12; `crate::smp::start`).
 
 use crate::irq;
 use core::arch::asm;
@@ -125,11 +125,14 @@ pub fn init(fdt: Option<&fdt::Fdt<'_>>) {
     crate::klog!(Info, "timer", "virtual, INTID {}, {f} Hz", i.0);
 }
 
-/// `CNTKCTL_EL1` as [`init_cpu`] writes it: 0. EL0 can't reach either
-/// timer (`EL0VTEN`, `EL0PTEN`), read either count (`EL0VCTEN`,
-/// `EL0PCTEN`), or get the event stream (`EVNTEN`). Whether EL0 may read
-/// the virtual count is open (kernel specification, K19).
-pub const CNTKCTL: u64 = 0;
+/// `CNTKCTL_EL1` as [`init_cpu`] writes it: `EL0VCTEN` only (kernel
+/// specification K19, settled with C12). EL0 may read the virtual count,
+/// and so `CNTFRQ_EL0`, directly, as Linux's vDSO does, which gives POSIX's
+/// `CLOCK_MONOTONIC`. It can reach neither timer (`EL0VTEN`, `EL0PTEN`),
+/// read the physical count (`EL0PCTEN`), or get the event stream
+/// (`EVNTEN`). Reading a count doesn't let a thread mask or move a deadline
+/// (ADR 0055, rule 1).
+pub const CNTKCTL: u64 = kirq::regs::cntkctl::EL0VCTEN;
 
 /// `CNTKCTL_EL1`.
 #[cfg_attr(not(aspis_test_build), allow(dead_code))]
@@ -143,16 +146,17 @@ pub fn kernel_control() -> u64 {
 /// Sets up this core's virtual timer: EL0 kept out of the timers, nothing
 /// armed, the timer enabled with its interrupt unmasked, and its PPI
 /// enabled at this core's GIC interface. The boot core runs it in
-/// [`init`]; C12 runs it on each secondary core.
+/// [`init`]; each secondary core runs it as it starts.
 pub fn init_cpu() {
     let Some(i) = intid() else {
         panic!("timer::init_cpu before timer::init");
     };
     // SAFETY: the EL1 timer control, which the architecture doesn't reset
-    // to a known value and the firmware may have left set. With it 0, a
-    // thread at EL0 can't mask or move the kernel's deadline (ADR 0055,
-    // rule 1; ADR 0051, rule 4). The kernel itself runs at EL1, which the
-    // register doesn't gate.
+    // to a known value and the firmware may have left set. With only
+    // EL0VCTEN set, a thread at EL0 can read the virtual count but can't
+    // mask or move the kernel's deadline (ADR 0055, rule 1; ADR 0051,
+    // rule 4). The kernel itself runs at EL1, which the register doesn't
+    // gate.
     unsafe {
         asm!("msr cntkctl_el1, {}", "isb", in(reg) CNTKCTL, options(nostack, preserves_flags))
     };
@@ -235,11 +239,15 @@ pub fn on_fire() -> bool {
     true
 }
 
-/// The seams C12 fills.
+/// The scheduler's hook.
 pub mod hooks {
-    /// The timer fired: C12 ends the waits whose deadlines passed, charges
-    /// the running context, and arms the next deadline.
-    pub fn deadline_reached() {}
+    /// The timer fired: the scheduler notes it, and its exit path, after
+    /// the end of interrupt, charges the running context, releases refills,
+    /// ends the waits whose deadlines passed, and arms the next compare
+    /// value (C12; K24).
+    pub fn deadline_reached() {
+        crate::sched::timer_fired();
+    }
 }
 
 #[cfg(aspis_test_build)]

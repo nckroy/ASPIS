@@ -49,8 +49,9 @@ pub mod sgi;
 pub mod timer;
 
 /// The most cores the kernel's core table holds. It covers QEMU's test
-/// matrix (1, 4 and 8 cores, ADR 0036, rule 4) and the Pi 4's 4. C12 owns
-/// the real bound, with its per-core data.
+/// matrix (1, 4 and 8 cores, ADR 0036, rule 4) and the Pi 4's 4. C12 keeps
+/// it as the kernel's core bound: the per-core window, the ASID allocator
+/// and `ksched`'s lock are sized by it, and the kernel checks they agree.
 pub const MAX_CORES: usize = 8;
 
 /// The one priority the kernel gives every interrupt it enables: Linux's

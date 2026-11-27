@@ -45,7 +45,8 @@ pub fn decompose(start: u64, end: u64) -> impl Iterator<Item = (u64, u8)> {
     })
 }
 
-/// What a retype makes (C10's and C11's objects; later chunks add theirs).
+/// What a retype makes (C10's, C11's and C12's objects; later chunks add
+/// theirs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjectType {
     /// A smaller piece of untyped memory, of `2^bits` bytes.
@@ -73,6 +74,17 @@ pub enum ObjectType {
     /// An endpoint. Its 64 bytes are provisional until C14 settles its
     /// layout (kernel specification K25).
     Endpoint,
+    /// A thread: 2 KiB, its eight capability slots first, then its saved
+    /// registers and its scheduling state (C12; kernel specification K07).
+    Thread,
+    /// A scheduling context of `2^bits` bytes, from
+    /// [`MIN_SCHED_CONTEXT_BITS`] to [`MAX_SCHED_CONTEXT_BITS`]: a header,
+    /// then its refills. Its size sets how many refills it can hold, as in
+    /// seL4 (C12; kernel specification K15).
+    SchedContext(u8),
+    /// A reply object: 128 bytes (C12; kernel specification, "Passive
+    /// servers and taking a context back").
+    Reply,
 }
 
 /// The size of an address space object, in bits: 8 KiB.
@@ -85,6 +97,14 @@ pub const MIN_RADIX: u8 = 1;
 pub const MAX_RADIX: u8 = MAX_BITS - SLOT_BITS;
 /// The size of an endpoint, in bits: 64 bytes, provisional until C14.
 pub const ENDPOINT_BITS: u8 = 6;
+/// The size of a thread, in bits: 2 KiB (kernel specification K07).
+pub const THREAD_BITS: u8 = 11;
+/// The smallest scheduling context, in bits: 256 bytes (K15).
+pub const MIN_SCHED_CONTEXT_BITS: u8 = 8;
+/// The largest scheduling context, in bits: 4 KiB (K15).
+pub const MAX_SCHED_CONTEXT_BITS: u8 = 12;
+/// The size of a reply object, in bits: 128 bytes.
+pub const REPLY_BITS: u8 = 7;
 
 impl ObjectType {
     /// log2 of the object's size in bytes.
@@ -97,16 +117,24 @@ impl ObjectType {
             ObjectType::AddressSpace => ADDRESS_SPACE_BITS,
             ObjectType::CNode(radix) => radix.saturating_add(SLOT_BITS),
             ObjectType::Endpoint => ENDPOINT_BITS,
+            ObjectType::Thread => THREAD_BITS,
+            ObjectType::SchedContext(bits) => bits,
+            ObjectType::Reply => REPLY_BITS,
         }
     }
 
     /// Whether the size argument is in range: an untyped size from
     /// [`MIN_BITS`] to [`MAX_BITS`], a CNode radix from [`MIN_RADIX`] to
-    /// [`MAX_RADIX`]. Other types take no size.
+    /// [`MAX_RADIX`], a scheduling context's size from
+    /// [`MIN_SCHED_CONTEXT_BITS`] to [`MAX_SCHED_CONTEXT_BITS`]. Other types
+    /// take no size.
     pub const fn size_ok(self) -> bool {
         match self {
             ObjectType::Untyped(bits) => bits >= MIN_BITS && bits <= MAX_BITS,
             ObjectType::CNode(radix) => radix >= MIN_RADIX && radix <= MAX_RADIX,
+            ObjectType::SchedContext(bits) => {
+                bits >= MIN_SCHED_CONTEXT_BITS && bits <= MAX_SCHED_CONTEXT_BITS
+            }
             _ => true,
         }
     }

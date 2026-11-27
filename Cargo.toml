@@ -11,6 +11,7 @@ members = [
     "crates/kmem",
     "crates/kcap",
     "crates/kirq",
+    "crates/ksched",
     "crates/initfs",
     "crates/glyph-atlas",
     "crates/abnf",
@@ -41,6 +42,7 @@ kargs = { path = "crates/kargs" }
 kmem = { path = "crates/kmem" }
 kcap = { path = "crates/kcap" }
 kirq = { path = "crates/kirq" }
+ksched = { path = "crates/ksched" }
 initfs = { path = "crates/initfs" }
 glyph-atlas = { path = "crates/glyph-atlas" }
 abnf = { path = "crates/abnf" }

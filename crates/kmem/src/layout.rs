@@ -13,6 +13,7 @@
 //! | [`DIRECT_MAP_BASE`] + PA | The direct map, for PA below [`DIRECT_MAP_PA_LIMIT`] |
 //! | [`KERNEL_BASE`] | The kernel image, at most [`KERNEL_MAX_SIZE`] |
 //! | [`DEVICE_WINDOW_BASE`] | The device window, [`DEVICE_WINDOW_SIZE`] |
+//! | [`PERCORE_WINDOW_BASE`] | The per-core window: a [`PERCORE_SLOT`] for each core |
 
 /// The first address of the kernel's half (`TTBR1_EL1`, T1SZ = 16).
 pub const UPPER_HALF_BASE: u64 = 0xffff_0000_0000_0000;
@@ -41,6 +42,15 @@ pub const DEVICE_WINDOW_BASE: u64 = KERNEL_BASE + (1 << 30);
 
 /// The device window's size, 1 GiB.
 pub const DEVICE_WINDOW_SIZE: u64 = 1 << 30;
+
+/// The per-core window (C12), right above the device window: core `i`'s
+/// slot starts at `PERCORE_WINDOW_BASE + i * PERCORE_SLOT`. Each slot holds
+/// the core's entry stack, above an unmapped guard, and its scheduler data
+/// at the stack's top; the rest of the slot stays unmapped.
+pub const PERCORE_WINDOW_BASE: u64 = DEVICE_WINDOW_BASE + DEVICE_WINDOW_SIZE;
+
+/// Each core's slot in the per-core window, 256 KiB.
+pub const PERCORE_SLOT: u64 = 256 << 10;
 
 /// The physical address size the processor reports, from
 /// `ID_AA64MMFR0_EL1.PARange`, capped at 48 bits: the kernel doesn't use

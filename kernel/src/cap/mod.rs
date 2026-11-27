@@ -35,15 +35,18 @@
 //! must keep are in the kernel specification, "Derivation and revocation"
 //! and "Kernel bindings that hold capabilities".
 //!
-//! - **C12, threads:** the restart of a system call stopped with
-//!   [`Preempted`] or [`Error::Preempted`]. The
-//!   thread is a new zombie kind in `kcap::cap::ZombieKind`, with a slot
-//!   array whose slot 0 is its park slot and whose other slots bind its root
-//!   CNode, address space, fault and timeout endpoints and bound
-//!   eventcount; [`KernelHooks::finish`] gains its finish. Lookups start from
-//!   the calling thread's root CNode instead of [`boot::root`]. An address
-//!   space's finish deactivates it on every core, not only this one. Control
-//!   capabilities are kinds that can't be derived. K50 is settled there.
+//! - **C12, threads:** a thread is a zombie kind, `ZombieKind::Thread`,
+//!   whose slot 0 is its park slot and whose other slots hold its root
+//!   CNode, address space, fault and timeout endpoints, scheduling context,
+//!   bound eventcount and IPC buffer. [`KernelHooks`] passes C12's kinds to
+//!   [`crate::sched`]: its zombify hook stops a thread before its slots are
+//!   cleared, its unbind hook removes a thread's endpoint or context
+//!   binding (K50, K08), and its finish hook releases a context's share.
+//!   Scheduling control copies like any capability, as in seL4. Still to
+//!   come in C12's later stages: the restart of a system call stopped with
+//!   [`Preempted`] or [`Error::Preempted`], lookups from the calling
+//!   thread's root CNode instead of [`boot::root`], and an address space's
+//!   finish deactivating it on every core, not only this one.
 //! - **C13b:** the interrupt handler kind, with one binding slot, and the
 //!   interrupt control capability, which can't be derived. K40: the finish
 //!   of a handler, and what a revoke reports when an ITS table refuses it.
@@ -97,8 +100,8 @@ use kmem::{PAGE_SIZE, align_up};
 /// Every object that has slots (a CNode, an address space's record) is made
 /// from RAM, and the boot CNodes are pages of usable RAM, so every slot is
 /// in the direct map, read-write. Each word moves with a single volatile
-/// access. C12: the kernel lock serializes every access; until then one CPU
-/// runs, with exceptions masked.
+/// access. The kernel lock serializes every access (C12), with exceptions
+/// masked.
 pub struct DirectSlots;
 
 impl DirectSlots {
@@ -174,28 +177,48 @@ impl Hooks for KernelHooks {
         // An address space: every binding slot of its record is clear, so no
         // mapping is left. Deactivate it and release its ASID.
         //
+        // C12's kinds: a thread, a scheduling context, scheduling control
+        // and a reply object ([`crate::sched::finish`]).
+        //
         // Nothing else needs work. A CNode's slots are clear. A frame is
         // unmapped everywhere, since each of its mappings held a copy of it.
         // Untyped memory goes back at its parent's next reset. An endpoint
         // has nothing to release until C14 queues threads on it.
-        if let Cap::Zombie {
-            kind: ZombieKind::AddressSpace,
-            ptr,
-            ..
-        } = *cap
-        {
-            AddressSpace::from_object(ptr).finish();
+        match *cap {
+            Cap::Zombie {
+                kind: ZombieKind::AddressSpace,
+                ptr,
+                ..
+            } => AddressSpace::from_object(ptr).finish(),
+            Cap::Zombie {
+                kind: ZombieKind::Thread,
+                ..
+            }
+            | Cap::SchedContext { .. }
+            | Cap::SchedControl { .. }
+            | Cap::Reply { .. } => crate::sched::finish(cap),
+            _ => {}
         }
+    }
+
+    fn zombify(&mut self, cap: &Cap) {
+        // A thread stops for good before its zombie clears its slots.
+        crate::sched::zombify(cap);
     }
 
     fn unbind(&mut self, slot: SlotRef, cap: &Cap) {
         #[cfg(aspis_test_build)]
         UNBOUND.fetch_add(1, Ordering::Relaxed);
-        // C11's only binding: a frame's mapping, in a binding slot of an
-        // address space's record. The binding depends only on the
-        // capability's own encoding, and binding slots never move, so the
-        // space is the object that holds the slot: its address rounded down
-        // to the space's 8 KiB.
+        // A thread's binding (C12): its role says what to undo.
+        if cap.binding().is_some() {
+            crate::sched::unbind(slot, cap);
+            return;
+        }
+        // A frame's mapping, in a binding slot of an address space's
+        // record. The binding depends only on the capability's own
+        // encoding, and binding slots never move, so the space is the
+        // object that holds the slot: its address rounded down to the
+        // space's 8 KiB.
         let Cap::Frame {
             size,
             mapping: Some(m),

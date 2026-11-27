@@ -1834,7 +1834,7 @@ doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF an
 | afl.rs | 0.18.x | Apache-2.0 | Not used: libFuzzer passed C71's check ([L35](#l35-fuzzing-on-stable-rust)). It stays the fallback if a later toolchain breaks libFuzzer. |
 | TLA+ tools (TLC) | v1.7.4, the newest release that isn't a prerelease (v1.8.0 is still a prerelease, last built 2026-11-26) | MIT | Model checking ([Model checking](#model-checking)) |
 | Apalache | 0.63.x | Apache-2.0 | Optional, for inductive invariants |
-| Eclipse Temurin 21 (LTS), a JRE | pinned to a patch release | GPL-2.0-only WITH Classpath-exception-2.0 | Runs TLC and Apalache. Installed with GitHub's own `actions/setup-java` (`distribution: temurin`), pinned by SHA, as every action in `ci.yml` is. |
+| Eclipse Temurin 21 (LTS), a JRE | whatever patch release GitHub's `ubuntu-24.04-arm` runner image preinstalls (C12) | GPL-2.0-only WITH Classpath-exception-2.0 | Runs TLC and Apalache. CI takes it from the image's `JAVA_HOME_21_arm64`, with no setup action, and fails if it is missing. TLC's results don't depend on the JVM's patch release; the jar itself is pinned by SHA-256. |
 
 - **CI-only tools and ADR 0008, rule 4.** [0008](../decisions/0008-mpl-2.0-license.md), rule 4 governs ASPIS's dependencies: what is linked into ASPIS code, or ships in its images. A tool that only runs in CI, is never linked into ASPIS code and never ships is outside it. That reading covers libFuzzer's NCSA license and the JRE's GPL-2.0 with the Classpath exception alike. `fuzz/`'s cargo-deny configuration, and the model-checking jobs' configurations, name each one explicitly.
 - **Not used:**
@@ -2003,8 +2003,9 @@ The replay tests feed them every line of `grammars/idl.vectors`, `grammars/names
 - runs the ABNF differential's self-test, then 300 of its cases, with seed 0;
 - on failure, uploads the findings, logs and differential cases for 7 days;
 - from C32, runs 10,000 fixed-seed PDP differential cases;
-- when a TLA+ spec changes, runs TLC with CI-sized constants, for at most 10 minutes;
 - from C40, runs a two-node smoke test with one scripted partition, asserting that new binds fail closed.
+
+`ci.yml` also has a `tlc` job (C12), on `ubuntu-24.04-arm`. When a change touches a TLA+ spec, the code whose traces it validates, or what defines the job (`xtask/`, the workflows, the shared setup action, the toolchain, the workspace manifest and the lock file), it runs `cargo xtask tlc`: TLC with CI-sized constants, and trace validation, for at most 10 minutes in all.
 
 `cargo xtask test` also runs an engine-neutral replay test, which feeds `fuzz/seeds` and `fuzz/regressions` to the same entry functions under plain `cargo test`. So a regression fails locally without libFuzzer.
 
@@ -2015,7 +2016,7 @@ The replay tests feed them every line of `grammars/idl.vectors`, `grammars/names
 - every target for 10 minutes of fuzzing after its corpus load, with 70 minutes of fuzzing in all (`--time 600 --budget 4200`), in the `fuzz` job, through `cargo xtask fuzz nightly`. The corpus is restored from the cache, merged after each target's run (`-merge=1`) and saved under a new key. The coverage summary and the run records are uploaded for 14 days, and findings for 7. The run number is libFuzzer's seed. The fuzzing step has a 100-minute timeout of its own, inside the job's 2 hours: a step timeout fails the step rather than canceling the job, so the corpus, the coverage and the findings are still saved;
 - the ABNF differential on 20,000 cases, with the run number as its seed, in the `abnf-differential` job ([Differential tests](#differential-tests)), with a 40-minute budget for starting batches and a 50-minute step timeout, so its cases are uploaded even when it runs long;
 - the PDP differential for 30 minutes, structure-aware through `arbitrary`;
-- TLC with nightly constants, for at most 60 minutes;
+- TLC with nightly constants, in `nightly.yml`'s `tlc` job (C12), for at most 60 minutes, after `crates/ksched`'s seeded host tests at 20 times their per-change runs (`KSCHED_RUNS_SCALE`);
 - once the kernel interfaces' IDL and the interface library exist (C07 and C17), the in-QEMU kernel-call fuzzer, in a job of its own, `kernel-calls` ([The kernel-call fuzzer](#the-kernel-call-fuzzer));
 - from C40, a partition campaign: 3 nodes, and 20 seeded fault schedules of 5 minutes each ([Partition injection](#partition-injection)).
 
@@ -2047,7 +2048,7 @@ C32 builds this test.
 
   This is also where stream resumption ([Remote push within QUIC's credit](#remote-push-within-quics-credit)) is checked.
 - **Recommended, not required by the gate:** C11's preemptible delete and revoke ([kernel specification](kernel-specification.md#model-checking)); the call protocol's at-most-once reply cache and cancel (C18; [0004](../decisions/0004-network-transparency-and-failure.md), rule 3; [0054](../decisions/0054-ipc-endpoints.md)), and export reference counting with release and `export_ended` (C29).
-- **Sans-IO cores.** The protocol cores are written as sans-IO, `no_std`, host-buildable state machines. Later, test builds emit traces that TLC validates (trace validation: Cirstea and others, arXiv 2404.16075).
+- **Sans-IO cores.** The protocol cores are written as sans-IO, `no_std`, host-buildable state machines. Their host tests emit traces that TLC validates (trace validation: Cirstea and others, arXiv 2404.16075). C12's donation, in `crates/ksched`, is the first ([specs/README.md](../../specs/README.md)).
 
 ### The kernel-call fuzzer
 
@@ -2393,6 +2394,7 @@ What coverage threshold should each fuzz target meet?
 The TLA+ specs themselves.
 
 - **Owner:** C12 (scheduling-context donation), C14 (IPC and eventcounts) and C15 (the pager protocol), whose properties are in the [kernel specification](kernel-specification.md#model-checking); C40 and C50 (leases); C51 (sequence numbers).
+- **Settled in part with C12:** scheduling-context donation is `specs/SchedDonation.tla` ([specs/README.md](../../specs/README.md)). The others are still to be written.
 - **Meanwhile:** the properties in [Model checking](#model-checking).
 - **From:** [Model checking](#model-checking).
 

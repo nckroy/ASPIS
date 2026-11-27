@@ -6,7 +6,10 @@
 //! ```text
 //! cargo xtask build [--test-build]          aspis.efi and initfs.img
 //! cargo xtask run [options]                 boot in QEMU
-//! cargo xtask test                          host tests, then QEMU tests
+//! cargo xtask test [--host]                 host tests, then QEMU tests
+//!                                           (--host: the grammars, the
+//!                                           interfaces and the host
+//!                                           crates' tests only)
 //! cargo xtask check-production              no test code in production images
 //! cargo xtask matrix                        the nightly QEMU matrix
 //! cargo xtask lint                          rustfmt and clippy, every target,
@@ -24,6 +27,10 @@
 //!                                           idlc builds idl-rt without it)
 //! cargo xtask fuzz-dict                     a libFuzzer dictionary per
 //!                                           grammar, in build/fuzz/dict
+//! cargo xtask tlc [--nightly]               the TLA+ specs in specs/, with
+//!                                           TLC, and trace validation of
+//!                                           ksched's donation (nightly:
+//!                                           the nightly model too)
 //! cargo xtask grub                          GRUB 2.14 arm64-efi, in Docker
 //! cargo xtask fuzz <command>                the fuzz targets (fuzz/README.md)
 //! ```
@@ -51,6 +58,7 @@ mod fuzz_dict;
 mod grammars;
 mod idl;
 mod qemu;
+mod tlc;
 
 use std::{
     env, fs,
@@ -115,7 +123,7 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let Some(cmd) = args.first() else {
         eprintln!(
-            "usage: cargo xtask build|run|test|check-production|matrix|lint|grammars|idl|fuzz-dict|fuzz|grub [options]"
+            "usage: cargo xtask build|run|test|check-production|matrix|lint|grammars|idl|fuzz-dict|fuzz|tlc|grub [options]"
         );
         exit(2)
     };
@@ -135,7 +143,7 @@ fn main() {
             let code = qemu::run(&opts);
             exit(code);
         }
-        "test" => test(),
+        "test" => test(rest.iter().any(|a| a == "--host")),
         "check-production" => {
             build(Flavor::Production);
             check_production();
@@ -149,6 +157,7 @@ fn main() {
         "idl" => idl::check(rest.iter().any(|a| a == "--write")),
         "fuzz-dict" => fuzz_dict::write(),
         "fuzz" => fuzz::run(rest),
+        "tlc" => tlc::check(rest.iter().any(|a| a == "--nightly")),
         other => fail(format!("unknown command {other}")),
     }
 }
@@ -386,24 +395,70 @@ pub fn grub() -> PathBuf {
 }
 
 /// Fails if a production image holds test-only code (ADR 0036, rule 8):
-/// the test-build marker, or a semihosting call (`hlt #0xf000`).
+/// the test-build marker, the test trap's or the EL0 test programs' markers,
+/// the test trap's `svc #0x7e57`, or a semihosting call (`hlt #0xf000`).
+/// The test build's marker, the test trap's (C12) and the EL0 test
+/// programs' (C12): production images hold none of them.
+const TEST_MARKERS: [&[u8]; 3] = [
+    b"ASPIS-TEST-BUILD",
+    b"ASPIS-TEST-TRAP!",
+    b"ASPIS-USER-TESTS",
+];
+
+/// `svc #0x7e57`, the test trap's instruction (C12), as the images hold it:
+/// little-endian, at a 4-byte-aligned offset.
+fn svc_trap() -> [u8; 4] {
+    (0xd400_0001u32 | 0x7e57 << 5).to_le_bytes()
+}
+
+/// Checks that the test images hold what [`check_production`] looks for,
+/// so a change in the images' format can't make that check pass unseen.
+fn check_test_markers() {
+    let out = Flavor::Test.out();
+    for name in ["aspis.efi", "kernel.elf"] {
+        let bytes = fs::read(out.join(name)).unwrap();
+        for marker in TEST_MARKERS {
+            if !bytes.windows(marker.len()).any(|w| w == marker) {
+                fail(format!(
+                    "the test {name} lacks the test marker {}: check-production can't see it",
+                    String::from_utf8_lossy(marker)
+                ));
+            }
+        }
+        if !bytes.as_chunks::<4>().0.contains(&svc_trap()) {
+            fail(format!(
+                "the test {name} lacks the test trap's svc: check-production can't see it"
+            ));
+        }
+    }
+}
+
 fn check_production() {
     let out = Flavor::Production.out();
-    let marker = b"ASPIS-TEST-BUILD";
+    let markers = TEST_MARKERS;
     let hlt_f000 = 0xd45e_0000u32.to_le_bytes();
+    let svc_trap = svc_trap();
     for name in ["aspis.efi", "kernel.elf", "initfs.img"] {
         let bytes = fs::read(out.join(name)).unwrap();
-        if bytes.windows(marker.len()).any(|w| w == marker) {
-            fail(format!("{name} holds the test-build marker"));
+        for marker in markers {
+            if bytes.windows(marker.len()).any(|w| w == marker) {
+                fail(format!(
+                    "{name} holds the test marker {}",
+                    String::from_utf8_lossy(marker)
+                ));
+            }
         }
         if bytes.as_chunks::<4>().0.contains(&hlt_f000) {
             fail(format!("{name} holds a semihosting call"));
+        }
+        if bytes.as_chunks::<4>().0.contains(&svc_trap) {
+            fail(format!("{name} holds the test trap's svc"));
         }
     }
     eprintln!("xtask: production images hold no test code");
 }
 
-fn test() {
+fn test(host_only: bool) {
     // The grammars and their vectors, with the Rust checker (ADR 0062,
     // rule 8), then the interfaces, their locks and generated files (ADR
     // 0067, rules 7 and 9).
@@ -425,6 +480,8 @@ fn test() {
                 "kcap",
                 "-p",
                 "kirq",
+                "-p",
+                "ksched",
                 "-p",
                 "initfs",
                 "-p",
@@ -470,17 +527,25 @@ fn test() {
             .args(["-p", "fuzz-gate", "-p", "fuzz-alloc", "--target-dir"])
             .arg(fuzz::host_target_dir()),
     );
+    if host_only {
+        eprintln!("xtask: host tests passed");
+        return;
+    }
     build(Flavor::Production);
     check_production();
     build(Flavor::Test);
+    check_test_markers();
 
     let mut failed = Vec::new();
     for config in ["a72-v2", "max-v3"] {
         // The in-QEMU tests: they end QEMU through semihosting.
+        // Five minutes, as the matrix allows: C12's tests run threads on
+        // every core under TCG, beside whatever else the host runs.
         let opts = qemu::Options {
             flavor: Flavor::Test,
             config: config.into(),
             expect: None,
+            timeout: 300,
             ..qemu::Options::default()
         };
         eprintln!("xtask: in-QEMU tests on {config}");
@@ -514,12 +579,16 @@ fn test() {
     if qemu::run(&opts) != 0 {
         failed.push("quoted kernel arguments".into());
     }
-    // A forced panic reaches the UART and the framebuffer (M1's outcome).
+    // A forced panic reaches the UART and the framebuffer (M1's outcome),
+    // and stops every other core, each of which waits for the kernel lock
+    // the panicking core holds (ADR 0052, rule 4; kernel
+    // specification, "Cross-core signals and TLB maintenance"). The
+    // count is the report's last line, after "KERNEL PANIC".
     let opts = qemu::Options {
         flavor: Flavor::Test,
         config: "a72-v2".into(),
         args: "test.panic".into(),
-        expect: Some("KERNEL PANIC".into()),
+        expect: Some("stopped 3 of 3 other cores".into()),
         screenshot: Some(build_dir().join("screen-panic.png")),
         ..qemu::Options::default()
     };
@@ -602,6 +671,8 @@ fn lint() {
         "-p",
         "kirq",
         "-p",
+        "ksched",
+        "-p",
         "initfs",
         "-p",
         "glyph-atlas",
@@ -645,12 +716,13 @@ fn lint() {
             .args(["--", "-D", "warnings"]),
     );
     // The crates the catalog and generated bindings run are no_std (ADR
-    // 0067, rule 11): build them for a target without std, so a dependency
-    // that pulls std in fails here, not later.
+    // 0067, rule 11), and so is ksched, the kernel's: build them for a
+    // target without std, so a dependency that pulls std in fails here, not
+    // later.
     run_cmd(
         cargo()
             .args(["build", "--locked", "--target", "aarch64-unknown-none"])
-            .args(["-p", "abnf", "-p", "idl-rt", "-p", "idl"])
+            .args(["-p", "abnf", "-p", "idl-rt", "-p", "idl", "-p", "ksched"])
             .args([
                 "-p",
                 "aspis-interfaces",
