@@ -41,3 +41,73 @@ path = ["assets/fonts/NotoSansSymbols-Regular.ttf", "assets/fonts/NotoSansSymbol
 precedence = "override"
 SPDX-FileCopyrightText = "2022 The Noto Project Authors (https://github.com/notofonts/symbols)"
 SPDX-License-Identifier = "OFL-1.1"
+
+# aspis-crypto's known-answer vectors, copied from their sources with the
+# values unchanged (ADR 0069, rule 7). crates/crypto/tests/data/README.md
+# names each source, and repeats its notice and legends.
+#
+# RFC 5869 is of the IETF Stream, and its vectors are Code Components
+# ("tables of values") under the Revised BSD License (the IETF Trust's
+# Legal Provisions, Section 4).
+[[annotations]]
+path = "crates/crypto/tests/data/rfc5869.json"
+precedence = "override"
+SPDX-FileCopyrightText = "2010 IETF Trust and the persons identified as the document authors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+# RFC 10073 is of the IETF Stream, and its Appendix E is JSON, a Code
+# Component, under the Revised BSD License; so are Appendix D's examples
+# ("tables of values").
+[[annotations]]
+path = "crates/crypto/tests/data/rfc10073.json"
+precedence = "override"
+SPDX-FileCopyrightText = "2026 IETF Trust and the persons identified as the document authors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+# RFC 9001 is of the IETF Stream, and its Appendix A's values are Code
+# Components ("tables of values") under the Revised BSD License, as for
+# RFC 5869.
+[[annotations]]
+path = "crates/crypto/tests/data/rfc9001.json"
+precedence = "override"
+SPDX-FileCopyrightText = "2021 IETF Trust and the persons identified as the document authors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+# RFC 8439 is of the IRTF Stream, which the Code Components license
+# doesn't cover (Legal Provisions, Section 8.g). It is copied under Section
+# 3.a without its IETF Standards Process limit (Section 8.c.iii).
+[[annotations]]
+path = "crates/crypto/tests/data/rfc8439.json"
+precedence = "override"
+SPDX-FileCopyrightText = "2018 IETF Trust and the persons identified as the document authors"
+SPDX-License-Identifier = "LicenseRef-IETF-BCP78"
+
+# RFC 4231 predates the IETF Trust's Legal Provisions and is under BCP 78
+# as of 2005 (RFC 3978).
+[[annotations]]
+path = "crates/crypto/tests/data/rfc4231.json"
+precedence = "override"
+SPDX-FileCopyrightText = "2005 The Internet Society"
+SPDX-License-Identifier = "LicenseRef-IETF-BCP78"
+
+# RFC 7748 and RFC 8032 are of the IRTF Stream, like RFC 8439.
+[[annotations]]
+path = "crates/crypto/tests/data/rfc7748.json"
+precedence = "override"
+SPDX-FileCopyrightText = "2016 IETF Trust and the persons identified as the document authors"
+SPDX-License-Identifier = "LicenseRef-IETF-BCP78"
+
+[[annotations]]
+path = "crates/crypto/tests/data/rfc8032.json"
+precedence = "override"
+SPDX-FileCopyrightText = "2017 IETF Trust and the persons identified as the document authors"
+SPDX-License-Identifier = "LicenseRef-IETF-BCP78"
+
+# NIST's ACVP vectors for ML-KEM-768 and ML-DSA-65, cut down from
+# usnistgov/ACVP-Server, which is under the NIST Software License.
+# crates/crypto/tests/data/acvp/README.md says what was changed, and when.
+[[annotations]]
+path = "crates/crypto/tests/data/acvp/*.json"
+precedence = "override"
+SPDX-FileCopyrightText = "National Institute of Standards and Technology (not subject to copyright in the United States)"
+SPDX-License-Identifier = "NIST-Software"

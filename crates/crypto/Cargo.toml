@@ -1,0 +1,139 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "aspis-crypto"
+description = "ASPIS's cryptographic primitives and the RFC 10073 composite signature, wrapping RustCrypto and dalek (ADR 0069)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/hash 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
+
+[lints]
+workspace = true
+
+# One feature per family, so a user such as the IDL compiler builds only
+# what it takes (ADR 0069, rule 2).
+[features]
+default = ["sha3", "sha2", "aead", "x25519", "ed25519", "ml-kem", "ml-dsa", "composite"]
+# Lets the crate allocate: the lattice crates then keep their large key
+# state on the heap rather than the stack. The API doesn't change.
+alloc = ["zeroize/alloc", "ml-kem?/alloc", "ml-dsa?/alloc"]
+# SHA3-256 and SHAKE256 (FIPS 202).
+sha3 = ["dep:sha3", "dep:shake"]
+# SHA-256, SHA-384 and SHA-512 (FIPS 180-4), HMAC (RFC 2104) and HKDF
+# (RFC 5869).
+sha2 = ["dep:sha2", "dep:hmac", "dep:hkdf"]
+# ChaCha20-Poly1305 (RFC 8439), AES-256-GCM and AES-128-GCM (NIST SP
+# 800-38D), and QUIC's header-protection masks (RFC 9001, section 5.4),
+# from the AES block and ChaCha20 stream functions those AEADs are built
+# on. AES-128 serves only QUIC's Initial and Retry protection (ADR 0003,
+# rule 4).
+aead = ["dep:chacha20poly1305", "dep:aes-gcm", "dep:aes", "dep:chacha20"]
+# X25519 (RFC 7748).
+x25519 = ["dep:x25519-dalek"]
+# Ed25519 (RFC 8032), verified strictly. curve25519-dalek gives the
+# canonical-encoding checks (ADR 0069, rule 5).
+ed25519 = ["dep:ed25519-dalek", "dep:curve25519-dalek"]
+# ML-KEM-768 (FIPS 203).
+ml-kem = ["dep:ml-kem"]
+# ML-DSA-65 (FIPS 204).
+ml-dsa = ["dep:ml-dsa"]
+# The composite signature id-MLDSA65-Ed25519-SHA512 (RFC 10073; ADR 0069,
+# rule 4), whose message representative takes SHA-512.
+composite = ["ml-dsa", "ed25519", "sha2"]
+
+# The primitives, from the workspace's pins (ADR 0069, rule 1). Every one is
+# built with its `zeroize` feature, so its key state is cleared on drop
+# (rule 5).
+[dependencies]
+zeroize.workspace = true
+subtle.workspace = true
+sha3 = { workspace = true, optional = true, features = ["zeroize"] }
+shake = { workspace = true, optional = true, features = ["zeroize"] }
+sha2 = { workspace = true, optional = true, features = ["zeroize"] }
+hmac = { workspace = true, optional = true, features = ["zeroize"] }
+hkdf = { workspace = true, optional = true }
+chacha20poly1305 = { workspace = true, optional = true, features = ["zeroize"] }
+aes-gcm = { workspace = true, optional = true, features = ["aes", "zeroize"] }
+aes = { workspace = true, optional = true, features = ["zeroize"] }
+# `cipher` gives the ChaCha20 core and its traits.
+chacha20 = { workspace = true, optional = true, features = ["cipher", "zeroize"] }
+# `static_secrets` gives a key from the caller's 32 octets (rule 3), and
+# `precomputed-tables` and `fast` the basepoint tables, for key generation
+# and signing speed.
+x25519-dalek = { workspace = true, optional = true, features = ["zeroize", "static_secrets", "precomputed-tables"] }
+ed25519-dalek = { workspace = true, optional = true, features = ["zeroize", "fast"] }
+curve25519-dalek = { workspace = true, optional = true, features = ["zeroize"] }
+# `hazmat` only documents encapsulation with the caller's m (rule 3).
+ml-kem = { workspace = true, optional = true, features = ["zeroize", "hazmat"] }
+# `rand_core` gives hedged signing, which takes the caller's 32 octets
+# through a one-shot adapter (src/rng.rs). It brings in traits, no RNG.
+ml-dsa = { workspace = true, optional = true, features = ["zeroize", "rand_core"] }
+
+# Each test names the families it uses, so a build with fewer families,
+# such as the IDL compiler's (sha3 alone), still compiles every target.
+[[test]]
+name = "hash"
+path = "tests/hash.rs"
+required-features = ["sha3", "sha2"]
+
+[[test]]
+name = "mac"
+path = "tests/mac.rs"
+required-features = ["sha2"]
+
+[[test]]
+name = "aead"
+path = "tests/aead.rs"
+required-features = ["aead"]
+
+[[test]]
+name = "quic"
+path = "tests/quic.rs"
+required-features = ["aead", "sha2"]
+
+[[test]]
+name = "x25519"
+path = "tests/x25519.rs"
+required-features = ["x25519"]
+
+[[test]]
+name = "ed25519"
+path = "tests/ed25519.rs"
+required-features = ["ed25519"]
+
+[[test]]
+name = "ml_kem"
+path = "tests/ml_kem.rs"
+required-features = ["ml-kem", "sha3"]
+
+[[test]]
+name = "ml_dsa"
+path = "tests/ml_dsa.rs"
+required-features = ["ml-dsa"]
+
+[[test]]
+name = "composite"
+path = "tests/composite.rs"
+required-features = ["composite"]
+
+[[test]]
+name = "algorithm"
+path = "tests/algorithm.rs"
+
+[[test]]
+name = "fuzz"
+path = "tests/fuzz.rs"
+required-features = ["sha3", "sha2", "aead", "x25519", "ed25519", "ml-kem", "ml-dsa", "composite"]
+
+[[test]]
+name = "secrets"
+path = "tests/secrets.rs"
+required-features = ["sha3", "sha2", "aead", "x25519", "ml-kem", "composite"]

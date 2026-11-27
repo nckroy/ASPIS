@@ -22,9 +22,9 @@ workspace = true
 # Loads each generated grammar and labels its vectors (ADR 0062, rule 8).
 abnf.workspace = true
 idl-rt.workspace = true
-# SHA3-256 for the lock (ADR 0067, rule 7), pending D33's choice of crypto
-# crates. MIT OR Apache-2.0.
-sha3 = { version = "0.11", default-features = false }
+# SHA3-256 for the lock (ADR 0067, rule 7), from the crypto wrapper and
+# only its SHA-3 family (ADR 0069, rule 2).
+aspis-crypto = { workspace = true, features = ["sha3"] }
 
 [[test]]
 name = "parse"

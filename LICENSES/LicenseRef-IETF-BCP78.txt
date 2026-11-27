@@ -1,0 +1,78 @@
+Portions of RFCs under BCP 78 and the IETF Trust's Legal Provisions
+
+This license applies to test vectors copied from RFCs whose notices put
+them under BCP 78, which the Trust's Code Components license (Legal
+Provisions, Section 4) doesn't cover. Their notices take two forms. An RFC
+of 2005 is "subject to the rights, licenses and restrictions contained in
+BCP 78". A later RFC is "subject to BCP 78 and the IETF Trust's Legal
+Provisions Relating to IETF Documents" (https://trustee.ietf.org/license-info).
+The RFCs are of two kinds:
+
+- RFCs of the IRTF Document Stream, published after December 28, 2009.
+  Section 8.g of the Legal Provisions applies the Legal Provisions to
+  them, but says Section 4 "shall not apply to documents in the IRTF
+  Document Stream".
+- RFCs published before the Legal Provisions took effect, which Section
+  2.c leaves under the copyright policy of their day (RFC 3978).
+
+Every value is copied unchanged. Only the layout differs from the RFC:
+the values are written as lowercase hex without the RFC's spaces and line
+breaks, inside a JSON wrapper that names each field as the RFC does.
+
+Each file under this license names the RFC it is taken from, and keeps
+that RFC's copyright notice and legends. The terms are those in effect
+when that RFC was published.
+
+For RFC 4231 (December 2005), they are those of BCP 78 as RFC 3978 stated
+it, and the RFC itself says: "The test vectors provided in this document
+may be used for conformance testing."
+
+For the IRTF Stream RFCs published from March 25, 2015, they are the
+Legal Provisions version 5.0 ("TLP 5"), as published by the IETF Trust at
+https://trustee.ietf.org/documents/trust-legal-provisions/tlp-5/ and read
+on 2026-11-26. The IRTF Stream is one of the Alternate Streams (Section
+8.a). For those, Section 8.c.iii removes the IETF Standards Process limit
+from the grant of Section 3.a, and says that Section 3.c doesn't apply.
+The grant is Section 3.a read without that limit: to copy, publish,
+display and distribute the document in whole or in part, to translate it,
+and to modify it or prepare derivative works of it unless a legend under
+Section 6.c disallows that. The RFCs used here carry no such legend. The
+attribution and legends are kept as good practice, not because the grant
+requires them. Sections 3.a, 8.c.iii and 8.g are quoted below.
+
+---
+
+3.a. License For Use Within the IETF Standards Process. The IETF Trust
+hereby grants to each participant in the IETF Standards Process, to the
+greatest extent that it is permitted to do so, a non-exclusive,
+royalty-free, worldwide right and license under all copyrights and rights
+of authors granted to the IETF Trust:
+
+i. to copy, publish, display and distribute IETF Contributions and IETF
+Documents, in whole or in part, as part of the IETF Standards Process,
+and
+
+ii. to translate IETF Contributions and IETF Documents, in whole or part,
+into languages other than English as part of the IETF Standards Process,
+and
+
+iii. unless explicitly disallowed in the notices contained in an IETF
+Contribution or IETF Document (as specified in Section 6.c below), to
+modify or prepare derivative works of such IETF Contributions or IETF
+Documents, in whole or in part, as part of the IETF Standards Process.
+
+8.c.iii. The license grant in Section 3.a of these Legal Provisions with
+respect to Alternate Stream documents shall not be limited to the IETF
+Standards Process, and all references to the IETF Standards Process in
+Section 3.a shall be omitted with respect to licenses of Alternate Stream
+documents, and correspondingly Section 3.c hereof shall not apply with
+respect to Alternate Stream documents.
+
+8.g. IRTF Document Stream. Pursuant to RFC 5743 published on December 24,
+2009, the manager of the IRTF Document Stream has requested that the IETF
+Trust act as licensing administrator for the IRTF Document Stream and
+that these Legal Provisions be applied to documents submitted and
+published in the IRTF Document Stream following December 28, 2009.
+Section 4 of these Legal Provisions shall not apply to documents in the
+IRTF Document Stream, and all references to Section 4 hereof shall be
+disregarded with respect to documents in the IRTF Document Stream.

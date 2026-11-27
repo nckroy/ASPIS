@@ -489,6 +489,43 @@ fn check_production() {
     eprintln!("xtask: production images hold no test code");
 }
 
+/// The cfgs that make RustCrypto's and dalek's crates use their portable
+/// software backends. `aarch64-unknown-none` can't detect CPU features at
+/// run time, so there SHA-2, SHA-3, AES and POLYVAL run in software, while
+/// a host detects the CPU's instructions and uses them. (On aarch64,
+/// ChaCha20 takes NEON at compile time; forcing its software backend too
+/// covers the rest of its code.) curve25519-dalek is forced to `serial`,
+/// the backend `aarch64-unknown-none` uses, so an x86_64 host doesn't run
+/// its AVX2 backend instead.
+const CRYPTO_SOFT_BACKENDS: &str = "--cfg sha2_backend=\"soft\" --cfg keccak_backend=\"soft\" \
+     --cfg aes_backend=\"soft\" --cfg polyval_backend=\"soft\" \
+     --cfg chacha20_backend=\"soft\" --cfg poly1305_backend=\"soft\" \
+     --cfg curve25519_dalek_backend=\"serial\"";
+
+/// aspis-crypto's host tests beyond the default run (ADR 0069, rule 7):
+/// with `alloc`, which changes how the lattice key state is stored, and
+/// with the software backends forced, which the known answers otherwise
+/// never reach on a host that has the CPU features.
+fn crypto_tests() {
+    let cargo = || {
+        let mut c = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+        c.current_dir(root());
+        c
+    };
+    run_cmd(
+        cargo()
+            .args(["test", "--locked", "--quiet", "-p", "aspis-crypto"])
+            .args(["--features", "alloc"]),
+    );
+    eprintln!("xtask: aspis-crypto with the software backends");
+    run_cmd(
+        cargo()
+            .args(["test", "--locked", "--quiet", "-p", "aspis-crypto"])
+            .env("RUSTFLAGS", CRYPTO_SOFT_BACKENDS)
+            .env("CARGO_TARGET_DIR", build_dir().join("target-crypto-soft")),
+    );
+}
+
 fn test(host_only: bool) {
     // The grammars and their vectors, with the Rust checker (ADR 0062,
     // rule 8), then the interfaces, their locks and generated files (ADR
@@ -533,6 +570,8 @@ fn test(host_only: bool) {
                 "aspis-interfaces",
                 "-p",
                 "idl-fixtures",
+                "-p",
+                "aspis-crypto",
             ]),
     );
     // Owned values (ADR 0067, rule 10), a library feature of the
@@ -543,6 +582,7 @@ fn test(host_only: bool) {
             .args(["test", "--locked", "--quiet", "-p", "aspis-interfaces"])
             .args(["--features", "alloc"]),
     );
+    crypto_tests();
     // The fuzz targets' seeds and regressions, through their entry
     // functions without libFuzzer, and the harness's own tests (ADR 0068,
     // rule 7). Neither crate depends on libFuzzer, so this builds no C++.
@@ -682,6 +722,99 @@ fn matrix() {
     }
 }
 
+/// aspis-crypto's families, each a cargo feature (ADR 0069, rule 2). They
+/// are its default features, and [`check_crypto_families`] fails lint if
+/// the two lists differ.
+const CRYPTO_FAMILIES: &[&str] = &[
+    "sha3",
+    "sha2",
+    "aead",
+    "x25519",
+    "ed25519",
+    "ml-kem",
+    "ml-dsa",
+    "composite",
+];
+
+/// The crates that would bring std or a source of randomness into
+/// aspis-crypto (ADR 0069, rule 1). `rand_core`, which holds only traits,
+/// is allowed. The tree is taken for `aarch64-unknown-none`, so `libc`,
+/// `wasi` and `windows-sys` match only if a crate depends on them
+/// unconditionally: on a host, `cpufeatures` takes `libc` legitimately.
+const CRYPTO_FORBIDDEN: &[&str] = &[
+    "getrandom",
+    "rand",
+    "rand_chacha",
+    "rand_hc",
+    "rand_os",
+    "libc",
+    "wasi",
+    "windows-sys",
+];
+
+/// Fails if [`CRYPTO_FAMILIES`] isn't aspis-crypto's `default` feature list,
+/// in crates/crypto/Cargo.toml, so no family skips the per-family lint.
+fn check_crypto_families() {
+    let manifest = fs::read_to_string(root().join("crates/crypto/Cargo.toml"))
+        .unwrap_or_else(|e| fail(format!("crates/crypto/Cargo.toml: {e}")));
+    let default = manifest
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("default = ["))
+        .and_then(|l| l.strip_suffix(']'))
+        .unwrap_or_else(|| fail("crates/crypto/Cargo.toml has no one-line default feature list"));
+    let listed: Vec<&str> = default
+        .split(',')
+        .map(|f| f.trim().trim_matches('"'))
+        .filter(|f| !f.is_empty())
+        .collect();
+    if listed != CRYPTO_FAMILIES {
+        fail(format!(
+            "aspis-crypto's default features {listed:?} differ from xtask's CRYPTO_FAMILIES {CRYPTO_FAMILIES:?}"
+        ));
+    }
+}
+
+/// Fails if aspis-crypto's tree, with every feature, for the target
+/// without std, holds a crate of [`CRYPTO_FORBIDDEN`] (ADR 0069, rule 1).
+fn crypto_dependencies() {
+    let out = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        .current_dir(root())
+        .args(["tree", "--locked", "-p", "aspis-crypto", "--all-features"])
+        .args(["--target", "aarch64-unknown-none", "-e", "normal"])
+        .args(["--prefix", "none"])
+        .output()
+        .unwrap_or_else(|e| fail(format!("cargo tree: {e}")));
+    if !out.status.success() {
+        fail(format!(
+            "cargo tree failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let tree = String::from_utf8_lossy(&out.stdout);
+    let mut crates: Vec<&str> = tree
+        .lines()
+        .filter_map(|l| l.split_whitespace().next())
+        .filter(|name| *name != "aspis-crypto")
+        .collect();
+    crates.sort_unstable();
+    crates.dedup();
+    let found: Vec<&str> = crates
+        .iter()
+        .copied()
+        .filter(|name| CRYPTO_FORBIDDEN.contains(name))
+        .collect();
+    if !found.is_empty() {
+        fail(format!(
+            "aspis-crypto depends on {} (ADR 0069, rule 1)",
+            found.join(", ")
+        ));
+    }
+    eprintln!(
+        "xtask: aspis-crypto's {} crates bring in no std or randomness",
+        crates.len()
+    );
+}
+
 /// rustfmt and clippy over every crate, each for the target it builds for.
 fn lint() {
     let cargo = || {
@@ -724,11 +857,32 @@ fn lint() {
         "-p",
         "idl-fixtures",
         "-p",
+        "aspis-crypto",
+        "-p",
         "xtask",
         "--",
         "-D",
         "warnings",
     ]));
+    // Each crypto family alone, as a user such as the IDL compiler builds
+    // it (ADR 0069, rule 2): every target still compiles, nothing is left
+    // unused, and the family alone builds without std.
+    check_crypto_families();
+    for family in CRYPTO_FAMILIES {
+        run_cmd(
+            cargo()
+                .args(["clippy", "--locked", "--all-targets", "-p", "aspis-crypto"])
+                .args(["--no-default-features", "--features", family])
+                .args(["--", "-D", "warnings"]),
+        );
+        run_cmd(
+            cargo()
+                .args(["check", "--locked", "--target", "aarch64-unknown-none"])
+                .args(["-p", "aspis-crypto", "--no-default-features"])
+                .args(["--features", family])
+                .env("CARGO_TARGET_DIR", build_dir().join("target-nostd")),
+        );
+    }
     run_cmd(
         cargo()
             .args(["clippy", "--locked", "--all-targets"])
@@ -739,33 +893,38 @@ fn lint() {
                 "aspis-interfaces",
                 "-p",
                 "idl-fixtures",
+                "-p",
+                "aspis-crypto",
             ])
             .args([
                 "--features",
-                "idl-rt/alloc,aspis-interfaces/alloc,idl-fixtures/alloc",
+                "idl-rt/alloc,aspis-interfaces/alloc,idl-fixtures/alloc,aspis-crypto/alloc",
             ])
             .args(["--", "-D", "warnings"]),
     );
     // The crates the catalog and generated bindings run are no_std (ADR
     // 0067, rule 11), and so is ksched, the kernel's: build them for a
     // target without std, so a dependency that pulls std in fails here, not
-    // later.
+    // later. So is aspis-crypto, with and without alloc (ADR 0069, rule 2).
     run_cmd(
         cargo()
             .args(["build", "--locked", "--target", "aarch64-unknown-none"])
             .args(["-p", "abnf", "-p", "idl-rt", "-p", "idl", "-p", "ksched"])
-            .args([
-                "-p",
-                "aspis-interfaces",
-                "--features",
-                "aspis-interfaces/alloc",
-            ])
+            .args(["-p", "aspis-interfaces", "-p", "aspis-crypto"])
+            .args(["--features", "aspis-interfaces/alloc,aspis-crypto/alloc"])
             .env("CARGO_TARGET_DIR", build_dir().join("target-nostd")),
     );
     run_cmd(
         cargo()
             .args(["build", "--locked", "--target", "aarch64-unknown-none"])
-            .args(["-p", "idl-rt", "-p", "aspis-interfaces"])
+            .args([
+                "-p",
+                "idl-rt",
+                "-p",
+                "aspis-interfaces",
+                "-p",
+                "aspis-crypto",
+            ])
             .env("CARGO_TARGET_DIR", build_dir().join("target-nostd")),
     );
     // The fuzz workspace: the harness, the allocator and the targets.
@@ -778,6 +937,7 @@ fn lint() {
             .arg(fuzz::host_target_dir())
             .args(["--", "-D", "warnings"]),
     );
+    crypto_dependencies();
     // The kernel and the stub need the build's inputs: lint against them.
     let out = build(Flavor::Production);
     let atlas = build_dir().join("atlas");

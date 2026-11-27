@@ -21,7 +21,8 @@ default = []
 std = []
 
 [dependencies]
-sha2 = { version = "0.11.2", default-features = false }
+# The workspace's pin (ADR 0069, rule 1).
+sha2.workspace = true
 
 [dev-dependencies]
 # The tests use the builder.

@@ -16,4 +16,4 @@ workspace = true
 [dependencies]
 abnf = { workspace = true }
 initfs = { workspace = true, features = ["std"] }
-sha2 = { version = "0.11.2", default-features = false }
+sha2.workspace = true
