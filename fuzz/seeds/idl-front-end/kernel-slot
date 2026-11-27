@@ -1,0 +1,6 @@
+edition 2026;
+[id(aspis.kernel.t), object_id(reserved(0x0301)), version(1.0), kernel]
+interface t {
+    [requires(read, write), readonly] @1 m(s: slot<aspis.kernel.eventcount/1, read>);
+    [static] @2 n();
+}

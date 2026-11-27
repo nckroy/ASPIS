@@ -1,0 +1,10 @@
+edition 2026;
+use org.example.base/1.1.{extra};
+use org.example.base/1.0.{point};
+[id(org.example.y), object_id(reserved(0x0301)), version(1.1)]
+interface y {
+    struct s { p: point }
+    [since(1.1)] struct newer { e: extra }
+    @1 f(x: s);
+    [since(1.1)] @2 g(n: newer);
+}

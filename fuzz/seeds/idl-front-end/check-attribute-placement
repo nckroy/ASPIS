@@ -1,0 +1,9 @@
+edition 2026;
+[id(org.example.y), object_id(reserved(0x0301)), version(1.0), oneway]
+interface y {
+    [kernel] struct s { a: u8 }
+    [closed, type(org.example.o)] object o { a: u8 }
+    [closed] const c: u8 = 1;
+    union u { [sensitive] @1 a: u8 }
+    enum e: u8 { [closed] a = 1 }
+}

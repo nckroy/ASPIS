@@ -1,0 +1,16 @@
+edition 2026;
+[id(org.example.y), object_id(reserved(0x0301)), version(1.1)]
+interface y {
+    struct s { a: u8, [deprecated(1.1)] b: u8 }
+    [deprecated(1.1)] error e = 1;
+    error f = 2 { a: u8, [since(1.1)] b: u8? };
+    union u { [deprecated(1.1)] @1 a: u8 }
+    [deprecated(1.1)] union v { @1 a: u8 }
+    enum x: u8 { [deprecated(1.1)] a = 1 }
+    [deprecated(1.1)] enum w: u8 { a = 1 }
+    struct ev { a: u8 }
+    [deprecated(1.1)] @1 s1(after: u64?) -> stream<ev>;
+    @2 r() -> ([since(1.1)] x: u8?);
+    @3 q() -> (result: u64);
+    [retry(never)] error g = 3;
+}

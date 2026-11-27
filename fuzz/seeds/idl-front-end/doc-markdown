@@ -1,0 +1,31 @@
+edition 2026;
+
+/// The interface [org.example.y/1], with a link to
+/// [the site](https://example.org), a broken one, [x](y z, an
+/// autolink, <https://example.org/a>, another, <git+ssh://example.org/r>,
+/// and near misses, <a:> and <a_b:c>.
+///
+/// ```text
+/// code, not a [org.example.y/1.s] reference
+/// ```
+///
+/// 1. first
+/// 2. second,
+///    continued
+///
+/// 1) one
+/// 2) two
+///
+/// - item
+/// - another
+///   ```
+///   a fence in a list
+///   ```
+///
+/// ```
+/// a fence never closed
+[id(org.example.y), object_id(reserved(0x0301)), version(1.0)]
+interface y {
+    /// A struct; see [org.example.y/1].
+    struct s { a: u8 }
+}

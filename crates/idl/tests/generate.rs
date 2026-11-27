@@ -421,3 +421,44 @@ fn a_reused_minor_is_what_generating_it_gives() {
     }
     assert!(!g.budget().is_spent());
 }
+
+/// Closed flags with no bits have one value, the empty set: the wire
+/// grammar takes only zero octets, the text grammar only `[]`, and the
+/// generator makes only 0. So the checker accepts them, where it refuses
+/// a closed enum with no value, whose grammar would have no alternative.
+#[test]
+fn closed_flags_with_no_bits_are_the_empty_set() {
+    let c = interface(
+        "1.0",
+        "[closed] flags f: u16 { reserved 1 }\n@1 m(x: f) -> f;\n",
+    );
+    let g = generate::generate(&c, 0, "v1.idl", &[], &mut shared).unwrap();
+    let (wire, _) = g.wire.as_ref().unwrap();
+    let wire = strict("wire", wire.as_bytes());
+    let text = strict("text", g.text.0.as_bytes());
+    let s = Schema::new(&c, 0);
+    for top in s.tops() {
+        let rule = s.top_rule(top);
+        for data in [&[][..], &[0xFF; 64][..]] {
+            let v = idl::fuzz::generate(&s, top, data).unwrap();
+            let enc = value::encode(&s, top, &v, true);
+            let cx = Context {
+                caps: enc.caps,
+                unwrapped: 0,
+            };
+            let r = wire.rule(&rule).unwrap();
+            assert_eq!(
+                wire.matches_constrained(r, &enc.octets, &cx),
+                Ok(true),
+                "{rule}"
+            );
+        }
+    }
+    let f = text.rule("t-f").unwrap();
+    let cx = Context::default();
+    assert_eq!(text.matches_constrained(f, b"[]", &cx), Ok(true));
+    assert_eq!(text.matches_constrained(f, b"[1]", &cx), Ok(false));
+    let f = wire.rule("t-f").unwrap();
+    assert_eq!(wire.matches_constrained(f, &[0, 0], &cx), Ok(true));
+    assert_eq!(wire.matches_constrained(f, &[0, 1], &cx), Ok(false));
+}

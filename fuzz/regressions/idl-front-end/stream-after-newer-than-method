@@ -1,0 +1,6 @@
+edition 2026;
+[id(org.example.t), object_id(reserved(1)), version(1.1)]
+interface t {
+    struct ev { a: u8 }
+    @1 w([since(1.1)] after: u64?) -> stream<ev>;
+}

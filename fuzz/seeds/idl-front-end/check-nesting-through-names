@@ -1,0 +1,37 @@
+edition 2026;
+[id(org.example.y), object_id(reserved(0x0301)), version(1.0)]
+interface y {
+    struct t0 { a: u8 }
+    struct t1 { a: t0 }
+    struct t2 { a: t1 }
+    struct t3 { a: t2 }
+    struct t4 { a: t3 }
+    struct t5 { a: t4 }
+    struct t6 { a: t5 }
+    struct t7 { a: t6 }
+    struct t8 { a: t7 }
+    struct t9 { a: t8 }
+    struct t10 { a: t9 }
+    struct t11 { a: t10 }
+    struct t12 { a: t11 }
+    struct t13 { a: t12 }
+    struct t14 { a: t13 }
+    struct t15 { a: t14 }
+    struct t16 { a: t15 }
+    struct t17 { a: t16 }
+    struct t18 { a: t17 }
+    struct t19 { a: t18 }
+    struct t20 { a: t19 }
+    struct t21 { a: t20 }
+    struct t22 { a: t21 }
+    struct t23 { a: t22 }
+    struct t24 { a: t23 }
+    struct t25 { a: t24 }
+    struct t26 { a: t25 }
+    struct t27 { a: t26 }
+    struct t28 { a: t27 }
+    struct t29 { a: t28 }
+    struct t30 { a: t29 }
+    struct t31 { a: t30 }
+    struct t32 { a: t31 }
+}

@@ -288,7 +288,29 @@ pub fn idl_front_end() -> Vec<Vec<u8>> {
         "//!",
         "1023",
         "1024",
+        // `retry`'s other argument, and the result field the canonical
+        // form writes as a bare type.
+        "never",
+        "retry(never)",
+        "result",
+        "-> (result: ",
+        // Doc comments' Markdown: a fence, a link, an autolink and
+        // ordered list items.
+        "```",
+        "](",
+        "<https:",
+        "1. ",
+        "2) ",
+        "\n///   ",
     ]));
+    // UTF-8 forms of three and four octets that the lexer checks one by
+    // one: U+D7FF (`ED` with its narrow second octet), U+40000 (`F1`) and
+    // U+10FFFF (`F4`).
+    d.extend([
+        b"\xED\x9F\xBF".to_vec(),
+        b"\xF1\x80\x80\x80".to_vec(),
+        b"\xF4\x8F\xBF\xBF".to_vec(),
+    ]);
     d.extend(
         crate::idl_targets::interface_refs()
             .into_iter()
@@ -306,11 +328,21 @@ pub fn idl_frames() -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// `idl-decode`: the frames, big-endian integers, and every embedded
-/// wire grammar's literals.
+/// `idl-decode`: the frames, big-endian integers, every embedded wire
+/// grammar's literals, and JSON's tokens, for `[format(json)]` strings.
 pub fn idl_decode() -> Vec<Vec<u8>> {
     let mut d = idl_frames();
     d.extend(be_integers());
+    d.extend(words(&[
+        "{\"",
+        "\":",
+        "\",\"",
+        "\\u",
+        "\\ud83d\\ude00",
+        "\\t",
+        "\u{1F600}",
+        "[[[[",
+    ]));
     for i in crate::idl_repo::LOADED.iter() {
         for g in &i.wire {
             d.extend(g.literals().map(<[u8]>::to_vec));

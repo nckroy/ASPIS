@@ -469,6 +469,13 @@ impl<'m> Checker<'m> {
                     }
                     let closed = ast::has_attr(&m.attrs, "closed");
                     self.values(values, *flags, *width, since, closed);
+                    // A closed enum's values are its only values, so it
+                    // needs one, as a closed union needs an arm. Closed
+                    // flags with no bits still have one value: no bits.
+                    if closed && !flags && !values.iter().any(|v| matches!(v, Value::Value { .. }))
+                    {
+                        self.err(name.span, Code::Type, "a closed enum needs a value");
+                    }
                 }
                 MemberKind::Error { name, code, fields } => {
                     self.attrs(&m.attrs, Item::Error);
@@ -1029,14 +1036,21 @@ impl<'m> Checker<'m> {
                 ResultsKind::None => {}
             }
             if let Some(s) = &r.stream {
-                // Rule 9: a resume parameter, `after: u64?`.
-                let after = method.params.iter().any(|p| {
+                // Rule 9: a resume parameter, `after: u64?`, as old as the
+                // method, so every minor that has the method can resume it.
+                let after = method.params.iter().find(|p| {
                     p.name.name == "after"
                         && p.ty.optional
                         && p.ty.base == BaseType::Int(IntType::U64)
                 });
-                if !after {
-                    self.err(s.name.span, Code::Stream, "a stream method needs the parameter 'after: u64?', so the binding can resume it");
+                match after {
+                    None => self.err(s.name.span, Code::Stream, "a stream method needs the parameter 'after: u64?', so the binding can resume it"),
+                    Some(p) if since_of(&p.attrs, since) > since => self.err(
+                        p.span,
+                        Code::Since,
+                        "a stream method's 'after: u64?' is as old as the method: every minor that has the method resumes it",
+                    ),
+                    Some(_) => {}
                 }
                 match self.model.resolve(self.u, s) {
                     Some(id) => {
@@ -1045,6 +1059,21 @@ impl<'m> Checker<'m> {
                                 s.name.span,
                                 Code::Stream,
                                 "a stream's item type is a struct",
+                            );
+                        }
+                        // The item is as old as the method, as any type a
+                        // field names is (rule 5). An imported item is the
+                        // `use` line's minor at every minor of this file.
+                        if id.unit == self.u
+                            && since_of(&self.model.member(id).attrs, self.base) > since
+                        {
+                            self.err(
+                                s.name.span,
+                                Code::Since,
+                                format!(
+                                    "'{}' is newer than what uses it: a stream's item is as old as its method",
+                                    s.name.name
+                                ),
                             );
                         }
                     }

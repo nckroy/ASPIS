@@ -1,0 +1,7 @@
+edition 2026;
+[id(org.example.y), object_id(reserved(0x0301)), version(1.0)]
+interface y {
+    struct o { a: u8 }
+    [closed] struct c { a: o }
+    [closed] union d { @1 a: o }
+}

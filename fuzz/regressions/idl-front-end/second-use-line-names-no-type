@@ -1,0 +1,11 @@
+edition 2026;
+
+use org.example.base/1.0.{point};
+use org.example.base/1.0.{nosuch};
+
+/// Z.
+[id(org.example.z), object_id(reserved(0x0302)), version(1.0)]
+interface z {
+    /// A point.
+    struct s { a: point }
+}

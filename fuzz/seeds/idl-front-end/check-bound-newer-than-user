@@ -1,0 +1,6 @@
+edition 2026;
+[id(org.example.y), object_id(reserved(0x0301)), version(1.1)]
+interface y {
+    [since(1.1)] const n: u32 = 4;
+    struct s { a: string<n> }
+}
