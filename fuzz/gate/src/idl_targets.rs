@@ -299,8 +299,10 @@ fn idl_file(head: &str, attrs: &str, body: &str) -> String {
 /// (every rule's, as C07's replay does), every embedded IDL file, each
 /// file's canonical form at each minor, and the front end's limits, each
 /// at the limit and one over: types nested 32 deep, 16 `use` lines, 64
-/// attributes, 4096 members, a file of `source` octets, and a label of 63
-/// octets; an interface named by a run of 64 KiB name octets, which the
+/// attributes, 4096 members, a file of `source` octets, a label of 63
+/// octets, 4096 names on a `use` line, 4096 errors in a method's list,
+/// 4096 items in a list, and 64 qualifiers in a `cap<...>`;
+/// [`comment_cut_seeds`]; an interface named by a run of 64 KiB name octets, which the
 /// agreement check leaves unjudged (`oracle::names_grammar_accepts`); and
 /// two files of structs of `source` octets: one whose canonical form,
 /// which writes out every tag and space, is about twice as long, which
@@ -360,7 +362,49 @@ pub fn front_end_seeds() -> Vec<(String, Vec<u8>)> {
             format!("limit-label-{what}"),
             idl_file("", "", &format!("    @1 {label}();\n")).into_bytes(),
         ));
+        // Names on one `use` line, as many as an interface's members.
+        let names = vec!["point"; limits.members + n].join(",");
+        out.push((
+            format!("limit-imported-names-{what}"),
+            idl_file(
+                &format!("use org.example.base/1.{{{names}}};\n"),
+                "",
+                "    @1 m();\n",
+            )
+            .into_bytes(),
+        ));
+        // Errors in one method's list, likewise.
+        let errors = vec!["e"; limits.members + n].join(",");
+        out.push((
+            format!("limit-errors-{what}"),
+            idl_file(
+                "",
+                "",
+                &format!("    error e = 1;\n    @1 m() error({errors});\n"),
+            )
+            .into_bytes(),
+        ));
+        // Items in one list: a struct's fields.
+        let fields: String = (0..limits.fields + n)
+            .map(|k| format!("f{k}: u8,"))
+            .collect();
+        out.push((
+            format!("limit-items-{what}"),
+            idl_file("", "", &format!("    struct s {{ {fields} }}\n")).into_bytes(),
+        ));
+        // Qualifiers in one `cap<...>`, as many as an item's attributes.
+        let quals = ", read".repeat(limits.attrs + n);
+        out.push((
+            format!("limit-qualifiers-{what}"),
+            idl_file(
+                "",
+                "",
+                &format!("    @1 m(a: cap<aspis.kernel.memory/1{quals}>);\n"),
+            )
+            .into_bytes(),
+        ));
     }
+    out.extend(comment_cut_seeds());
     out.push((
         "name-run-64k".into(),
         format!(
@@ -441,6 +485,56 @@ pub fn dense_minors_file(n: usize) -> Vec<u8> {
         "edition 2026;\n[id(org.example.y), object_id(reserved(0x0301)), version(1.40)]\ninterface y {{\n{body}}}\n"
     )
     .into_bytes()
+}
+
+/// A small file with most of the grammar's places where trivia may come,
+/// for [`comment_cut_seeds`].
+pub const CUT_SOURCE: &str = "edition 2026;
+use org.example.base/1.0.{point, pair};
+/// Y.
+[id(org.example.y), object_id(reserved(0x0301)), version(1.1), groups(g)]
+interface y {
+    const c: u8 = 1;
+    alias a = seq<u8?, 2>;
+    [closed] flags f: u8 { x = 1, reserved 2 }
+    enum e: u8 { x = 1, reserved 2 }
+    struct s { p: org.example.base/1.point?, [since(1.1)] a: u8? }
+    union u { @1 a: u8, reserved @2 }
+    [type(org.example.o)] object o { n: u64 }
+    error r = 1 { a: u8, t: string<8>, b: bytes<4> };
+    struct i { a: u8 }
+    [group(g)] @1 m(a: cap<aspis.kernel.memory/1, read>, after: u64?) -> (b: u8) stream<i> error(r);
+    @2 n() -> array<u8, 2>;
+    reserved @3;
+}
+";
+
+/// `idl-front-end`'s comment seeds: [`CUT_SOURCE`] cut after each token,
+/// with `//` and no line feed after the cut, named `comment-cut-<offset>`.
+/// A comment that ends the input without a line feed is an error, so
+/// each seed reaches the parser's error return after the trivia at that
+/// place in the grammar, which a campaign rarely builds.
+pub fn comment_cut_seeds() -> Vec<(String, Vec<u8>)> {
+    let b = CUT_SOURCE.as_bytes();
+    let word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    (1..b.len())
+        .filter(|&i| {
+            // Not inside a reference, a number, `->` or `seq<`, where no
+            // trivia may come.
+            let (p, c) = (b[i - 1], b[i]);
+            let joined = |x: u8| matches!(x, b'.' | b'/' | b'@' | b'-');
+            !p.is_ascii_whitespace()
+                && !joined(p)
+                && !joined(c)
+                && c != b'<'
+                && (!word(p) || !word(c))
+        })
+        .map(|i| {
+            let mut s = b[..i].to_vec();
+            s.extend_from_slice(b"//");
+            (format!("comment-cut-{i}"), s)
+        })
+        .collect()
 }
 
 // ---- idl-decode and idl-generated: frames ------------------------------
@@ -958,6 +1052,144 @@ pub fn bound_seeds() -> Vec<(String, Vec<u8>)> {
     out
 }
 
+/// The JSON texts of [`kinds_seeds`]' `note` seeds, each named: every
+/// form `idl_rt::json`'s embedded validator tells apart that the
+/// generated vectors never hold, valid and not. The texts fit the field's
+/// `string<128>`.
+pub const NOTE_JSON: &[(&str, &str)] = &[
+    ("object", r#"{"a":1}"#),
+    ("object-key-not-string", "{1:2}"),
+    ("object-two-keys", r#"{"a":1,"b":2}"#),
+    ("object-key-twice", r#"{"a":1,"a":2}"#),
+    ("object-key-twice-escaped", r#"{"a":1,"\u0061":2}"#),
+    ("escape-tab", r#""a\tb""#),
+    ("escape-bmp", r#""\u00e9""#),
+    ("escape-pair", r#""\ud83d\ude00""#),
+    ("escape-low-alone", r#""\ude00""#),
+    ("escape-high-alone", r#""\ud83d""#),
+    ("escape-high-then-text", r#""\ud83dx""#),
+    ("escape-bad-low", r#""\ud83d\u0041""#),
+    ("escape-bad-hex", r#""\u00zz""#),
+    ("escape-noncharacter", r#""\ufdd0""#),
+    ("escape-noncharacter-fffe", r#""\ufffe""#),
+    ("escape-noncharacter-pair", r#""\ud83f\udffe""#),
+    ("three-octets", "\"\u{20ac}\""),
+];
+
+/// `org.example.kinds`' `thing` with its `n` fields known at a minor:
+/// the required three set, the optional ones absent.
+fn kinds_thing(n: usize) -> Value {
+    let mut known = vec![
+        Some(Value::Int(1)),
+        Some(Value::Int(2)),
+        Some(Value::List(Vec::new())),
+    ];
+    known.resize(n, None);
+    Value::Struct(value::Fields {
+        known,
+        unknown: Vec::new(),
+    })
+}
+
+/// `org.example.kinds`' `put` request at `minor`, its `item` at the
+/// minor's fields: `shape` and `ev` as given.
+fn kinds_put(minor: u16, shape: Value, ev: Value) -> Option<Vec<u8>> {
+    let i = idl_repo::interface("org.example.kinds", 1)?;
+    let s = Schema::new(&i.checked, minor);
+    let top = top_of(&s, "m-put--req")?;
+    let fields = if minor == 0 { 7 } else { 8 };
+    let v = Value::Struct(value::Fields {
+        known: vec![Some(kinds_thing(fields)), Some(shape), Some(ev)],
+        unknown: Vec::new(),
+    });
+    let enc = value::encode(&s, top, &v, true);
+    assert!(!enc.refused, "kinds put at {minor}: refused");
+    Some(enc.octets)
+}
+
+/// `idl-decode`'s hand-made seeds on `org.example.kinds`' newest module,
+/// for what the generated ones never hold (the coverage review of the
+/// C07 targets):
+///
+/// - `kinds-get-too-new-8` and `-9`: a `get` request, read strictly at
+///   minor 2, whose tail holds 8 and 9 fields with tags past its own,
+///   each empty: both are `field-too-new`, and the 9th tag is past the 8
+///   that `aspis.rpc`'s `field_too_new` lists;
+/// - `kinds-put-two-too-new`: a `put` request written at minor 1 and read
+///   at minor 0, holding two values new in 1.1 (a `cell`'s `level::top`
+///   and the `moved` arm), so the reader keeps the newest of two;
+/// - `kinds-put-note-<form>`: a `put` request whose `event` is the
+///   `[format(json)]` `note` arm, holding each text of [`NOTE_JSON`]. The
+///   field is length-prefixed, so mutation rarely keeps such a text whole.
+pub fn kinds_seeds() -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    let Some(m) = idl_repo::newest("org.example.kinds", 1) else {
+        return out;
+    };
+    for n in [8u16, 9] {
+        // `key`, then the tail: its count, and each field's tag and an
+        // empty length. `get` knows tags 1 and 2.
+        let mut msg = vec![0u8; 8];
+        msg.extend_from_slice(&u32::from(n).to_be_bytes());
+        for tag in 3..3 + n {
+            msg.extend_from_slice(&tag.to_be_bytes());
+            msg.extend_from_slice(&0u32.to_be_bytes());
+        }
+        if let Some(d) = decode_input(m, "m-get--req", 2, 0, &msg) {
+            out.push((format!("kinds-get-too-new-{n}"), d));
+        }
+    }
+    let cell = Value::Struct(value::Fields {
+        known: vec![
+            Some(Value::Int(-1)),
+            Some(Value::Int(-2)),
+            Some(Value::Int(-3)),
+            Some(Value::Int(-4)),
+            Some(Value::F32(0)),
+            Some(Value::F64(0)),
+            Some(Value::Bool(true)),
+            Some(Value::Uuid([0; 16])),
+            Some(Value::Id([0; 32])),
+            Some(Value::Flags(1)),
+            // `level::top`, new in 1.1.
+            Some(Value::Enum(4)),
+        ],
+        unknown: Vec::new(),
+    });
+    let pair = Value::Struct(value::Fields {
+        known: vec![Some(Value::Int(1)), Some(Value::Int(2))],
+        unknown: Vec::new(),
+    });
+    if let Some(msg) = kinds_put(
+        1,
+        Value::Arm(2, Box::new(cell)),
+        Value::Arm(5, Box::new(pair)),
+    ) && let Some(d) = decode_input(m, "m-put--req", 0, 0, &msg)
+    {
+        out.push(("kinds-put-two-too-new".into(), d));
+    }
+    let depth = idl_rt::json::EMBED_DEPTH;
+    let nested = |n: usize| "[".repeat(n) + &"]".repeat(n);
+    let texts = NOTE_JSON
+        .iter()
+        .map(|(n, t)| (n.to_string(), t.to_string()))
+        .chain([
+            (format!("nested-{depth}"), nested(depth)),
+            (format!("nested-{}", depth + 1), nested(depth + 1)),
+        ]);
+    for (name, text) in texts {
+        if let Some(msg) = kinds_put(
+            0,
+            Value::Arm(1, Box::new(Value::Int(7))),
+            Value::Arm(4, Box::new(Value::Text(text))),
+        ) && let Some(d) = decode_input(m, "m-put--req", 0, 0, &msg)
+        {
+            out.push((format!("kinds-put-note-{name}"), d));
+        }
+    }
+    out
+}
+
 /// `idl-decode`'s generated seeds:
 ///
 /// - every line of every embedded wire vector file of minor `m`, framed
@@ -971,6 +1203,7 @@ pub fn bound_seeds() -> Vec<(String, Vec<u8>)> {
 /// - for a `[kernel]` interface, which has no wire vectors, the dynamic
 ///   codec's encodings of the vector generator's samples at each minor;
 /// - [`bound_seeds`];
+/// - [`kinds_seeds`];
 /// - a frame with two octets after it (`short`), and a frame naming no
 ///   module.
 ///
@@ -1026,6 +1259,7 @@ pub fn decode_seeds() -> Vec<(String, Vec<u8>)> {
         }
     }
     out.extend(bound_seeds());
+    out.extend(kinds_seeds());
     let mut short = b"aspis.rpc/1.0\n".to_vec();
     short.extend_from_slice(&[0, 0]);
     out.push(("short".into(), short));

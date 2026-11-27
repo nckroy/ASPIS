@@ -1,0 +1,6 @@
+edition 2026;
+[id(org.example.y), object_id(reserved(0x0301)), version(1.0)]
+interface y {
+    struct i { c: cap<org.example.base/1> }
+    @1 m(after: u64?) -> stream<i>;
+}

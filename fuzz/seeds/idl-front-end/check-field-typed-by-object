@@ -1,0 +1,6 @@
+edition 2026;
+[id(org.example.y), object_id(reserved(0x0301)), version(1.0)]
+interface y {
+    [type(org.example.o)] object o { a: u8 }
+    struct s { a: o }
+}

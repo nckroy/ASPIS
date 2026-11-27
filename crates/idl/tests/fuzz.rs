@@ -236,3 +236,80 @@ fn a_canonical_form_over_the_source_limit_is_refused() {
     assert!(d[0].message.contains("canonical form"), "{}", d[0]);
     fuzz::front_end(src.as_bytes());
 }
+
+/// The inputs of C71's coverage review of `idl-front-end`: a stream
+/// method whose `after` or item is newer than it, a second `use` line
+/// that names a type its interface lacks, and a closed enum with no
+/// value. The checker refuses each; the front end never panics on them,
+/// and keeps its properties on the files next to them that it accepts.
+#[test]
+fn the_coverage_reviews_inputs() {
+    let file = |head: &str, version: &str, body: &str| {
+        format!(
+            "edition 2026;\n{head}[id(org.example.t), object_id(reserved(1)), version({version})]\ninterface t {{\n{body}\n}}\n"
+        )
+    };
+    let cases = [
+        (
+            file(
+                "",
+                "1.1",
+                "struct ev { a: u8 }\n@1 w([since(1.1)] after: u64?) -> stream<ev>;",
+            ),
+            false,
+        ),
+        (
+            file(
+                "",
+                "1.1",
+                "[since(1.1)] struct ev { a: u8 }\n@1 w(after: u64?) -> stream<ev>;",
+            ),
+            false,
+        ),
+        (
+            file(
+                "",
+                "1.2",
+                "[since(1.1)] struct ev { a: u8, [since(1.2)] b: u8? }\n[since(1.1)] @1 w([since(1.1)] after: u64?) -> stream<ev>;",
+            ),
+            true,
+        ),
+        (
+            file(
+                "use org.example.base/1.0.{point};\nuse org.example.base/1.0.{nosuch};\n",
+                "1.0",
+                "struct s { a: point }",
+            ),
+            false,
+        ),
+        (
+            file(
+                "use org.example.base/1.0.{point};\nuse org.example.base/1.{pair};\n",
+                "1.1",
+                "struct s { a: point, [since(1.1)] b: pair? }",
+            ),
+            true,
+        ),
+        (
+            file(
+                "",
+                "1.0",
+                "[closed] enum e: u8 { reserved 1 }\n@1 m(x: e) -> u8;",
+            ),
+            false,
+        ),
+        (
+            file(
+                "",
+                "1.0",
+                "[closed] flags f: u8 { reserved 1 }\n@1 m(x: f) -> f;",
+            ),
+            true,
+        ),
+    ];
+    for (src, ok) in &cases {
+        fuzz::front_end_with(src.as_bytes(), &mut common::resolver());
+        let checked = common::check(src.as_bytes()).map(|_| ());
+        assert_eq!(checked.is_ok(), *ok, "{src}\n{checked:?}");
+    }
+}

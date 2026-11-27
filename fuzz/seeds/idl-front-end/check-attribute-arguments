@@ -1,0 +1,7 @@
+edition 2026;
+[id(org.example.y), object_id(reserved(0x0301)), version(1.0)]
+interface y {
+    [parents(1), type(org.example.o)] object o { a: u8 }
+    struct s { [format(xml)] a: string<8> }
+    [closed(1)] struct c {}
+}

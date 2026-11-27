@@ -331,8 +331,30 @@ impl Loader<'_, '_> {
         }
     }
 
-    /// Loads the interface a `use` line names, at its minor.
+    /// Loads the interface a `use` line names, at its minor, and checks
+    /// that it declares every name the line imports. Each line's names are
+    /// checked, also when an earlier line loaded the same interface, major
+    /// and minor.
     fn import(&mut self, u: &Use, depth: usize) -> Result<usize, String> {
+        let i = self.load(u, depth)?;
+        let unit = &self.model.units[i];
+        for n in &u.names {
+            if !unit.types.contains_key(&n.name) {
+                return Err(format!(
+                    "{}/{}.{} declares no type '{}'",
+                    u.iface.name,
+                    u.iface.major,
+                    u.iface.minor_or_zero(),
+                    n.name
+                ));
+            }
+        }
+        Ok(i)
+    }
+
+    /// The unit of the interface a `use` line names, at its minor: loaded
+    /// once for each interface, major and minor.
+    fn load(&mut self, u: &Use, depth: usize) -> Result<usize, String> {
         let name = u.iface.name.clone();
         let major = u.iface.major;
         let minor = u.iface.minor_or_zero();
@@ -408,16 +430,7 @@ impl Loader<'_, '_> {
         for pu in &projected.uses {
             uses.push(self.import(pu, depth + 1)?);
         }
-        let unit = Unit::new(projected, uses);
-        for n in &u.names {
-            if !unit.types.contains_key(&n.name) {
-                return Err(format!(
-                    "{name}/{major}.{minor} declares no type '{}'",
-                    n.name
-                ));
-            }
-        }
-        self.model.units.push(unit);
+        self.model.units.push(Unit::new(projected, uses));
         let i = self.model.units.len() - 1;
         self.by_minor.insert((name, major, minor), i);
         Ok(i)

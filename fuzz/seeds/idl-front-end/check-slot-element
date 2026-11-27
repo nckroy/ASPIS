@@ -1,0 +1,5 @@
+edition 2026;
+[id(aspis.kernel.t), object_id(reserved(0x0301)), version(1.0), kernel]
+interface t {
+    @1 m(a: seq<slot<aspis.kernel.memory/1>, 2>);
+}

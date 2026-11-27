@@ -330,6 +330,17 @@ fn types() {
     refused(&iface("alias a = u8?;"), Code::Type);
     refused(&iface("enum e: u64 { a = 1 }"), Code::Type);
     refused(&iface("[closed] union u {}"), Code::Type);
+    // A closed enum needs a value, as a closed union needs an arm: a
+    // reserved value is none. An open one may have none yet, and closed
+    // flags with no bits have one value, the empty set.
+    refused(&iface("[closed] enum e: u8 {}"), Code::Type);
+    refused(&iface("[closed] enum e: u8 { reserved 1 }"), Code::Type);
+    accepted(&iface("[closed] enum e: u8 { reserved 1, a = 2 }"));
+    accepted(&iface("enum e: u8 { reserved 1 }\n@1 m(x: e) -> e;"));
+    accepted(&iface(
+        "[closed] flags f: u8 { reserved 1 }\n@1 m(x: f) -> f;",
+    ));
+    accepted(&iface("[closed] flags f: u16 {}"));
     refused(
         &iface("[type(org.example.w)] object w { a: f64 }"),
         Code::Type,
@@ -507,6 +518,42 @@ fn streams() {
     );
 }
 
+/// A stream method's `after: u64?` and its item type are as old as the
+/// method, so every minor that has the method can resume it and name its
+/// item. Found by C71's `idl-front-end` coverage review: such a file
+/// checked, and its projection to 1.0 didn't.
+#[test]
+fn a_stream_resumes_and_names_its_item_at_every_minor() {
+    refused(
+        &iface("struct i { a: u8 }\n@1 m([since(1.1)] after: u64?) -> stream<i>;"),
+        Code::Since,
+    );
+    refused(
+        &iface("[since(1.1)] struct i { a: u8 }\n@1 m(after: u64?) -> stream<i>;"),
+        Code::Since,
+    );
+    refused(
+        &iface("[since(1.1)] struct i { a: u8 }\n@1 m([since(1.1)] after: u64?) -> stream<i>;"),
+        Code::Since,
+    );
+    // A stream method added in 1.1 may take both from 1.1.
+    accepted(&iface(
+        "[since(1.1)] struct i { a: u8 }\n[since(1.1)] @1 m([since(1.1)] after: u64?) -> stream<i>;",
+    ));
+    accepted(&iface(
+        "[since(1.1)] struct i { a: u8 }\n[since(1.1)] @1 m(after: u64?) -> stream<i>;",
+    ));
+    // The item's fields may still grow, and other parameters may be newer.
+    accepted(&iface(
+        "struct i { a: u8, [since(1.1)] b: u8? }\n@1 m(after: u64?, [since(1.1)] k: u8?) -> stream<i>;",
+    ));
+    // An imported item is the `use` line's minor at every minor of the
+    // importer, even one its own interface added later.
+    accepted(
+        "edition 2026;\nuse org.example.base/1.1.{extra};\n[id(org.example.t), object_id(reserved(1)), version(1.1)]\ninterface t {\n@1 m(after: u64?) -> stream<extra>;\n}\n",
+    );
+}
+
 #[test]
 fn groups_and_error_lists() {
     let h = "id(org.example.t), object_id(reserved(1)), version(1.0), groups(read)";
@@ -539,6 +586,56 @@ fn imports() {
     // The same import at 1.0 doesn't have z.
     let c = accepted(&with_use("org.example.base/1.{point}", "@1 m(p: point);"));
     assert_eq!(c.layout.methods[0].request.max, 4 + 12);
+}
+
+/// Every `use` line's names are checked, also a second line for an
+/// interface, major and minor that an earlier line loaded. Found by C71's
+/// `idl-front-end` coverage review: the second line's names went
+/// unchecked.
+#[test]
+fn every_use_line_names_types_its_interface_declares() {
+    let with_uses = |uses: &[&str], body: &str| {
+        let lines: String = uses.iter().map(|u| format!("use {u};\n")).collect();
+        format!(
+            "edition 2026;\n{lines}[id(org.example.t), object_id(reserved(1)), version(1.0)]\ninterface t {{\n{body}\n}}\n"
+        )
+    };
+    let message = |src: &str| match common::check(src.as_bytes()) {
+        Ok(_) => panic!("accepted:\n{src}"),
+        Err(d) => {
+            assert_eq!(d.len(), 1, "{d:?}");
+            assert_eq!(d[0].code, Code::Import, "{d:?}");
+            d[0].message.clone()
+        }
+    };
+    let alone = message(&with_uses(&["org.example.base/1.0.{nosuch}"], ""));
+    for minor in ["1.0", "1"] {
+        let second = message(&with_uses(
+            &[
+                "org.example.base/1.0.{point}",
+                &format!("org.example.base/{minor}.{{nosuch}}"),
+            ],
+            "struct s { a: point }",
+        ));
+        assert_eq!(second, alone);
+    }
+    // A third line, after a good second one.
+    refused(
+        &with_uses(
+            &[
+                "org.example.base/1.{point}",
+                "org.example.base/1.{pair}",
+                "org.example.base/1.{extra}",
+            ],
+            "",
+        ),
+        Code::Import,
+    );
+    // Two lines that name different types of one minor are fine.
+    accepted(&with_uses(
+        &["org.example.base/1.0.{point}", "org.example.base/1.{pair}"],
+        "struct s { a: point, b: pair }",
+    ));
 }
 
 #[test]

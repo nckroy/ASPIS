@@ -9,7 +9,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use common::{root, tracked};
+use common::{committed, root, tracked};
 use fuzz_gate::{
     PROBES, TARGETS, harness,
     idl_repo::{self, INTERFACES},
@@ -479,5 +479,115 @@ fn seed_names_are_valid_and_unique() {
             assert!(harness::valid_name(&name), "{}: {name}", t.name);
             assert!(names.insert(name.clone()), "{}: {name} twice", t.name);
         }
+    }
+}
+
+/// `idl-decode`'s hand-made seeds on `org.example.kinds` reach what they
+/// were made for: the strict reader's too-new tags past 8, two values
+/// too new in one message, and each `note` text embedded or written as a
+/// string, which the wire takes either way.
+#[test]
+fn kinds_seeds_reach_their_verdicts() {
+    let seeds = idl_targets::kinds_seeds();
+    assert_eq!(
+        seeds.len(),
+        3 + idl_targets::NOTE_JSON.len() + 2,
+        "{:?}",
+        seeds.iter().map(|(n, _)| n).collect::<Vec<_>>()
+    );
+    for (name, d) in &seeds {
+        let want = if name.contains("-too-new-") {
+            "field-too-new"
+        } else if name.ends_with("two-too-new") {
+            "value-too-new"
+        } else {
+            "ok"
+        };
+        assert_eq!(idl_targets::decode_kinds(d), [want], "{name}");
+        assert_ne!(
+            idl_targets::decode_judged(d),
+            Some(idl::conformance::Judged::Unjudged),
+            "{name}"
+        );
+    }
+}
+
+/// The limit seeds added for the parser's per-list limits: the one at
+/// each limit gets past the parser, and the one over is refused with
+/// `Code::Limit` alone.
+#[test]
+fn list_limit_seeds_reach_both_sides() {
+    let seeds = idl_targets::front_end_seeds();
+    for what in ["imported-names", "errors", "items", "qualifiers"] {
+        let seed = |side: &str| {
+            let name = format!("limit-{what}-{side}");
+            seeds
+                .iter()
+                .find(|(n, _)| *n == name)
+                .unwrap_or_else(|| panic!("no seed {name}"))
+                .1
+                .clone()
+        };
+        let at = idl_targets::front_end_kinds(&seed("at"));
+        assert!(
+            !at.contains(&"limit") && !at.contains(&"syntax"),
+            "{what}: {at:?}"
+        );
+        assert_eq!(
+            idl_targets::front_end_kinds(&seed("over")),
+            ["limit"],
+            "{what}"
+        );
+    }
+}
+
+/// Every comment seed is refused at its trailing comment, so each reaches
+/// the parser's error return after trivia at its place; the source they
+/// are cut from checks.
+#[test]
+fn comment_cut_seeds_end_in_a_bad_comment() {
+    let seeds = idl_targets::comment_cut_seeds();
+    assert!(seeds.len() > 100, "{}", seeds.len());
+    let limits = idl::Limits::default();
+    for (name, d) in &seeds {
+        let msg = match idl::parse::parse_rule(idl::parse::Rule::IdlFile, d, &limits) {
+            Err(e) => e.message,
+            Ok(_) => panic!("{name}: parses"),
+        };
+        assert!(msg.contains("comment"), "{name}: {msg}");
+    }
+    assert_eq!(
+        idl_targets::front_end_kinds(idl_targets::CUT_SOURCE.as_bytes()),
+        ["ok"]
+    );
+}
+
+/// The checker's refusals that the coverage review of the `idl-` targets'
+/// campaign found missing. Replay guards only the two stream files, which
+/// panic in the oracle without their rule; the other two are files the
+/// checker accepted, so their verdicts are pinned here. Every file under
+/// `fuzz/regressions/idl-front-end/` is listed, so a new one needs a row.
+#[test]
+fn front_end_regressions_keep_their_verdicts() {
+    let want = [
+        ("closed-enum-with-no-value", ["type"]),
+        ("second-use-line-names-no-type", ["import"]),
+        ("stream-after-newer-than-method", ["since"]),
+        ("stream-item-newer-than-method", ["since"]),
+    ];
+    let files = committed("regressions", "idl-front-end");
+    assert_eq!(
+        files.len(),
+        want.len(),
+        "{:?}",
+        files.iter().map(|(p, _)| p).collect::<Vec<_>>()
+    );
+    for (path, data) in &files {
+        let name = path.rsplit('/').next().unwrap();
+        let (_, kinds) = want
+            .iter()
+            .find(|(n, _)| *n == name)
+            .unwrap_or_else(|| panic!("{path}: no verdict listed"));
+        assert_eq!(idl_targets::front_end_kinds(data), kinds, "{path}");
     }
 }

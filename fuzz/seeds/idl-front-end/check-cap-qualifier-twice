@@ -1,0 +1,5 @@
+edition 2026;
+[id(org.example.y), object_id(reserved(0x0301)), version(1.0)]
+interface y {
+    @1 m(a: cap<aspis.kernel.memory/1, read, read>);
+}
