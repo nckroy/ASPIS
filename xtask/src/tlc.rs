@@ -6,8 +6,8 @@
 //!
 //! - **The tools.** TLC v1.7.4's `tla2tools.jar`, fetched into `build/tla/`
 //!   if missing and checked against its pinned SHA-256 before every run. A
-//!   JRE, 11 or later, from `JAVA_HOME` or the path; CI uses the runner
-//!   image's Temurin 21.
+//!   JRE, 11 or later, from `JAVA_HOME` or the path; CI uses the runner's
+//!   Java 21.
 //!   The JRE is a CI-only tool, outside ADR 0008, rule 4 (call-language
 //!   specification, "Engine and tools").
 //! - **Where it runs.** The specs are copied into `build/tla/run/` and

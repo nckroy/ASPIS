@@ -14,7 +14,7 @@ Each spec comes with the chunk whose protocol it models. C12's is scheduling-con
 - xtask fetches `tla2tools.jar` into `build/tla/` and checks its pinned SHA-256 first.
 - It copies the specs into `build/tla/run/` and runs TLC there, so TLC's state files never land in `specs/`.
 - TLC gets at most min(4, cores / 2) workers, at low priority (`nice -n 10`).
-- It needs a JRE, 11 or later. CI uses the Temurin 21 that GitHub's runner image preinstalls.
+- It needs a JRE, 11 or later. CI uses the runner's Java 21, with no setup action: the Temurin 21 the image preinstalls, else Ubuntu's `openjdk-21-jre-headless`.
 
 CI's `tlc` job runs it when a change touches `specs/`, `crates/ksched/`, `xtask/`, `.github/workflows/`, `.github/actions/`, `rust-toolchain.toml`, `Cargo.toml` or `Cargo.lock`: the specs, the code whose traces it validates, or what defines the job.
 

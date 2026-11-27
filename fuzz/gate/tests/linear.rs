@@ -30,6 +30,17 @@ use fuzz_gate::{
 #[global_allocator]
 static ALLOC: fuzz_alloc::Bounded = fuzz_alloc::Bounded::unlimited();
 
+/// The allocator's peak is process-wide, and the timings feel other load,
+/// so this file's tests take turns: another test's allocations would
+/// otherwise count against the oracle test's peak.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// A step budget linear in the input: 10,000 steps, and 200 an octet.
 fn linear_limits() -> Limits {
     Limits {
@@ -55,6 +66,7 @@ fn load_with(name: &str, limits: Limits) -> Grammar {
 
 #[test]
 fn repository_grammars_match_within_a_linear_budget() {
+    let _turn = serial();
     common::on_big_stack(|| {
         let max = 64 << 10;
         let mut words = b"not word".to_vec();
@@ -102,6 +114,7 @@ fn repository_grammars_match_within_a_linear_budget() {
 /// the fuzzer, since one takes longer than the target's timeout.
 #[test]
 fn the_oracles_judge_their_targets_longest_inputs() {
+    let _turn = serial();
     common::on_big_stack(|| {
         let words = |n: usize, tail: &[u8]| {
             let mut w = b"not word".to_vec();
@@ -192,6 +205,7 @@ fn the_oracles_judge_their_targets_longest_inputs() {
 
 #[test]
 fn every_repository_vector_is_judged_within_the_fuzz_limits() {
+    let _turn = serial();
     common::on_big_stack(|| {
         for g in GRAMMARS {
             let f = vectors::parse(g.vectors).unwrap();
@@ -280,6 +294,7 @@ fn load(text: &[u8]) {
 
 #[test]
 fn parsers_scale_linearly() {
+    let _turn = serial();
     common::on_big_stack(|| {
         let line = |n| seeds::kargs_line(n);
         scales_linearly("kargs::parse", &line(256), &line(4096), |l| {
@@ -337,6 +352,7 @@ fn parsers_scale_linearly() {
 /// pass every accepting case above.
 #[test]
 fn rejecting_and_escaping_scale_linearly() {
+    let _turn = serial();
     common::on_big_stack(|| {
         // Quoted values made of `\\` and `\"` escapes.
         let escapes = |n: usize| {
@@ -455,6 +471,7 @@ fn rejecting_and_escaping_scale_linearly() {
 
 #[test]
 fn depth_is_limited() {
+    let _turn = serial();
     common::on_big_stack(|| {
         let opts = LoadOptions {
             limits: FUZZ_LIMITS,

@@ -192,6 +192,12 @@ fn rustflags(flavor: Flavor, pie: bool) -> String {
         format!("--remap-path-prefix={}=/aspis", root().display()),
         format!("--remap-path-prefix={}=/cargo", home.display()),
     ];
+    // With the rust-src component installed, rustc writes the standard
+    // library's paths as the local sysroot's, not as `/rustc/<commit>`.
+    // Map them back, so an image is the same with or without rust-src.
+    if let Some(m) = sysroot_src_remap() {
+        f.push(m);
+    }
     if pie {
         f.push("-Crelocation-model=pie".into());
     }
@@ -199,6 +205,31 @@ fn rustflags(flavor: Flavor, pie: bool) -> String {
         f.push("--cfg=aspis_test_build".into());
     }
     f.join(" ")
+}
+
+/// `--remap-path-prefix=<sysroot>/lib/rustlib/src/rust=/rustc/<commit>`,
+/// for the pinned toolchain, or `None` if rustc can't say.
+fn sysroot_src_remap() -> Option<String> {
+    let rustc = || {
+        let mut c = Command::new(env::var("RUSTC").unwrap_or_else(|_| "rustc".into()));
+        c.current_dir(root());
+        c
+    };
+    let out = |c: &mut Command| {
+        c.output()
+            .ok()
+            .filter(|o| o.status.success())
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+    };
+    let sysroot = out(rustc().args(["--print", "sysroot"]))?;
+    let commit = out(rustc().arg("-vV"))?
+        .lines()
+        .find_map(|l| l.strip_prefix("commit-hash: ").map(str::to_string))?;
+    Some(format!(
+        "--remap-path-prefix={}/lib/rustlib/src/rust=/rustc/{}",
+        sysroot.trim(),
+        commit.trim()
+    ))
 }
 
 fn cargo(flavor: Flavor) -> Command {
