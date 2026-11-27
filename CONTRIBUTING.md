@@ -28,6 +28,7 @@ Everyone who takes part follows the [code of conduct](CODE_OF_CONDUCT.md). Repor
   - On Linux, build it from the signature-checked release tarball, as CI does. First install the build packages; on Debian or Ubuntu: `sudo apt install build-essential ninja-build pkg-config python3-venv libglib2.0-dev libpixman-1-dev libslirp-dev libpng-dev libfdt-dev flex bison bzip2`. Add `libgtk-3-dev` if you want `cargo xtask run --window`, which uses GTK on Linux. Then run `sh tools/ci/build-qemu.sh <prefix>` and put `<prefix>/bin` on your `PATH`.
 - **mtools**, to build the EFI system partition image: `brew install mtools`, or `sudo apt install mtools`.
 - **Docker**, to build GRUB 2.14 arm64-efi once, from its checked source: `cargo xtask grub`.
+- **Optional, for model checking:** a Java runtime, 11 or later, for `cargo xtask tlc`, which fetches TLC itself and checks its hash. CI runs it only when a change touches `specs/`, `crates/ksched/`, `xtask/`, `.github/workflows/`, `.github/actions/`, `rust-toolchain.toml`, `Cargo.toml` or `Cargo.lock`.
 - **Optional, for the checks CI runs on licenses and documents:** [pipx](https://pipx.pypa.io) for REUSE, Python 3 for the grammars, and Node.js with Google Chrome for the diagrams. The next section has the commands.
 
 ### Commands
@@ -41,6 +42,7 @@ Everyone who takes part follows the [code of conduct](CODE_OF_CONDUCT.md). Repor
 | `cargo xtask matrix` | The nightly matrix: four CPU and GIC configurations, 1, 4 and 8 cores, 1 and 3 GiB, and a boot with the firmware at EL2 |
 | `cargo xtask check-production` | Fails if a production image holds test-only code |
 | `cargo xtask fuzz <command>` | The fuzz targets: `install`, `build`, `replay`, `run`, `coverage` and more ([fuzz/README.md](fuzz/README.md)). Building them needs a C++ compiler, for libFuzzer |
+| `cargo xtask tlc` | Model-checks the TLA+ specs in `specs/` with TLC, and validates the Rust's traces against them, within 10 minutes |
 
 Useful `run` options:
 
@@ -52,13 +54,14 @@ Useful `run` options:
 
 ### The checks CI runs
 
-CI runs five jobs on every pull request. `cargo xtask lint`, `cargo xtask test` and `cargo xtask fuzz` cover three of them, the Rust lints, the tests and the fuzz targets. When a pull request changes only Markdown files and `docs/`, CI skips the lints, the tests, the fuzz targets and the reproducibility check, and runs only the document checks. A change to documents or file headers needs the others too. From the repository root:
+CI runs six jobs on every pull request. `cargo xtask lint`, `cargo xtask test`, `cargo xtask fuzz` and `cargo xtask tlc` cover four of them, the Rust lints, the tests, the fuzz targets and model checking. Model checking runs only when a change touches `specs/`, `crates/ksched/`, `xtask/`, `.github/workflows/`, `.github/actions/`, `rust-toolchain.toml`, `Cargo.toml` or `Cargo.lock`, and is skipped otherwise. When a pull request changes only Markdown files and `docs/`, CI skips the lints, the tests, the fuzz targets and the reproducibility check, and runs only the document checks. A change to documents or file headers needs the others too. From the repository root:
 
 | CI job | Run it yourself |
 |---|---|
 | rustfmt and clippy | `cargo xtask lint` |
 | Host and QEMU tests | `cargo xtask test` |
 | Fuzz targets | `cargo xtask fuzz install && cargo xtask fuzz build && cargo xtask fuzz replay`, then `cargo xtask fuzz smoke --base main` and, with a Python that has `abnf==2.9.1` in `ASPIS_PYTHON`, `cargo xtask fuzz differential --self-test` and `cargo xtask fuzz differential --seed 0 --cases 300` |
+| Model checking | `cargo xtask tlc`, with Java 11 or later |
 | Licenses (REUSE) | `pipx run --spec 'reuse[charset-normalizer]==6.3.0' reuse lint` |
 | Sign-offs | `sh tools/ci/check-dco.sh main HEAD` |
 | Grammars and their vectors | `python3 -m venv ~/.venvs/abnf && ~/.venvs/abnf/bin/pip install abnf==2.9.1`, then `~/.venvs/abnf/bin/python -I tools/ci/check-grammars.py grammars` |
@@ -106,11 +109,12 @@ A contribution is licensed under the license of the files it changes or adds: MP
 
 1. **Branch from `main`.**
 2. **Sign off every commit** with `git commit -s`. The sign-off certifies the Developer Certificate of Origin, below. The name in it identifies you; anonymous contributions aren't accepted.
-3. **Push your branch and open a pull request.** CI runs five jobs, and all must pass on a branch that's up to date with `main`:
+3. **Push your branch and open a pull request.** CI runs six jobs, and all must pass on a branch that's up to date with `main`:
    - licenses (REUSE), sign-offs, grammars and their vectors, and diagrams;
    - `rustfmt` and `clippy`;
    - host tests and QEMU tests;
    - the fuzz targets: every target built, its seeds, regressions and cached corpus replayed, the targets the change touches fuzzed, and the ABNF differential ([0068](docs/decisions/0068-the-fuzzing-and-differential-testing-gate.md));
+   - model checking, when the change touches the specs or the code their traces come from ([0068](docs/decisions/0068-the-fuzzing-and-differential-testing-gate.md), rule 10);
    - reproducible images: two builds, in different directories and as different users, must give the same `aspis.efi` and `initfs.img` ([0038](docs/decisions/0038-reproducible-builds-and-provenance.md)).
 4. **The project owner merges by rebase**, so history stays linear.
 

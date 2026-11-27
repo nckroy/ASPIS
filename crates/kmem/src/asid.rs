@@ -30,7 +30,9 @@
 //!
 //! All of this runs under the kernel lock (C12).
 
-/// The most cores the allocator tracks. C12 sizes this from the device tree.
+/// The most cores the allocator tracks: the kernel's core bound, which the
+/// kernel checks equals `kirq::MAX_CORES` (C12). Unused cores' records stay
+/// empty.
 pub const MAX_CORES: usize = 8;
 
 /// ASID 0 is never given out: it tags "no user address space", the empty
@@ -249,6 +251,17 @@ impl AsidAllocator {
             }
         }
         self.next = 1;
+    }
+
+    /// The address space `core`'s `TTBR0_EL1` holds, by its level-0 table,
+    /// or 0 for none: what it runs, or ran last and keeps while it idles.
+    /// The kernel deactivates it there before the space is destroyed (C12).
+    pub const fn active_space(&self, core: usize) -> u64 {
+        if core < MAX_CORES {
+            self.active[core].space
+        } else {
+            0
+        }
     }
 
     /// Records that `core` runs no user address space: `TTBR0_EL1` holds the

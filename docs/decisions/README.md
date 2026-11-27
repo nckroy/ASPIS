@@ -86,7 +86,7 @@ These come from the project brief and aren't re-decided here:
 | [0048](0048-kernel-memory-and-address-spaces.md) | Kernel memory: untyped memory, 4 KiB pages, and no access to user addresses | Accepted | 2026-11-25 |
 | [0049](0049-capability-spaces-rights-and-revocation.md) | Capability spaces, rights, badges and revocation | Accepted | 2026-11-25, updated 2026-11-26 |
 | [0050](0050-ids-for-kernel-objects.md) | User-space servers name the kernel objects they present | Accepted | 2026-11-25 |
-| [0051](0051-scheduling-timers-and-deadlines.md) | Scheduling, the timer and deadlines | Accepted | 2026-11-25 |
+| [0051](0051-scheduling-timers-and-deadlines.md) | Scheduling, the timer and deadlines | Accepted | 2026-11-25, updated 2026-11-26 |
 | [0052](0052-smp-bring-up-and-the-kernel-lock.md) | SMP: PSCI bring-up and one kernel lock | Accepted | 2026-11-25 |
 | [0053](0053-eventcounts.md) | Eventcounts | Accepted | 2026-11-25 |
 | [0054](0054-ipc-endpoints.md) | IPC: synchronous endpoints with deadlines and cancellation | Accepted | 2026-11-25 |

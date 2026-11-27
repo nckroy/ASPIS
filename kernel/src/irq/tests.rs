@@ -6,9 +6,9 @@
 //!
 //! Each test leaves no interrupt pending or active. None waits with WFI
 //! for an interrupt that might not come: they take interrupts in windows,
-//! for a bounded count of the clock. Secondary cores are off until C12, so
-//! the cross-core test reads the target's redistributor instead, and skips
-//! with one core. Tests check only the interrupts they set: firmware may
+//! for a bounded count of the clock. They run in the tests' first phase,
+//! before the other cores start (C12), so the cross-core test reads the
+//! target's redistributor instead, and skips with one core. Tests check only the interrupts they set: firmware may
 //! leave a level line asserted, such as a physical timer's. A test that
 //! sends an interrupt polls, with a bound, for it to become pending
 //! ([`spin_until`]): only TCG makes it pending as the write completes.
@@ -307,7 +307,7 @@ crate::kernel_test!(cross_core_sgi_reaches_only_its_target, {
     let sgi = Sgi::Reschedule;
     match &irq.gic {
         Gic::V2(g) => {
-            // Until C12 starts the core and records its mask, it can't be
+            // Until the core starts and records its mask, it can't be
             // named.
             assert_eq!(g.mask(target), 0);
             assert_eq!(
@@ -475,7 +475,8 @@ crate::kernel_test!(all_but_self_spares_this_core, {
     match &irq.gic {
         Gic::V2(_) => {
             // The others' pending state is banked at their interfaces,
-            // which this core can't read; C12's `init_cpu` clears it.
+            // which this core can't read; the core's `init_cpu` clears it
+            // as it starts.
             irq.send_sgi(sgi, Target::AllButSelf).unwrap();
         }
         Gic::V3(g) => {
@@ -617,8 +618,9 @@ crate::kernel_test!(the_stop_sgi_stops_a_core, {
 });
 
 crate::kernel_test!(the_panic_stop_spares_the_panicking_core, {
-    // The panic path's own send. C12 must rework this test once secondary
-    // cores run: it would stop them.
+    // The panic path's own send. It runs before the other cores start, so
+    // it stops none of them; the forced-panic run checks the stop with
+    // every core up.
     let irq = irq();
     let cores = irq.cores();
     let me = irq.this_core();
@@ -628,11 +630,11 @@ crate::kernel_test!(the_panic_stop_spares_the_panicking_core, {
     match &irq.gic {
         Gic::V2(_) => {
             // The others' pending state is banked at their interfaces;
-            // C12's `init_cpu` clears it.
+            // each core's `init_cpu` clears it as the core starts.
             assert!(send_stop_to_others());
         }
         Gic::V3(g) => {
-            // Group 1 at each target first, as C12's `init_cpu` will set.
+            // Group 1 at each target first, as its `init_cpu` will set.
             let mut groups = [0u32; MAX_CORES];
             for i in others.clone() {
                 let f = g.rd(i).at(gicr::SGI_FRAME);

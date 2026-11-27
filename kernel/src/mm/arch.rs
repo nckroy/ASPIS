@@ -48,6 +48,7 @@ read_sysreg!(tcr, "tcr_el1");
 read_sysreg!(sctlr, "sctlr_el1");
 read_sysreg!(ttbr0, "ttbr0_el1");
 read_sysreg!(ttbr1, "ttbr1_el1");
+read_sysreg!(mair, "mair_el1");
 // PSTATE.PAN, through its generic encoding, so no `.arch` directive is
 // needed for the A72, which lacks it (the kernel reads it only where
 // `ID_AA64MMFR1_EL1.PAN` says it exists).
@@ -56,6 +57,22 @@ read_sysreg!(pan, "s3_0_c4_c2_3");
 /// Whether the processor implements PAN (`ID_AA64MMFR1_EL1.PAN` isn't 0).
 pub fn has_pan() -> bool {
     (id_aa64mmfr1() >> 20) & 0xf != 0
+}
+
+/// Sets `PSTATE.PAN`, on a core whose processor has PAN: each secondary
+/// core does at its start, as the boot core does when it retires the
+/// identity map. The kernel never clears it (ADR 0048, rule 6).
+pub fn set_pan() {
+    // SAFETY: PSTATE.PAN only, which `has_pan` says exists; the kernel
+    // never dereferences a user address (rule 5).
+    unsafe {
+        asm!(
+            "msr s3_0_c4_c2_3, {}",
+            "isb",
+            in(reg) PSTATE_PAN,
+            options(nostack, preserves_flags)
+        )
+    };
 }
 
 /// The ASID width in bits: 16 where `ID_AA64MMFR0_EL1.ASIDBits` is

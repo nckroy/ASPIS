@@ -14,15 +14,32 @@
 //! | CNode | tag, radix (5-10), guard size (11-16), pointer >> 6 (17-58) | guard |
 //! | Frame | tag, device (5), size code (6-7), rights (8-11), base >> 12 (16-51) | 0, or a binding's mapping: VA, with bit 0 set, write in bit 1, execute in bit 2 |
 //! | Address space | tag, rights (5-8), base (13-47, in place) | 0 |
-//! | Endpoint | tag, rights (5-8), pointer >> 6 (9-50) | badge, 0 if unbadged |
+//! | Endpoint | tag, rights (5-8), pointer >> 6 (9-50), binding (51-52) | badge, 0 if unbadged |
 //! | Zombie | tag, zombie kind (5-7), radix (8-13), pointer >> 6 (14-55) | slots still to clear |
+//! | Thread | tag, rights (5-8), pointer >> 11 (9-45) | 0 |
+//! | Scheduling context | tag, size bits (5-8), binding (9-10), pointer >> 8 (11-50) | 0 |
+//! | Scheduling control | tag, core (5-12) | 0 |
+//! | Reply object | tag, rights (5-8), pointer >> 7 (9-49) | 0 |
+//!
+//! **Bindings** (C12). A copy that a thread keeps of an endpoint or a
+//! scheduling context presented to it records its role in its own encoding
+//! ([`Binding`]), as a frame's binding records its mapping, so its unbind
+//! step depends only on the capability, never on the slot's index (kernel
+//! specification, "Derivation and revocation", "What moves"). The thread is
+//! the object that holds the slot: its address rounded down to the thread's
+//! 2 KiB. A thread's root CNode and address space are plain copies: the
+//! kernel checks for them whenever it picks the thread to run, so they need
+//! no unbind step. C13b and C14 add the eventcount's roles.
 //!
 //! Physical and virtual addresses are below 2^48. Every other bit is zero,
 //! and [`Cap::decode`] refuses words that don't re-encode to themselves, so
 //! a corrupt slot is caught rather than misread. No encoding holds an ID
 //! (ADR 0050, rule 1).
 
-use kmem::untyped::{ADDRESS_SPACE_BITS, ENDPOINT_BITS, MAX_BITS, MAX_RADIX, MIN_BITS, MIN_RADIX};
+use kmem::untyped::{
+    ADDRESS_SPACE_BITS, ENDPOINT_BITS, MAX_BITS, MAX_RADIX, MAX_SCHED_CONTEXT_BITS, MIN_BITS,
+    MIN_RADIX, MIN_SCHED_CONTEXT_BITS, REPLY_BITS, THREAD_BITS,
+};
 use kmem::{BLOCK_1G, BLOCK_2M, PAGE_SIZE};
 
 use crate::rights::Rights;
@@ -35,6 +52,16 @@ const TAG_FRAME: u64 = 3;
 const TAG_ADDRESS_SPACE: u64 = 4;
 const TAG_ENDPOINT: u64 = 5;
 const TAG_ZOMBIE: u64 = 6;
+const TAG_THREAD: u64 = 7;
+const TAG_SCHED_CONTEXT: u64 = 8;
+const TAG_SCHED_CONTROL: u64 = 9;
+const TAG_REPLY: u64 = 10;
+
+/// Slots in a thread: slot 0 is the park slot; slots 1 to 7 hold its root
+/// CNode, address space, fault endpoint, timeout endpoint, scheduling
+/// context, bound eventcount (C14) and IPC buffer (C14, K29) (kernel
+/// specification K07).
+pub const THREAD_SLOTS: u64 = 8;
 
 /// Addresses are below 2^48.
 const ADDR_MASK: u64 = (1 << 48) - 1;
@@ -103,6 +130,59 @@ pub struct Mapping {
     pub exec: bool,
 }
 
+/// The role of a copy that a thread keeps (module docs). Each role fits one
+/// kind: the endpoints' roles an endpoint, the context's a scheduling
+/// context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Binding {
+    /// The thread's fault endpoint, in thread slot 3.
+    FaultEndpoint,
+    /// The thread's timeout endpoint, in thread slot 4.
+    TimeoutEndpoint,
+    /// The thread's scheduling context, in thread slot 5.
+    Context,
+}
+
+impl Binding {
+    const fn code(b: Option<Binding>) -> u64 {
+        match b {
+            None => 0,
+            Some(Binding::FaultEndpoint) => 1,
+            Some(Binding::TimeoutEndpoint) => 2,
+            Some(Binding::Context) => 3,
+        }
+    }
+
+    const fn from_code(code: u64) -> Option<Binding> {
+        match code {
+            1 => Some(Binding::FaultEndpoint),
+            2 => Some(Binding::TimeoutEndpoint),
+            3 => Some(Binding::Context),
+            _ => None,
+        }
+    }
+
+    /// The thread slot that holds a copy in this role.
+    pub const fn thread_slot(self) -> u64 {
+        match self {
+            Binding::FaultEndpoint => 3,
+            Binding::TimeoutEndpoint => 4,
+            Binding::Context => 5,
+        }
+    }
+
+    const fn fits_endpoint(b: Option<Binding>) -> bool {
+        matches!(
+            b,
+            None | Some(Binding::FaultEndpoint | Binding::TimeoutEndpoint)
+        )
+    }
+
+    const fn fits_context(b: Option<Binding>) -> bool {
+        matches!(b, None | Some(Binding::Context))
+    }
+}
+
 /// Which object a zombie is finishing: the kinds that have slots.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ZombieKind {
@@ -110,6 +190,8 @@ pub enum ZombieKind {
     CNode { radix: u8 },
     /// An address space: its record's slots.
     AddressSpace,
+    /// A thread: its eight slots (C12).
+    Thread,
 }
 
 /// The kind of object a capability names, as identify reports it (ADR 0047,
@@ -123,6 +205,10 @@ pub enum Kind {
     Frame,
     AddressSpace,
     Endpoint,
+    Thread,
+    SchedContext,
+    SchedControl,
+    Reply,
 }
 
 /// A capability, decoded.
@@ -158,16 +244,38 @@ pub enum Cap {
     /// An address space: its level-0 table, then its record.
     AddressSpace { base: u64, rights: Rights },
     /// An endpoint, with its badge (0 is unbadged; ADR 0049, rule 3). Its
-    /// operations are C14's.
+    /// operations are C14's. `binding` is set only on a thread's copy of
+    /// its fault or timeout endpoint (C12).
     Endpoint {
         ptr: u64,
         rights: Rights,
         badge: u64,
+        binding: Option<Binding>,
     },
     /// An object whose last capability is being deleted: slots `[0, n)` of
     /// its slot array are still to clear (kernel specification, "Derivation
     /// and revocation").
     Zombie { kind: ZombieKind, ptr: u64, n: u64 },
+    /// A thread (C12; ADR 0051). The read right reads its state and
+    /// registers; the write right does everything else (kernel
+    /// specification, "Rights by object type").
+    Thread { ptr: u64, rights: Rights },
+    /// A scheduling context of `2^bits` bytes (C12; ADR 0051, rule 1). It
+    /// carries no rights, as in seL4, and its badge lives in the object.
+    /// `binding` is set only on the copy its thread keeps.
+    SchedContext {
+        ptr: u64,
+        bits: u8,
+        binding: Option<Binding>,
+    },
+    /// The scheduling control of core `core` (C12): it configures
+    /// scheduling contexts for that core, as seL4's `SchedControl`. It names
+    /// no memory, and copies like any capability, as in seL4 17.0.0's
+    /// `deriveCap`.
+    SchedControl { core: u8 },
+    /// A reply object (C12; seL4 MCS). The grant right lets a reply carry
+    /// capabilities (C14).
+    Reply { ptr: u64, rights: Rights },
 }
 
 impl Cap {
@@ -232,14 +340,39 @@ impl Cap {
                     | (base & ADDR_MASK & !mask(ADDRESS_SPACE_BITS as u32)),
                 0,
             ],
-            Cap::Endpoint { ptr, rights, badge } => [
-                TAG_ENDPOINT | (rights.bits() as u64) << 5 | ((ptr & ADDR_MASK) >> 6) << 9,
+            Cap::Endpoint {
+                ptr,
+                rights,
                 badge,
+                binding,
+            } => [
+                TAG_ENDPOINT
+                    | (rights.bits() as u64) << 5
+                    | ((ptr & ADDR_MASK) >> 6) << 9
+                    | Binding::code(binding) << 51,
+                badge,
+            ],
+            Cap::Thread { ptr, rights } => [
+                TAG_THREAD | (rights.bits() as u64) << 5 | ((ptr & ADDR_MASK) >> 11) << 9,
+                0,
+            ],
+            Cap::SchedContext { ptr, bits, binding } => [
+                TAG_SCHED_CONTEXT
+                    | (bits as u64 & 15) << 5
+                    | Binding::code(binding) << 9
+                    | ((ptr & ADDR_MASK) >> 8) << 11,
+                0,
+            ],
+            Cap::SchedControl { core } => [TAG_SCHED_CONTROL | (core as u64) << 5, 0],
+            Cap::Reply { ptr, rights } => [
+                TAG_REPLY | (rights.bits() as u64) << 5 | ((ptr & ADDR_MASK) >> 7) << 9,
+                0,
             ],
             Cap::Zombie { kind, ptr, n } => {
                 let (code, radix) = match kind {
                     ZombieKind::CNode { radix } => (0, radix),
                     ZombieKind::AddressSpace => (1, 0),
+                    ZombieKind::Thread => (2, 0),
                 };
                 [
                     TAG_ZOMBIE
@@ -293,6 +426,23 @@ impl Cap {
                 ptr: ((w0 >> 9) & mask(42)) << 6,
                 rights: Rights::from_bits((w0 >> 5) as u8),
                 badge: w1,
+                binding: Binding::from_code((w0 >> 51) & 3),
+            },
+            TAG_THREAD => Cap::Thread {
+                ptr: ((w0 >> 9) & mask(37)) << 11,
+                rights: Rights::from_bits((w0 >> 5) as u8),
+            },
+            TAG_SCHED_CONTEXT => Cap::SchedContext {
+                ptr: ((w0 >> 11) & mask(40)) << 8,
+                bits: ((w0 >> 5) & 15) as u8,
+                binding: Binding::from_code((w0 >> 9) & 3),
+            },
+            TAG_SCHED_CONTROL => Cap::SchedControl {
+                core: (w0 >> 5) as u8,
+            },
+            TAG_REPLY => Cap::Reply {
+                ptr: ((w0 >> 9) & mask(41)) << 7,
+                rights: Rights::from_bits((w0 >> 5) as u8),
             },
             TAG_ZOMBIE => Cap::Zombie {
                 kind: match (w0 >> 5) & 7 {
@@ -300,6 +450,7 @@ impl Cap {
                         radix: ((w0 >> 8) & 63) as u8,
                     },
                     1 => ZombieKind::AddressSpace,
+                    2 => ZombieKind::Thread,
                     _ => return None,
                 },
                 ptr: ((w0 >> 14) & mask(42)) << 6,
@@ -353,7 +504,17 @@ impl Cap {
                     }
             }
             Cap::AddressSpace { base, .. } => aligned(base, ADDRESS_SPACE_BITS as u32),
-            Cap::Endpoint { ptr, .. } => aligned(ptr, ENDPOINT_BITS as u32),
+            Cap::Endpoint { ptr, binding, .. } => {
+                aligned(ptr, ENDPOINT_BITS as u32) && Binding::fits_endpoint(binding)
+            }
+            Cap::Thread { ptr, .. } => aligned(ptr, THREAD_BITS as u32),
+            Cap::SchedContext { ptr, bits, binding } => {
+                (MIN_SCHED_CONTEXT_BITS..=MAX_SCHED_CONTEXT_BITS).contains(&bits)
+                    && aligned(ptr, bits as u32)
+                    && Binding::fits_context(binding)
+            }
+            Cap::SchedControl { .. } => true,
+            Cap::Reply { ptr, .. } => aligned(ptr, REPLY_BITS as u32),
             Cap::Zombie { kind, ptr, n } => match kind {
                 ZombieKind::CNode { radix } => {
                     (MIN_RADIX..=MAX_RADIX).contains(&radix)
@@ -363,6 +524,7 @@ impl Cap {
                 ZombieKind::AddressSpace => {
                     aligned(ptr, ADDRESS_SPACE_BITS as u32) && n <= RECORD_SLOTS
                 }
+                ZombieKind::Thread => aligned(ptr, THREAD_BITS as u32) && n <= THREAD_SLOTS,
             },
         }
     }
@@ -376,16 +538,23 @@ impl Cap {
             Cap::Frame { .. } => Kind::Frame,
             Cap::AddressSpace { .. } => Kind::AddressSpace,
             Cap::Endpoint { .. } => Kind::Endpoint,
+            Cap::Thread { .. } => Kind::Thread,
+            Cap::SchedContext { .. } => Kind::SchedContext,
+            Cap::SchedControl { .. } => Kind::SchedControl,
+            Cap::Reply { .. } => Kind::Reply,
         }
     }
 
-    /// The capability's rights. Untyped and CNode capabilities carry none,
-    /// as in seL4, and nor does a zombie.
+    /// The capability's rights. Untyped, CNode, scheduling-context and
+    /// scheduling-control capabilities carry none, as in seL4, and nor does
+    /// a zombie.
     pub const fn rights(&self) -> Rights {
         match *self {
             Cap::Frame { rights, .. }
             | Cap::AddressSpace { rights, .. }
-            | Cap::Endpoint { rights, .. } => rights,
+            | Cap::Endpoint { rights, .. }
+            | Cap::Thread { rights, .. }
+            | Cap::Reply { rights, .. } => rights,
             _ => Rights::NONE,
         }
     }
@@ -411,10 +580,24 @@ impl Cap {
                 base,
                 rights: rights.mask(mask),
             },
-            Cap::Endpoint { ptr, rights, badge } => Cap::Endpoint {
+            Cap::Endpoint {
+                ptr,
+                rights,
+                badge,
+                binding,
+            } => Cap::Endpoint {
                 ptr,
                 rights: rights.mask(mask),
                 badge,
+                binding,
+            },
+            Cap::Thread { ptr, rights } => Cap::Thread {
+                ptr,
+                rights: rights.mask(mask),
+            },
+            Cap::Reply { ptr, rights } => Cap::Reply {
+                ptr,
+                rights: rights.mask(mask),
             },
             other => other,
         }
@@ -428,17 +611,57 @@ impl Cap {
         matches!(self, Cap::Zombie { .. })
     }
 
-    /// Whether the capability is a binding the kernel keeps: C11's only one
-    /// is a frame mapped in an address space. Deleting it, or making it a
-    /// zombie, runs its unbind hook first.
+    /// Whether the capability is a binding the kernel keeps: a frame mapped
+    /// in an address space (C11), or a thread's copy of its fault endpoint,
+    /// timeout endpoint or scheduling context (C12). Deleting it, or making
+    /// it a zombie, runs its unbind hook first.
     pub const fn is_binding(&self) -> bool {
         matches!(
             self,
             Cap::Frame {
                 mapping: Some(_),
                 ..
+            } | Cap::Endpoint {
+                binding: Some(_),
+                ..
+            } | Cap::SchedContext {
+                binding: Some(_),
+                ..
             }
         )
+    }
+
+    /// The role of a thread's copy (module docs), if it is one.
+    pub const fn binding(&self) -> Option<Binding> {
+        match *self {
+            Cap::Endpoint { binding, .. } | Cap::SchedContext { binding, .. } => binding,
+            _ => None,
+        }
+    }
+
+    /// The same capability as a thread's copy in role `role`, or `None` if
+    /// the role doesn't fit its kind. Only an endpoint takes the endpoints'
+    /// roles, and only a scheduling context the context's.
+    pub const fn with_binding(self, role: Binding) -> Option<Cap> {
+        match (self, role) {
+            (
+                Cap::Endpoint {
+                    ptr, rights, badge, ..
+                },
+                Binding::FaultEndpoint | Binding::TimeoutEndpoint,
+            ) => Some(Cap::Endpoint {
+                ptr,
+                rights,
+                badge,
+                binding: Some(role),
+            }),
+            (Cap::SchedContext { ptr, bits, .. }, Binding::Context) => Some(Cap::SchedContext {
+                ptr,
+                bits,
+                binding: Some(role),
+            }),
+            _ => None,
+        }
     }
 
     /// The memory the object occupies, `(base, size)`. A zombie's object
@@ -451,11 +674,17 @@ impl Cap {
             Cap::Frame { base, size, .. } => Some((base, size.bytes())),
             Cap::AddressSpace { base, .. } => Some((base, 1 << ADDRESS_SPACE_BITS)),
             Cap::Endpoint { ptr, .. } => Some((ptr, 1 << ENDPOINT_BITS)),
+            Cap::Thread { ptr, .. } => Some((ptr, 1 << THREAD_BITS)),
+            Cap::SchedContext { ptr, bits, .. } => Some((ptr, 1 << bits)),
+            // Scheduling control names a core, not memory.
+            Cap::SchedControl { .. } => None,
+            Cap::Reply { ptr, .. } => Some((ptr, 1 << REPLY_BITS)),
             Cap::Zombie { kind, ptr, .. } => Some((
                 ptr,
                 match kind {
                     ZombieKind::CNode { radix } => 1 << (radix as u32 + SLOT_BITS),
                     ZombieKind::AddressSpace => 1 << ADDRESS_SPACE_BITS,
+                    ZombieKind::Thread => 1 << THREAD_BITS,
                 },
             )),
         }
@@ -465,7 +694,12 @@ impl Cap {
     /// `sameObjectAs`: the same kind at the same place and size, whatever
     /// their rights, badges, guards or mappings. A zombie is never the same
     /// object as anything: it is always the last capability to its object.
+    /// Two scheduling-control capabilities are the same object when they
+    /// name the same core.
     pub fn same_object(&self, other: &Cap) -> bool {
+        if let (Cap::SchedControl { core: a }, Cap::SchedControl { core: b }) = (self, other) {
+            return a == b;
+        }
         let same_kind = matches!(
             (self, other),
             (Cap::Untyped { .. }, Cap::Untyped { .. })
@@ -473,6 +707,9 @@ impl Cap {
                 | (Cap::Frame { .. }, Cap::Frame { .. })
                 | (Cap::AddressSpace { .. }, Cap::AddressSpace { .. })
                 | (Cap::Endpoint { .. }, Cap::Endpoint { .. })
+                | (Cap::Thread { .. }, Cap::Thread { .. })
+                | (Cap::SchedContext { .. }, Cap::SchedContext { .. })
+                | (Cap::Reply { .. }, Cap::Reply { .. })
         );
         same_kind && self.object() == other.object()
     }
@@ -480,7 +717,10 @@ impl Cap {
     /// Whether the object has slots of its own, and so becomes a zombie
     /// when its last capability is deleted.
     pub const fn has_slots(&self) -> bool {
-        matches!(self, Cap::CNode { .. } | Cap::AddressSpace { .. })
+        matches!(
+            self,
+            Cap::CNode { .. } | Cap::AddressSpace { .. } | Cap::Thread { .. }
+        )
     }
 
     /// The zombie that finishes this capability's object, with every slot
@@ -496,6 +736,11 @@ impl Cap {
                 kind: ZombieKind::AddressSpace,
                 ptr: base,
                 n: RECORD_SLOTS,
+            }),
+            Cap::Thread { ptr, .. } => Some(Cap::Zombie {
+                kind: ZombieKind::Thread,
+                ptr,
+                n: THREAD_SLOTS,
             }),
             _ => None,
         }
@@ -515,7 +760,8 @@ pub const fn guard_ok(radix: u8, guard_size: u8, guard: u64) -> bool {
 /// The slot array of an object with slots: where its slots start, and how
 /// many there are. A CNode's array is the CNode. An address space's is its
 /// record's slots: slot 0 is the park slot, and slots 1 to 126 are the
-/// binding slots its mappings use.
+/// binding slots its mappings use. A thread's is its first eight slots, of
+/// which slot 0 is the park slot ([`THREAD_SLOTS`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlotArray {
     pub base: u64,
@@ -534,7 +780,16 @@ impl SlotArray {
                 base: ptr + RECORD_OFFSET + RECORD_HEADER,
                 count: RECORD_SLOTS,
             },
+            ZombieKind::Thread => SlotArray {
+                base: ptr,
+                count: THREAD_SLOTS,
+            },
         }
+    }
+
+    /// The array of a thread at `ptr`.
+    pub const fn of_thread(ptr: u64) -> SlotArray {
+        SlotArray::of(ZombieKind::Thread, ptr)
     }
 
     /// The array of an address space at `base`.

@@ -142,16 +142,16 @@ Records 0047 to 0061 settle the kernel's design questions: the memory model, cap
 | Backlog | What is open | Questions |
 |---|---|---|
 | D150 | Kernel memory bookkeeping: small records and pieces of a job's memory. ASID allocation (K01) was settled with C10 | K01–K06 |
-| D151 | Bindings that hold capabilities, and object sizes. K07 was settled in part with C11 | K07, K08, K15, K29, K33, K50 |
+| D151 | Bindings that hold capabilities, and object sizes. K07 was settled in part with C11; the thread's slots and size, the timeout endpoint's removal (K08 in part), the context's size (K15) and a fault in flight (K50) with C12. The wait set's and handler's slots, K29 and K33 stay open | K07, K08, K15, K29, K33, K50 |
 | D152 | Rights on wait sets, jobs and the main thread; capabilities from listing; identify; capability identity. K11 was settled with C11 | K11, K32, K42, K53, K63, K75 |
-| D153 | The share check, who configures scheduling contexts, priority bands and firmware without PSCI. When the kernel unmasks SError (K77). The SGIs and the panic stop (K26, K27) were settled with C13a | K13, K14, K16, K21, K26, K27, K77 |
-| D154 | How waits end: deadlines, cancellation and suspension | K17–K20, K51, K52 |
-| D155 | Long operations and ordered queues. K22, and K23 in part, were settled with C11 | K22–K25, K31, K34, K41 |
+| D153 | The share check, who configures scheduling contexts, priority bands and firmware without PSCI, and when the kernel unmasks SError, were settled with C12, but for how a shared server's starter learns its callers' highest priority (K16, C19's). The SGIs and the panic stop (K26, K27) were settled with C13a | K13, K14, K16, K21, K26, K27, K77 |
+| D154 | How waits end: deadlines, cancellation and suspension. Stranded servers, deadlines and suspension (K17 to K20) were settled with C12. Memory requests and the fetch timeout stay open | K17–K20, K51, K52 |
+| D155 | Long operations and ordered queues. K22, and K23 in part, were settled with C11; batches of interrupt work (K24), and K23 and K25 further, with C12 | K22–K25, K31, K34, K41 |
 | D156 | The private ABI and the kernel's messages | K28, K30, K49, K58–K60, K76 |
 | D157 | MSI and the GICv3 ITS | K35–K40 |
 | D158 | The pager protocol and reclaim at a limit | K43–K48, K54–K57, K74 |
 | D159 | Spawn, the startup block and the capability-table copy | K09, K62, K64–K67 |
-| D160 | The debugging mechanism | K68–K72 |
+| D160 | The debugging mechanism. K70's minimum, no per-thread hardware debug state, was settled with C12 | K68–K72 |
 
 [K02](kernel-specification.md#k02-small-kernel-records), for example, is open: how the kernel keeps the small records it makes on faults, such as mapping records and page-index nodes, in a job's memory without fragmenting it. The options are per-job slab pages, records reserved inside the object they describe, or a fixed allowance per address space and memory object.
 

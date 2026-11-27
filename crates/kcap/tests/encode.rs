@@ -8,7 +8,9 @@ mod common;
 
 use common::Lcg;
 use kcap::SlotRef;
-use kcap::cap::{Cap, FrameSize, Kind, Mapping, RECORD_SLOTS, SlotArray, ZombieKind};
+use kcap::cap::{
+    Binding, Cap, FrameSize, Kind, Mapping, RECORD_SLOTS, SlotArray, THREAD_SLOTS, ZombieKind,
+};
 use kcap::rights::Rights;
 use kcap::slot::{MAX_DEPTH, Slot};
 
@@ -220,7 +222,18 @@ fn address_space_endpoint_and_zombie_fields_round_trip() {
         }
         for ptr in [0, 64, TOP - 64] {
             for badge in [0, 1, u64::MAX] {
-                round_trip(Cap::Endpoint { ptr, rights, badge });
+                for binding in [
+                    None,
+                    Some(Binding::FaultEndpoint),
+                    Some(Binding::TimeoutEndpoint),
+                ] {
+                    round_trip(Cap::Endpoint {
+                        ptr,
+                        rights,
+                        badge,
+                        binding,
+                    });
+                }
             }
         }
     }
@@ -254,11 +267,11 @@ fn address_space_endpoint_and_zombie_fields_round_trip() {
 
 #[test]
 fn unknown_tags_and_stray_bits_are_refused() {
-    for tag in 7..32 {
+    for tag in 11..32 {
         assert_eq!(Cap::decode([tag, 0]), None, "tag {tag}");
     }
     // An unknown zombie kind.
-    assert_eq!(Cap::decode([6 | 2 << 5 | 1 << 8, 0]), None);
+    assert_eq!(Cap::decode([6 | 3 << 5 | 1 << 8, 0]), None);
     // A stray bit above each kind's fields.
     let caps = [
         Cap::Untyped {
@@ -288,6 +301,21 @@ fn unknown_tags_and_stray_bits_are_refused() {
             ptr: 0x40,
             rights: Rights::ALL,
             badge: 0,
+            binding: None,
+        },
+        Cap::Thread {
+            ptr: 0x800,
+            rights: Rights::ALL,
+        },
+        Cap::SchedContext {
+            ptr: 0x100,
+            bits: 8,
+            binding: None,
+        },
+        Cap::SchedControl { core: 3 },
+        Cap::Reply {
+            ptr: 0x80,
+            rights: Rights::ALL,
         },
     ];
     for c in caps {
@@ -321,6 +349,7 @@ fn slot_links_and_depths_round_trip() {
                             ptr: 64,
                             rights: Rights::READ,
                             badge: 7,
+                            binding: None,
                         },
                         prev,
                         next,
@@ -338,6 +367,7 @@ fn slot_links_and_depths_round_trip() {
             ptr: 64,
             rights: Rights::NONE,
             badge: 0,
+            binding: None,
         },
         prev: Some(SlotRef(0)),
         next: None,
@@ -414,10 +444,27 @@ fn identify_reports_kind_and_rights_only() {
                 ptr: 0,
                 rights: r,
                 badge: 99,
+                binding: Some(Binding::FaultEndpoint),
             },
             Kind::Endpoint,
             r,
         ),
+        (Cap::Thread { ptr: 0, rights: r }, Kind::Thread, r),
+        (
+            Cap::SchedContext {
+                ptr: 0,
+                bits: 8,
+                binding: Some(Binding::Context),
+            },
+            Kind::SchedContext,
+            Rights::NONE,
+        ),
+        (
+            Cap::SchedControl { core: 0 },
+            Kind::SchedControl,
+            Rights::NONE,
+        ),
+        (Cap::Reply { ptr: 0, rights: r }, Kind::Reply, r),
     ];
     for (c, kind, rights) in cases {
         assert_eq!(identify(&c), (kind, rights), "{c:x?}");
@@ -435,4 +482,139 @@ fn slot_arrays_have_their_geometry() {
     assert_eq!(s.base, 0x4000_3020);
     assert_eq!(s.count, 127);
     assert_eq!(s.slot(126).0 + 32, 0x4000_4000);
+}
+
+#[test]
+fn thread_context_control_and_reply_fields_round_trip() {
+    // C12's kinds, at their extremes.
+    for rights in all_rights() {
+        for ptr in [0, 1 << 11, TOP - (1 << 11)] {
+            round_trip(Cap::Thread { ptr, rights });
+        }
+        for ptr in [0, 128, TOP - 128] {
+            round_trip(Cap::Reply { ptr, rights });
+        }
+    }
+    for bits in 8u8..=12 {
+        for ptr in [0, 1 << bits, TOP - (1 << bits)] {
+            for binding in [None, Some(Binding::Context)] {
+                round_trip(Cap::SchedContext { ptr, bits, binding });
+            }
+        }
+    }
+    for core in [0u8, 1, 7, u8::MAX] {
+        round_trip(Cap::SchedControl { core });
+    }
+    for n in [0, 1, THREAD_SLOTS] {
+        round_trip(Cap::Zombie {
+            kind: ZombieKind::Thread,
+            ptr: TOP - (1 << 11),
+            n,
+        });
+    }
+    // Out of range: a misaligned thread, reply or context, a context's
+    // size outside 2^8 to 2^12, a thread zombie past its eight slots.
+    let bad = [
+        Cap::Thread {
+            ptr: 0x400,
+            rights: Rights::ALL,
+        },
+        Cap::Reply {
+            ptr: 0x40,
+            rights: Rights::ALL,
+        },
+        Cap::SchedContext {
+            ptr: 0x80,
+            bits: 8,
+            binding: None,
+        },
+        Cap::SchedContext {
+            ptr: 0,
+            bits: 7,
+            binding: None,
+        },
+        Cap::SchedContext {
+            ptr: 0,
+            bits: 13,
+            binding: None,
+        },
+        Cap::Zombie {
+            kind: ZombieKind::Thread,
+            ptr: 0,
+            n: THREAD_SLOTS + 1,
+        },
+    ];
+    for c in bad {
+        assert!(!c.is_valid(), "{c:x?}");
+    }
+    // Where the words can hold the bad value, decode refuses it.
+    for c in &bad[3..] {
+        assert_eq!(Cap::decode(c.encode()), None, "{c:x?}");
+    }
+    // Every role's code round-trips, and none fits the other kind: an
+    // endpoint can't carry the context's role, nor a context an endpoint's.
+    let ep = Cap::Endpoint {
+        ptr: 64,
+        rights: Rights::ALL,
+        badge: 5,
+        binding: None,
+    };
+    let sc = Cap::SchedContext {
+        ptr: 256,
+        bits: 8,
+        binding: None,
+    };
+    for role in [Binding::FaultEndpoint, Binding::TimeoutEndpoint] {
+        let b = ep.with_binding(role).unwrap();
+        assert!(b.is_binding());
+        assert_eq!(b.binding(), Some(role));
+        round_trip(b);
+        assert_eq!(sc.with_binding(role), None);
+    }
+    let b = sc.with_binding(Binding::Context).unwrap();
+    assert_eq!(b.binding(), Some(Binding::Context));
+    round_trip(b);
+    assert_eq!(ep.with_binding(Binding::Context), None);
+    // A raw context role in an endpoint's word is refused.
+    let [w0, w1] = ep.encode();
+    assert_eq!(Cap::decode([w0 | 3 << 51, w1]), None);
+    assert_eq!(
+        (
+            Binding::FaultEndpoint.thread_slot(),
+            Binding::TimeoutEndpoint.thread_slot(),
+            Binding::Context.thread_slot()
+        ),
+        (3, 4, 5)
+    );
+    // Neither kind without a role, nor a thread, is a binding.
+    assert!(!ep.is_binding() && !sc.is_binding());
+    assert!(
+        !Cap::Thread {
+            ptr: 0,
+            rights: Rights::ALL
+        }
+        .is_binding()
+    );
+    // Two scheduling controls are one object when they name one core.
+    let c = |core| Cap::SchedControl { core };
+    assert!(c(1).same_object(&c(1)) && !c(1).same_object(&c(2)));
+    assert_eq!(c(1).object(), None);
+    // A thread has its eight slots, and a zombie when its last capability
+    // goes.
+    let t = Cap::Thread {
+        ptr: 0x4000_0800,
+        rights: Rights::ALL,
+    };
+    assert!(t.has_slots());
+    assert_eq!(
+        t.zombie(),
+        Some(Cap::Zombie {
+            kind: ZombieKind::Thread,
+            ptr: 0x4000_0800,
+            n: 8
+        })
+    );
+    let a = SlotArray::of_thread(0x4000_0800);
+    assert_eq!((a.base, a.count), (0x4000_0800, 8));
+    assert_eq!(a.slot(7).0 + 32, 0x4000_0900);
 }

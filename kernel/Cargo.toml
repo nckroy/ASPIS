@@ -19,5 +19,6 @@ kargs.workspace = true
 kmem.workspace = true
 kcap.workspace = true
 kirq.workspace = true
+ksched.workspace = true
 glyph-atlas.workspace = true
 fdt = "0.1.5"

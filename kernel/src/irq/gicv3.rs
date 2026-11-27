@@ -125,8 +125,11 @@ impl GicV3 {
     }
 
     /// Sets up core `core`'s redistributor and this core's CPU interface.
-    /// `core` must be this core's index in the core table.
-    pub fn init_cpu(&self, core: usize) {
+    /// `core` must be this core's index in the core table. Returns whether
+    /// the redistributor's LPIs stayed enabled, for the caller to log once
+    /// it may: a secondary core logs only once it holds the kernel lock.
+    #[must_use]
+    pub fn init_cpu(&self, core: usize) -> bool {
         let rd = self.rd(core);
         let sgi = self.sgi_frame(core);
         // Wake the redistributor: the core is awake, and its interface
@@ -159,16 +162,11 @@ impl GicV3 {
         // implementation defined, so an LPI may still arrive, and is then
         // logged and ended (`irq::handle`).
         let ctlr = rd.read32(gicr::CTLR);
+        let mut lpis_stuck = false;
         if ctlr & gicr::CTLR_ENABLE_LPIS != 0 {
             rd.write32(gicr::CTLR, ctlr & !gicr::CTLR_ENABLE_LPIS);
             rwp();
-            if rd.read32(gicr::CTLR) & gicr::CTLR_ENABLE_LPIS != 0 {
-                crate::klog!(
-                    Notice,
-                    "interrupts",
-                    "core {core}'s redistributor has LPIs enabled, and won't disable them"
-                );
-            }
+            lpis_stuck = rd.read32(gicr::CTLR) & gicr::CTLR_ENABLE_LPIS != 0;
         }
         for r in 0..8 {
             sgi.write32(gicr::IPRIORITYR + 4 * r, regs::repeat_byte(PRIORITY));
@@ -204,6 +202,7 @@ impl GicV3 {
         }
         arch::isb();
         sgi.write32(gicr::ISENABLER0, Sgi::ENABLED_MASK);
+        lpis_stuck
     }
 
     /// Acknowledges the highest-priority pending Group 1 interrupt.

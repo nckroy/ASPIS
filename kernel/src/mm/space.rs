@@ -21,8 +21,8 @@
 //! [`AddressSpace`] and [`Frame`] are the kernel's internal views of them,
 //! built from a decoded capability; a mapping made through capabilities
 //! keeps a copy of the frame capability in the space's record, and deleting
-//! that copy unmaps it. C12: the kernel lock guards the ASID allocator, and
-//! the current core's index replaces [`CORE`]. C15: memory objects make
+//! that copy unmaps it. The kernel lock guards the ASID allocator, and each
+//! core activates spaces under its own index (C12). C15: memory objects make
 //! mapping records, and map their pages through these functions. C16: a
 //! job's pieces implement [`TableSource`].
 
@@ -38,8 +38,10 @@ use kmem::desc::{self, Half, LeafError, UserPerm};
 use kmem::table::{FrameSource, MapError, Tables, UnmapError};
 use kmem::user::{Access, UserError};
 
-/// The core the kernel runs on. C12: each core's own index.
-const CORE: usize = 0;
+/// The core the kernel runs on, by its index in the core table.
+fn core() -> usize {
+    crate::sched::percore::index()
+}
 
 /// The node's ASID allocator (kernel specification, "Address-space
 /// layout", "ASIDs"). [`init`] sets its width at boot.
@@ -64,9 +66,9 @@ pub fn init(asid_bits: u8) {
 /// that `f` is given can reach the allocator again. C12: under the kernel
 /// lock.
 fn with_asids<R>(f: impl FnOnce(&mut AsidAllocator) -> R) -> R {
-    // SAFETY: one CPU, exceptions masked, and every use of the allocator
-    // goes through this function, whose callers pass closures that don't
-    // call it again.
+    // SAFETY: under the kernel lock, with exceptions masked, and every use
+    // of the allocator goes through this function, whose callers pass
+    // closures that don't call it again.
     f(unsafe { ASIDS.get_mut() })
 }
 
@@ -266,7 +268,7 @@ impl AddressSpace {
     /// at it (kernel specification, "Address-space layout", "ASIDs").
     pub fn activate(&self) {
         let mut word = self.asid_word();
-        let a = with_asids(|a| a.activate(CORE, self.0, &mut word));
+        let a = with_asids(|a| a.activate(core(), self.0, &mut word));
         self.set_asid_word(word);
         if a.flush_all {
             // A new generation: no TLB may keep an entry under a number
@@ -289,8 +291,17 @@ impl AddressSpace {
     /// and releases its ASID. Its memory goes back with its untyped piece's
     /// next reset.
     ///
-    /// C12: every core that runs it deactivates it first.
+    /// Every other core whose `TTBR0_EL1` holds it, running a thread in it
+    /// or idling after one, deactivates it first, through a remote call
+    /// (C12): no walker may read its tables once its memory can be reused.
     pub fn finish(self) {
+        let me = core();
+        let others = with_asids(|a| {
+            (0..kmem::asid::MAX_CORES)
+                .filter(|&k| k != me && a.active_space(k) == self.0)
+                .fold(0u64, |m, k| m | 1 << k)
+        });
+        crate::smp::remote::drop_space(others, self.0);
         if self.is_active() {
             deactivate();
         }
@@ -330,7 +341,7 @@ fn sync_icache(frame: Frame) {
 /// Leaves this core with no user address space: `TTBR0_EL1` holds the
 /// empty table with ASID 0, which no walk can make a TLB entry from.
 pub fn deactivate() {
-    with_asids(|a| a.deactivate(CORE));
+    with_asids(|a| a.deactivate(core()));
     let empty = super::phys::kernel_pa(crate::entry::zero_table());
     // SAFETY: the empty table, with the reserved ASID 0.
     unsafe { arch::set_ttbr0(empty, 0) };

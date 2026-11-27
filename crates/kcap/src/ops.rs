@@ -14,7 +14,7 @@
 
 use kmem::untyped::{ObjectType, RetypeError, Untyped};
 
-use crate::cap::{Cap, FrameSize, Kind, Mapping, SlotArray, guard_ok};
+use crate::cap::{Binding, Cap, FrameSize, Kind, Mapping, SlotArray, guard_ok};
 use crate::derive::{DeriveError, derive};
 use crate::mdb::{self, InsertError};
 use crate::preempt::{Budget, Pending, Preempted};
@@ -187,11 +187,13 @@ pub fn mint<M: Mem>(
                 ptr,
                 rights,
                 badge: 0,
+                binding,
             },
         ) if b != 0 => Cap::Endpoint {
             ptr,
             rights,
             badge: b,
+            binding,
         },
         (MintData::Guard(g), c) => with_guard(c, g)?,
         _ => return Err(Error::InvalidData),
@@ -286,6 +288,20 @@ fn new_cap(ty: ObjectType, pa: u64, device: bool) -> Option<Cap> {
             ptr: pa,
             rights: Rights::ALL,
             badge: 0,
+            binding: None,
+        },
+        ObjectType::Thread => Cap::Thread {
+            ptr: pa,
+            rights: Rights::ALL,
+        },
+        ObjectType::SchedContext(bits) => Cap::SchedContext {
+            ptr: pa,
+            bits,
+            binding: None,
+        },
+        ObjectType::Reply => Cap::Reply {
+            ptr: pa,
+            rights: Rights::ALL,
         },
         ObjectType::PageTable => return None,
     })
@@ -520,4 +536,26 @@ pub fn bind_mapping<M: Mem>(
     check_depth(mem, frame)?;
     insert_derived(mem, frame, dst, binding)?;
     Ok((dst, binding))
+}
+
+/// Keeps a copy of the capability in `src` in a thread's slot `dst`, as the
+/// thread's binding in role `role`, as a child of `src` (ADR 0049, rule 4;
+/// kernel specification, "Kernel bindings that hold capabilities"): seL4's
+/// `cteInsert` of a derived capability into a TCB slot. The capability must
+/// be of the role's kind, and `dst` empty. The kernel checks the rights the
+/// role needs first, and that `dst` is the role's slot of a thread. Returns
+/// the binding.
+pub fn bind_copy<M: Mem>(
+    mem: &mut M,
+    src: SlotRef,
+    dst: SlotRef,
+    role: Binding,
+) -> Result<Cap, Error> {
+    check_dest(mem, src, dst)?;
+    let cap = slot::cap(mem, src);
+    let derived = derive(&cap, mdb::has_children(mem, src))?;
+    let binding = derived.with_binding(role).ok_or(Error::WrongKind)?;
+    check_depth(mem, src)?;
+    insert_derived(mem, src, dst, binding)?;
+    Ok(binding)
 }

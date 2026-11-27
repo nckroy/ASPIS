@@ -10,7 +10,9 @@
 //! - the direct map: usable RAM read-write, and the kept ranges (the kernel
 //!   image, the initial image and the boot information) read-only, never
 //!   executable;
-//! - the device window: the UART, then the boot framebuffer.
+//! - the device window: the UART, then the boot framebuffer;
+//! - the per-core window: each core's entry stack and scheduler data, page
+//!   by page, above an unmapped guard (C12; `crate::sched::percore`).
 //!
 //! Every leaf is global and UXN. The encoders in [`kmem::desc`] enforce
 //! W^X, so nothing here can make a writable, executable mapping.
@@ -100,6 +102,17 @@ pub fn map_image(
     // Data and .bss, around the guard page.
     map(t, src, part((l.data.0, l.guard.0)), MemType::Normal, RW)?;
     map(t, src, part((l.guard.1, l.data.1)), MemType::Normal, RW)
+}
+
+/// Maps one page at `va` to `pa`, read-write and never executable: a page
+/// of the per-core window (C12).
+pub fn map_page_rw(
+    t: &Tables<'_, impl PhysMem>,
+    src: &mut impl FrameSource,
+    va: u64,
+    pa: u64,
+) -> Result<(), MapError> {
+    map(t, src, (va, pa, PAGE_SIZE), MemType::Normal, RW)
 }
 
 /// Maps the direct map: usable RAM read-write, the kept ranges read-only.

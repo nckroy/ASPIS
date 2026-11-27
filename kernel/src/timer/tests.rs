@@ -89,9 +89,14 @@ crate::kernel_test!(timer_runs_at_cntfrq, {
         cntv_ctl::ENABLE
     );
     assert_eq!(compare_value(), CVAL_DISARMED);
-    // EL0 can reach neither timer, neither count, nor the event stream.
+    // EL0 can read the virtual count (K19), and reach neither timer, the
+    // physical count, nor the event stream.
     let k = kernel_control();
-    assert_eq!(k & cntkctl::EL0_ANY, 0, "CNTKCTL_EL1 {k:#x}");
+    assert_eq!(
+        k & cntkctl::EL0_ANY,
+        cntkctl::EL0VCTEN,
+        "CNTKCTL_EL1 {k:#x}"
+    );
     assert_eq!(k, CNTKCTL);
     // The boot record ("timer: virtual, INTID 27, ... Hz") isn't checked
     // here: the log ring's wrap test may have overwritten it.

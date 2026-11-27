@@ -45,6 +45,7 @@ dependencies = [
  "kcap",
  "kirq",
  "kmem",
+ "ksched",
 ]
 
 [[package]]
@@ -298,6 +299,10 @@ version = "0.1.0"
 
 [[package]]
 name = "kmem"
+version = "0.1.0"
+
+[[package]]
+name = "ksched"
 version = "0.1.0"
 
 [[package]]
@@ -674,6 +679,7 @@ version = "0.1.0"
 dependencies = [
  "abnf",
  "initfs",
+ "sha2",
 ]
 
 [[package]]
