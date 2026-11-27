@@ -772,3 +772,102 @@ fn a_major_has_at_most_1024_minors() {
     let src = iface_with(&header("1.3"), "");
     assert!(idl::check(src.as_bytes(), &mut none, &low).is_ok());
 }
+
+/// A file's canonical form at every minor fits the source limit, so a
+/// stored form checks again under the limits its file did: the checker
+/// refuses a file within the limit whose canonical form is over it, with
+/// `Code::Limit`. The form writes out every position and space, so
+/// `f0:u8,` becomes `@1 f0: u8, `.
+#[test]
+fn a_canonical_form_over_the_source_limit_is_refused() {
+    let mut none = |_: &idl_rt::names::InterfaceRef<'_>| None;
+    let small = |source: usize| idl::Limits {
+        source,
+        ..idl::Limits::default()
+    };
+    // Structs of 26 fields, written without spaces, to about 3 KiB.
+    let mut body = String::new();
+    let mut k = 0;
+    while body.len() < 3000 {
+        body += &format!("struct s{k}{{");
+        for f in 'a'..='z' {
+            body += &format!("{f}:u8,");
+        }
+        body += "}\n";
+        k += 1;
+    }
+    let src = iface(&body);
+    let c = idl::check(src.as_bytes(), &mut none, &small(1 << 20)).unwrap();
+    let canon = idl::generate::canonical(&c, 1).len();
+    assert!(canon > src.len() + 1000, "{canon} {}", src.len());
+    // The form at exactly the limit is accepted, and one octet over it
+    // refused, though the file itself is well within it.
+    assert!(idl::check(src.as_bytes(), &mut none, &small(canon)).is_ok());
+    let d = idl::check(src.as_bytes(), &mut none, &small(canon - 1)).unwrap_err();
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0].code, Code::Limit);
+    assert!(d[0].message.contains("canonical form of 1.1"), "{}", d[0]);
+    // A 4 KiB limit: the file just inside it is refused.
+    let mut f = src.clone().into_bytes();
+    assert!(f.len() < 4096);
+    let end = f.len() - 3;
+    f.splice(end..end, core::iter::repeat_n(b' ', 4096 - f.len()));
+    assert_eq!(f.len(), 4096);
+    let d = idl::check(&f, &mut none, &small(4096)).unwrap_err();
+    assert_eq!(d.iter().map(|d| d.code).collect::<Vec<_>>(), [Code::Limit]);
+    // A file just inside it whose form fits, since comments and docs
+    // leave it, is accepted.
+    let mut f = iface(&format!("/// {}\nstruct s {{ a: u8 }}", "x".repeat(3900))).into_bytes();
+    let end = f.len() - 3;
+    f.splice(end..end, core::iter::repeat_n(b' ', 4096 - f.len()));
+    assert_eq!(f.len(), 4096);
+    let c = idl::check(&f, &mut none, &small(4096)).unwrap();
+    assert!(idl::generate::canonical(&c, 1).len() < 4096);
+}
+
+/// The checker bounds every minor's canonical form by the one at the
+/// file's version: projecting to a higher minor only keeps more, so no
+/// earlier minor's form is longer. Held here over every IDL file, and a
+/// file in which each kind of item, mark and import arrives in a later
+/// minor.
+#[test]
+fn no_minor_has_a_longer_canonical_form_than_the_version() {
+    let mut files: Vec<Vec<u8>> = common::idl_files()
+        .iter()
+        .map(|p| std::fs::read(p).unwrap())
+        .collect();
+    files.push(
+        "edition 2026;
+use org.example.base/1.{point, pair};
+[id(org.example.t), object_id(reserved(1)), version(1.12), groups(read, write)]
+interface t {
+const n: u32 = 4;
+struct s { a: u8, [since(1.2)] b: u16?, [since(1.11)] c: point? }
+union u { @1 a: u8, [since(1.3)] @2 b: string<n> }
+enum e: u8 { a = 1, [since(1.4)] b = 2, [deprecated(1.5)] c = 3 }
+flags f: u8 { a = 1, [since(1.4)] b = 2 }
+error bad = 1;
+[since(1.6)] error worse = 2 { [since(1.7)] why: u8? };
+[group(read)] @1 get(a: s) -> u8 error(bad, worse);
+[since(1.8), group(write)] @2 put(a: u8, [since(1.9)] b: u8?);
+@3 later() -> ([since(1.9)] result: u8?);
+@4 one() -> (result: u8, [since(1.12)] x: u8?);
+[deprecated(1.11)] @5 old();
+[since(1.12)] struct t { a: pair }
+}
+"
+        .into(),
+    );
+    for src in &files {
+        let c = match common::check(src) {
+            Ok(c) => c,
+            Err(d) => panic!("{d:#?}\n{}", String::from_utf8_lossy(src)),
+        };
+        let v = c.unit().version.minor;
+        let top = idl::generate::canonical(&c, v).len();
+        for m in 0..v {
+            let n = idl::generate::canonical(&c, m).len();
+            assert!(n <= top, "{}: minor {m}: {n} > {top}", c.unit().name);
+        }
+    }
+}

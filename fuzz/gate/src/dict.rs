@@ -11,7 +11,7 @@
 //! [`abnf::Grammar::literals`] (C06 left dictionaries to C71), and the
 //! target's own words. C07 has since put `abnf::dict` on main, with the
 //! core widths' interesting integers as well; switching the literal half
-//! here to it is a C71 follow-up, with C07's targets.
+//! here to it is left for a later follow-up.
 
 use crate::{
     repo::{self, GRAMMARS},
@@ -236,4 +236,85 @@ pub fn kargs_grub() -> Vec<Vec<u8>> {
 /// No dictionary: `abnf-generated`'s bytes are choices, not text.
 pub fn none() -> Vec<Vec<u8>> {
     Vec::new()
+}
+
+/// `idl-names`: the names grammar's literals, the references'
+/// separators and limits, the reserved words, an interface ID, and the
+/// embedded interfaces' references.
+pub fn idl_names() -> Vec<Vec<u8>> {
+    let mut d = literals(&["names"]);
+    d.extend(words(&[
+        "/", ".", "!", "!#", "/@", "/*", "_", "0", "65535", "65536",
+    ]));
+    d.extend(words(&idl_rt::names::CEDAR_RESERVED));
+    d.extend(words(&idl_rt::names::RUST_RESERVED));
+    d.push(b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_vec());
+    d.extend(
+        crate::idl_targets::interface_refs()
+            .into_iter()
+            .map(String::into_bytes),
+    );
+    d
+}
+
+/// `idl-front-end`: the IDL grammar's literals, the built-in types, the
+/// attributes the checker knows, the fragments of a file, and the
+/// embedded interfaces' references.
+pub fn idl_front_end() -> Vec<Vec<u8>> {
+    let mut d = literals(&["idl"]);
+    d.extend(words(&idl::parse::BUILTIN_TYPES));
+    // The attributes the checker knows (crates/idl/src/check.rs reads the
+    // table), and `json`, an argument of `format`.
+    d.extend(words(&idl::canon::ATTRIBUTE_ORDER));
+    d.extend(words(&["json"]));
+    d.extend(words(&[
+        "edition 2026;\n",
+        "interface ",
+        "[id(",
+        "object_id(reserved(",
+        "version(1.",
+        "since(1.",
+        "deprecated(1.",
+        "use ",
+        ".{",
+        "};",
+        "@1 ",
+        "-> (",
+        "stream<",
+        "cap<",
+        "array<",
+        "seq<",
+        "///",
+        "//!",
+        "1023",
+        "1024",
+    ]));
+    d.extend(
+        crate::idl_targets::interface_refs()
+            .into_iter()
+            .map(String::into_bytes),
+    );
+    d
+}
+
+/// `idl-generated`: the frames only. The rest of an input is the
+/// generator's choices, not text.
+pub fn idl_frames() -> Vec<Vec<u8>> {
+    crate::idl_repo::MODULES
+        .iter()
+        .map(|m| crate::idl_repo::frame(m).into_bytes())
+        .collect()
+}
+
+/// `idl-decode`: the frames, big-endian integers, and every embedded
+/// wire grammar's literals.
+pub fn idl_decode() -> Vec<Vec<u8>> {
+    let mut d = idl_frames();
+    d.extend(be_integers());
+    for i in crate::idl_repo::LOADED.iter() {
+        for g in &i.wire {
+            d.extend(g.literals().map(<[u8]>::to_vec));
+        }
+    }
+    d
 }

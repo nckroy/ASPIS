@@ -5,9 +5,10 @@
 //! "Back ends", row 7, "Engine and tools", "The gate for each target").
 //!
 //! C71's harness wraps these in libFuzzer targets inside `fuzz/`, its own
-//! workspace. Nothing here depends on `arbitrary` or any fuzz crate, even
-//! behind `cfg(fuzzing)`: a target dependency would still enter the
-//! product's `Cargo.lock`, which rule 3 keeps free of fuzz dependencies.
+//! workspace: `idl-front-end`, `idl-decode` and `idl-generated`. Nothing
+//! here depends on `arbitrary` or any fuzz crate, even behind
+//! `cfg(fuzzing)`: a target dependency would still enter the product's
+//! `Cargo.lock`, which rule 3 keeps free of fuzz dependencies.
 //! The functions are plain and public, so the crates' replay tests run
 //! them under `cargo test` over every vector line and over mutations.
 //!
@@ -17,7 +18,7 @@
 //! - [`generate`]: a structured value generator, driven by raw octets:
 //!   any input gives a value that encodes to a valid message of the rule,
 //!   unless the rule's smallest value is too large to make.
-//!   C71 may wrap it in `arbitrary` inside `fuzz/`.
+//!   C71's `idl-generated` drives it with libFuzzer's bytes.
 //! - The decoders' targets are each generated module's `fuzz::decode` and
 //!   [`crate::conformance::differential`].
 
@@ -40,10 +41,11 @@ use crate::{
 /// nothing, so a file with a `use` line stops at the checker.
 ///
 /// Properties: nothing panics; for a file that checks, each visited
-/// minor's canonical form parses back, checks, and gives itself again,
-/// and projecting it again changes nothing (ADR 0067, rule 7). It visits
-/// the minors [`minors`] picks, a bounded number, so its work stays a
-/// fixed multiple of the file's, whatever minor the file declares.
+/// minor's canonical form parses back, checks under the same limits,
+/// and gives itself again, and projecting it again changes nothing (ADR
+/// 0067, rule 7). It visits the minors [`minors`] picks, a bounded
+/// number, so its work stays a fixed multiple of the file's, whatever
+/// minor the file declares.
 pub fn front_end(data: &[u8]) {
     front_end_with(data, &mut |_: &InterfaceRef<'_>| None);
 }
@@ -62,6 +64,9 @@ pub fn front_end_with(data: &[u8], resolve: &mut crate::model::Resolver<'_>) {
     for m in minors(&c) {
         let p = project::project(c.file(), m);
         let canon = canon::canonical(&p);
+        // The checker refused a file whose canonical form at any minor is
+        // over the source limit, so each form checks under the file's own
+        // limits.
         let back = match crate::check(canon.as_bytes(), resolve, &limits) {
             Ok(b) => b,
             Err(d) => panic!("minor {m}'s canonical form doesn't check: {d:?}\n{canon}"),

@@ -1,0 +1,8 @@
+edition 2026;
+use org.example.base/1.0.{point};
+[id(org.example.d), object_id(reserved(9)), version(1.0)]
+interface d {
+/// [org.example.d/1.nothing]
+struct s { a: u8, p: point }
+@1 m(a: u8) -> (b: u8);
+}

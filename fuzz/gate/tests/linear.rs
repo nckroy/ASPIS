@@ -105,6 +105,33 @@ fn repository_grammars_match_within_a_linear_budget() {
     });
 }
 
+/// An IDL file of exactly `n` octets that `idl-file` in idl.abnf accepts:
+/// one interface with structs of 64 fields, and its last line padded
+/// with spaces before its `}`. The grammar is all these tests ask: at
+/// 1 MiB the checker refuses the file with `Code::Limit`, since its
+/// canonical form writes every field's position and is over the source
+/// limit.
+fn idl_file(n: usize) -> Vec<u8> {
+    let head = "edition 2026;\n[id(org.example.y), object_id(reserved(0x0301)), version(1.0)]\ninterface y {\n";
+    let mut f = head.as_bytes().to_vec();
+    let mut k = 0;
+    loop {
+        let mut s = format!("    struct s{k} {{ ");
+        for i in 0..64 {
+            s += &format!("f{i}: u32, ");
+        }
+        s += "}\n";
+        if f.len() + s.len() + 2 > n {
+            break;
+        }
+        f.extend_from_slice(s.as_bytes());
+        k += 1;
+    }
+    f.resize(n - 2, b' ');
+    f.extend_from_slice(b"}\n");
+    f
+}
+
 /// The agreement oracles' grammars give a verdict on inputs of
 /// [`AGREEMENT_MAX`] octets, accepting and rejecting, within
 /// [`ORACLE_LIMITS`](fuzz_gate::ORACLE_LIMITS) and within half the
@@ -138,9 +165,24 @@ fn the_oracles_judge_their_targets_longest_inputs() {
         };
         let mut kargs_bad = seeds::kargs_line(kargs::MAX_LEN - 1);
         kargs_bad.push(b'"');
+        // An IDL file of exactly `n` octets that the grammar accepts, and
+        // one with a stray octet after its interface.
+        let idl_bad = |n: usize| {
+            let mut f = idl_file(n - 1);
+            f.push(b'x');
+            f
+        };
+        // The longest action reference, from `idl-names`' seeds, and
+        // that target's longest input, which no rule takes.
+        let action = fuzz_gate::idl_targets::names_seeds()
+            .into_iter()
+            .find(|(n, _)| n == "names-action-326")
+            .unwrap()
+            .1;
+        let names_max = fuzz_gate::target("idl-names").unwrap().max_len;
         let constraint = fuzz_gate::target("abnf-constraint").unwrap();
         for (n, bounded) in [(AGREEMENT_MAX, true), (constraint.max_len, false)] {
-            let cases: Vec<(&str, &str, Vec<u8>, bool)> = vec![
+            let mut cases: Vec<(&str, &str, Vec<u8>, bool)> = vec![
                 ("constraint", "constraint", words(n, b""), true),
                 ("constraint", "constraint", words(n, b"  "), false),
                 ("constraint", "constraint", ints(n), true),
@@ -154,7 +196,19 @@ fn the_oracles_judge_their_targets_longest_inputs() {
                     true,
                 ),
                 ("kernel-args", "kernel-args", kargs_bad.clone(), false),
+                // `idl-front-end`'s inputs reach 1 MiB, like
+                // `abnf-constraint`'s, so they are judged here at both.
+                ("idl", "idl-file", idl_file(n), true),
+                ("idl", "idl-file", idl_bad(n), false),
             ];
+            // `idl-names`' inputs are at most 1350 octets, under
+            // AGREEMENT_MAX, so one size is enough.
+            if bounded {
+                cases.push(("names", "action-ref", action.clone(), true));
+                let dotted = b"a.".repeat(names_max / 2);
+                cases.push(("names", "action-ref", dotted.clone(), false));
+                cases.push(("names", "name", dotted, false));
+            }
             for (grammar, rule, input, want) in cases {
                 let g = if bounded {
                     repo::oracle(grammar).unwrap()
@@ -221,6 +275,47 @@ fn every_repository_vector_is_judged_within_the_fuzz_limits() {
                     .collect::<Vec<_>>()
             );
         }
+    });
+}
+
+/// Every repository wire vector, read by every module of its interface
+/// that knows its minor, is judged by `idl-decode`'s differential within
+/// the limits the target matches with ([`WIRE_LIMITS`](fuzz_gate::WIRE_LIMITS)), and agrees: the
+/// same claim as for the grammar vectors above.
+#[test]
+fn every_wire_vector_is_judged() {
+    use fuzz_gate::{idl_repo, idl_targets};
+    use idl::{conformance::Judged, schema::Schema};
+    common::on_big_stack(|| {
+        let mut judged = 0;
+        for i in idl_repo::LOADED.iter() {
+            for (minor, w) in i.repo.wire.iter().enumerate() {
+                let minor = minor as u16;
+                let s = Schema::new(&i.checked, minor);
+                let g = i.wire_grammar(minor);
+                let readers = idl_repo::MODULES.iter().copied().filter(|m| {
+                    m.name == i.repo.name && m.major == i.repo.major && m.minor >= minor
+                });
+                for m in readers {
+                    for v in seeds::wire_vectors(w) {
+                        let j = idl_targets::differential_of(m, &s, g, &v.rule, v.caps, &v.octets);
+                        assert_ne!(
+                            j,
+                            Judged::Unjudged,
+                            "{}:{} read by {}/{}.{}",
+                            w.vectors_path,
+                            v.line,
+                            m.name,
+                            m.major,
+                            m.minor
+                        );
+                        judged += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("{judged} wire vectors judged");
+        assert!(judged > 500, "{judged}");
     });
 }
 
@@ -344,7 +439,105 @@ fn parsers_scale_linearly() {
         scales_linearly("vectors::parse", &file(64 << 10), &file(1 << 20), |t| {
             vectors::parse(t).unwrap();
         });
+        // C07's targets, whole: the front end on a file of n members and
+        // one of 16n, both within the agreement check's reach, so both
+        // run the grammar oracle; then on files of structs either side of
+        // it, 65 KiB and 1 MiB, on which only the front end runs. Their
+        // fields write their positions, so each canonical form is shorter
+        // than its file, and within the source limit.
+        let file = |body: String| {
+            format!(
+                "edition 2026;\n[id(org.example.y), object_id(reserved(0x0301)), version(1.0)]\ninterface y {{\n{body}}}\n"
+            )
+            .into_bytes()
+        };
+        let members = |n: usize| file((1..=n).map(|k| format!("    @{k} m{k}();\n")).collect());
+        let (small, large) = (members(200), members(3200));
+        assert!(large.len() <= AGREEMENT_MAX, "{}", large.len());
+        scales_linearly(
+            "idl-front-end",
+            &small,
+            &large,
+            fuzz_gate::idl_targets::front_end,
+        );
+        let structs = |n: usize| {
+            let mut body = String::new();
+            let mut k = 0;
+            while body.len() + 3400 < n {
+                body += &format!("    struct s{k} {{ ");
+                for f in 0..200 {
+                    body += &format!("@{} f{f}: u32, ", f + 1);
+                }
+                body += "}\n";
+                k += 1;
+            }
+            file(body)
+        };
+        let (small, large) = (structs(AGREEMENT_MAX + 3400), structs(1 << 20));
+        assert!(small.len() > AGREEMENT_MAX, "{}", small.len());
+        assert_eq!(fuzz_gate::idl_targets::front_end_kinds(&large), ["ok"]);
+        scales_linearly(
+            "idl-front-end, past the agreement check",
+            &small,
+            &large,
+            fuzz_gate::idl_targets::front_end,
+        );
+        // A decoder on a byte string 16 times longer: the catalog's
+        // `proof`, at 512 octets and at its bound, 8192. Only the short
+        // one is judged a third time with its grammar (`REJUDGE_MAX`),
+        // which lowers the ratio by at most a third: quadratic work would
+        // still give about 170.
+        let (small, large) = proofs(512, 8192);
+        scales_linearly("idl-decode", &small, &large, fuzz_gate::idl_targets::decode);
     });
+}
+
+/// `idl-decode` inputs of aspis.catalog/1.1's register request, with its
+/// `proof` `small` and `large` octets long: built from its bound seed,
+/// which `tests/targets.rs` holds to be there.
+fn proofs(small: usize, large: usize) -> (Vec<u8>, Vec<u8>) {
+    use fuzz_gate::{idl_repo, idl_targets};
+    use idl::{schema::Schema, value::Value};
+    let m = idl_repo::MODULES
+        .iter()
+        .copied()
+        .find(|m| m.name == "aspis.catalog" && m.minor == 1)
+        .unwrap();
+    let i = idl_repo::interface_of(m).unwrap();
+    let s = Schema::new(&i.checked, 1);
+    let x = idl::vectors::samples(&s, &idl::vectors::Budget::default())
+        .unwrap()
+        .into_iter()
+        .find(|x| s.top_rule(x.top) == "m-register--req")
+        .unwrap();
+    let w = idl_targets::widen(&s, x.top, &x.value)
+        .into_iter()
+        .find(|w| w.path == "proof")
+        .unwrap();
+    assert_eq!(w.bound, large as u64);
+    // The widened value with its proof cut to `n` octets.
+    fn cut(v: &Value, n: usize) -> Value {
+        match v {
+            Value::Bytes(b) if b.len() > n => Value::Bytes(b[..n].to_vec()),
+            Value::Text(t) if t.len() > n => Value::Text(t[..n].to_string()),
+            Value::Struct(f) => Value::Struct(idl::value::Fields {
+                known: f
+                    .known
+                    .iter()
+                    .map(|x| x.as_ref().map(|x| cut(x, n)))
+                    .collect(),
+                unknown: f.unknown.clone(),
+            }),
+            Value::Opt(Some(x)) => Value::Opt(Some(Box::new(cut(x, n)))),
+            other => other.clone(),
+        }
+    }
+    let input = |n: usize| {
+        let enc = idl::value::encode(&s, x.top, &cut(&w.at, n), true);
+        assert!(!enc.refused);
+        idl_targets::decode_input(m, "m-register--req", 1, enc.caps, &enc.octets).unwrap()
+    };
+    (input(small), input(large))
 }
 
 /// The same on inputs that are rejected, with the error at the end, and
@@ -466,6 +659,23 @@ fn rejecting_and_escaping_scale_linearly() {
                 assert_eq!(e.kind, GrammarErrorKind::Syntax);
             },
         );
+        // `idl-names` on labels joined by dots with a bad octet at the
+        // end, 84 and 1344 octets: every parser refuses them, and the
+        // agreement check judges every rule.
+        let dotted = |n: usize| {
+            let mut d = b"a.".repeat(n / 2 - 1);
+            d.extend_from_slice(b"a!");
+            d
+        };
+        scales_linearly(
+            "idl-names, error at the end",
+            &dotted(84),
+            &dotted(1344),
+            |d| {
+                assert_eq!(fuzz_gate::idl_targets::names_kinds(d), ["refused"]);
+                fuzz_gate::idl_targets::names(d);
+            },
+        );
     });
 }
 
@@ -497,5 +707,113 @@ fn depth_is_limited() {
             g.matches(g.rule("a").unwrap(), &deep),
             Err(Exhausted::Depth)
         );
+    });
+}
+
+/// `idl-decode` judges its longest inputs within the limits its wire
+/// grammars match with ([`WIRE_LIMITS`](fuzz_gate::WIRE_LIMITS)), and
+/// within half its timeout in this build: for each rule each module
+/// reads, its longest seed padded to the target's longest input, a
+/// message past idl-rt's 16 KiB cap, with `a` (a text octet, which a
+/// string or an open tail takes) and with `0xff`. An input the grammar can't judge panics.
+#[test]
+fn idl_decode_judges_its_longest_inputs() {
+    use fuzz_gate::idl_targets;
+    common::on_big_stack(|| {
+        let t = fuzz_gate::target("idl-decode").unwrap();
+        let mut longest = std::collections::BTreeMap::new();
+        for (_, bytes) in (t.seeds)() {
+            let Some((m, rest)) = idl_targets::split_frame(&bytes) else {
+                continue;
+            };
+            let Some(p) = idl_targets::pick(m, rest) else {
+                continue;
+            };
+            let key = (m.name, m.major, m.minor, p.minor, p.rule);
+            let e = longest.entry(key).or_insert_with(Vec::new);
+            if bytes.len() > e.len() {
+                *e = bytes.clone();
+            }
+        }
+        let max = t.max_len;
+        let mut judged = 0;
+        let mut slowest = (0.0f64, String::new());
+        for (key, bytes) in &longest {
+            for pad in [b'a', 0xff] {
+                let mut input = bytes.clone();
+                input.resize(max, pad);
+                let start = Instant::now();
+                // None for a rule the reading minor lacks.
+                let j = idl_targets::decode_judged(&input);
+                let secs = start.elapsed().as_secs_f64();
+                judged += usize::from(j.is_some());
+                if secs > slowest.0 {
+                    slowest = (secs, format!("{key:?} padded with {pad:#04x}"));
+                }
+            }
+        }
+        eprintln!(
+            "idl-decode: {} rules padded to {max} octets, {judged} judged; slowest {} at {:.1} ms",
+            longest.len(),
+            slowest.1,
+            slowest.0 * 1e3
+        );
+        assert!(judged > 500, "{judged}");
+        assert!(
+            slowest.0 < f64::from(t.timeout_s) / 2.0,
+            "{}: {:.0} ms",
+            slowest.1,
+            slowest.0 * 1e3
+        );
+    });
+}
+
+/// Every message C07's generator makes is judged within the limits
+/// `idl-generated` matches with ([`WIRE_LIMITS`](fuzz_gate::WIRE_LIMITS):
+/// 8 M steps a match):
+/// every seed, and 16 inputs of [`SplitMix64`](fuzz_gate::generate::SplitMix64)
+/// octets for each top-level body of every module at every minor it
+/// reads, of 0, 8, ..., 120 octets, as `crates/idl/tests/fuzz.rs` grows
+/// them. Each must be accepted by the binding, the grammar and the
+/// dynamic codec, and none may run out of the grammar's budget: C07's
+/// own test asserts `matches_constrained == Ok(true)` on such values, and
+/// this shows the target's limits keep that.
+#[test]
+fn generated_messages_are_judged() {
+    use fuzz_gate::{generate::SplitMix64, idl_repo, idl_targets};
+    use idl::{conformance::Judged, schema::Schema};
+    common::on_big_stack(|| {
+        let t = fuzz_gate::target("idl-generated").unwrap();
+        let mut judged = 0;
+        for (name, bytes) in (t.seeds)() {
+            let j = idl_targets::generated_judged(&bytes);
+            assert_ne!(j, Some(Judged::Unjudged), "{name}");
+            judged += usize::from(j.is_some());
+        }
+        for &m in idl_repo::MODULES.iter() {
+            let i = idl_repo::interface_of(m).unwrap();
+            for minor in 0..=m.minor {
+                let s = Schema::new(&i.checked, minor);
+                for (k, top) in s.tops().into_iter().enumerate() {
+                    let mut src = SplitMix64(u64::from(minor) << 16 | k as u64);
+                    for n in 0..16 {
+                        let choices: Vec<u8> =
+                            (0..n).flat_map(|_| src.next_u64().to_le_bytes()).collect();
+                        let j = idl_targets::generated_with(m, m, minor, top, &choices);
+                        assert_eq!(
+                            j,
+                            Some(Judged::Accepted),
+                            "{}/{}.{} at {minor}: {}",
+                            m.name,
+                            m.major,
+                            m.minor,
+                            s.top_rule(top)
+                        );
+                        judged += 1;
+                    }
+                }
+            }
+        }
+        eprintln!("{judged} generated messages judged");
     });
 }

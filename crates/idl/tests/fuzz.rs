@@ -206,3 +206,33 @@ fn the_generator_has_a_hard_cap() {
     }
     assert!(start.elapsed().as_secs() < 10, "{:?}", start.elapsed());
 }
+
+/// A file within the source limit whose canonical form is over it: the
+/// form writes out every tag (`@200 f199: u32`), so a dense file of
+/// structs grows by about a third. The checker refuses it with
+/// `Code::Limit`, so the front end never checks a form over the limit.
+/// Found by C71's `idl-front-end` tests, when the front end panicked on
+/// the form; `tests/check.rs` holds the rule at a small limit.
+#[test]
+fn a_canonical_form_over_the_source_limit_is_refused() {
+    let limit = idl::Limits::default().source;
+    let mut body = String::new();
+    let mut k = 0;
+    while body.len() + 2400 < limit - 200 {
+        body += &format!("    struct s{k} {{ ");
+        for f in 0..200 {
+            body += &format!("f{f}: u32, ");
+        }
+        body += "}\n";
+        k += 1;
+    }
+    let src = format!(
+        "edition 2026;\n[id(org.example.y), object_id(reserved(0x0301)), version(1.0)]\ninterface y {{\n{body}}}\n"
+    );
+    assert!(src.len() <= limit, "{}", src.len());
+    let d = idl::check(src.as_bytes(), &mut |_: &_| None, &idl::Limits::default()).unwrap_err();
+    assert_eq!(d.len(), 1, "{d:?}");
+    assert_eq!(d[0].code, idl::Code::Limit);
+    assert!(d[0].message.contains("canonical form"), "{}", d[0]);
+    fuzz::front_end(src.as_bytes());
+}

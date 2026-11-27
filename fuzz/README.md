@@ -25,7 +25,7 @@ Run fuzzing through `cargo xtask fuzz`. Never use `cargo fuzz run`, `tmin` or `c
 
 | Command | What it does |
 |---|---|
-| `cargo xtask fuzz list [--shard i/n] [--names]` | The targets, with their chunks, records, limits and paths; `--shard` gives a nightly shard's |
+| `cargo xtask fuzz list [--shard i/n] [--names]` | The targets, with their chunks, records, limits, paths and extra paths; `--shard` gives a nightly shard's |
 | `cargo xtask fuzz install` | Installs the pinned cargo-fuzz and cargo-deny (`[workspace.metadata.aspis]` in `Cargo.toml`) |
 | `cargo xtask fuzz build` | Checks the tools, the product lock and the fuzz lock; builds every target with `-s none`; checks the oracle; writes the seeds and regressions to `build/fuzz/` |
 | `cargo xtask fuzz replay [<target> [<file>…]] [--repeat <n>]` | Runs every seed, regression and corpus input once (`-runs=0`), or the given files |
@@ -37,7 +37,7 @@ Run fuzzing through `cargo xtask fuzz`. Never use `cargo fuzz run`, `tmin` or `c
 | `cargo xtask fuzz differential [--seed S] [--cases N] [--jobs n] [--timeout s] [--budget s]` | The two ABNF checkers on generated grammars (rule 6). Set `ASPIS_PYTHON` to a Python with `abnf==2.9.1`. `--budget` stops starting batches after that many seconds. `--self-test` shows it detects a flipped tag and a Python that runs out of time |
 | `cargo xtask fuzz report [<target>…]` | Each target's runs of the binary built now (its build is the SHA-256 of the binary): measured CPU-hours, CPU-hours since the last finding, executions, coverage, and the error kinds reached. Runs of other builds are counted apart, and don't count |
 | `cargo xtask fuzz coverage [<target>…]` | Builds the targets with coverage instrumentation, replays their seeds, regressions and corpus, and reports lines, regions and functions of each target's crates, and of each crate over all its targets |
-| `cargo xtask fuzz nightly [--time s] [--budget s] [--jobs n] [--seed s] [--shard i/n]` | What the nightly job runs: `build`, `replay`, then each target for `--time` (600 s), or its share of `--budget`, with its corpus merged after, then `coverage` and `report`. It keeps going after a finding and fails at the end |
+| `cargo xtask fuzz nightly [--time s] [--budget s] [--jobs n] [--seed s] [--shard i/n]` | What the nightly job runs: `build`, `replay`, then each target for `--time` (600 s), or its share of `--budget`, with its corpus merged after, then `coverage` and `report`. It keeps going after a finding and fails at the end. CI runs it in two shards, `--shard 1/2` and `--shard 2/2`, as a matrix |
 
 `cargo xtask test` also replays every target's seeds and regressions through the same entry functions under plain `cargo test`, without libFuzzer (rule 7).
 
@@ -51,7 +51,7 @@ Building the targets needs a C++ compiler, for libFuzzer. The fuzz build always 
 | `target-coverage/` | The coverage build |
 | `target-host/` | The harness, its tests, and clippy |
 | `seeds/<target>/`, `regressions/<target>/` | What libFuzzer reads: the committed files and the generated seeds |
-| `corpus/<target>/` | The growing corpus; in CI, the nightly's Actions cache. `nightly` merges it through `corpus.new/<target>/` |
+| `corpus/<target>/` | The growing corpus; in CI, the nightly's Actions cache, one per nightly shard. The per-change job restores both; each nightly shard restores both and keeps only its own targets'. `nightly` merges it through `corpus.new/<target>/` |
 | `artifacts/<target>/` | Findings: crash, timeout and out-of-memory inputs |
 | `dict/targets/<target>.dict` | The target's libFuzzer dictionary. C07's per-grammar dictionaries (`cargo xtask fuzz-dict`) go beside it, in `dict/`. |
 | `logs/<target>-<seed>.log` | The last run's whole libFuzzer log |
@@ -64,8 +64,8 @@ Building the targets needs a C++ compiler, for libFuzzer. The fuzz build always 
 
 A parser's chunk passes the gate for each of its targets ([0068](../docs/decisions/0068-the-fuzzing-and-differential-testing-gate.md), rule 5), and its pull request records the evidence:
 
-1. Add the target: a row in `gate/src/lib.rs`'s `TARGETS`, an entry function and its `kinds_of` in `gate/`, a file in `fuzz_targets/`, a `[[bin]]` in `Cargo.toml`, and committed seeds for the error kinds the vector lines don't reach. `cargo xtask fuzz kinds <target>` shows what is missing.
-2. `cargo xtask fuzz build` and `cargo xtask fuzz measure <target>`. Set the timeout and the memory bound so the slowest seed takes under a quarter of the timeout, and record any override, with its reason, in the table and in "The harness".
+1. Add the target: a row in `gate/src/lib.rs`'s `TARGETS`, an entry function and its `kinds_of` in `gate/`, a file in `fuzz_targets/`, a `[[bin]]` in `Cargo.toml`, and committed seeds for the error kinds the vector lines don't reach. `cargo xtask fuzz kinds <target>` shows what is missing. The row's `paths` select it per change and count in its coverage; for a target that a crate or file other than its own selects, such as the reference matcher, a crate generated into `OUT_DIR` or an ASPIS crate the entry calls, list that in `extra_paths`.
+2. `cargo xtask fuzz build` and `cargo xtask fuzz measure <target>`. Set the timeout and the memory bound so the slowest seed takes under a quarter of the timeout, and record any override, with its reason, in the table and in "The harness". `measure` runs the seeds in the test build (opt-level 1), which can be about twice as fast as the fuzz binary, as it is on `idl-front-end`: time the slowest seed in the fuzz binary too, with `cargo xtask fuzz replay <target> <file>`.
 3. Fuzz until `cargo xtask fuzz report <target>` shows at least 1 measured CPU-hour since the last finding, on the binary built from the code under review: a change to the target's code makes a new build, whose count starts from zero, so fuzz last. For example, `cargo xtask fuzz run <target> --time 2400 --jobs 2`. Slow targets do better as two in-process runs with different `--seed`s on the shared corpus. Leave cores free for other work on the machine.
 4. `cargo xtask fuzz coverage <target>`. Put the report's table, and `report`'s, in the pull request, and review the lines the corpus never reaches. The HTML stays under `build/fuzz/coverage/`.
 

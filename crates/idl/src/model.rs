@@ -26,7 +26,7 @@ use idl_rt::names::InterfaceRef;
 use crate::{
     Limits,
     ast::{self, AttrArg, Bound, File, IntType, Member, MemberKind, TypeRef, Use, Version},
-    check as rules,
+    canon, check as rules,
     diag::{Code, Diagnostic},
     layout::{self, Layout},
     parse, project,
@@ -258,6 +258,35 @@ pub fn check(
     })
 }
 
+/// A checked file's canonical form at every minor fits the source limit,
+/// so a stored canonical form checks again under the limits its file did
+/// (docs/design/call-language.md, "Types", Limits). A canonical form
+/// writes out every position and space, so it can be longer than its
+/// file.
+///
+/// One form bounds them all: the one at the file's version. Projecting to
+/// a higher minor only keeps more: members, fields, arms, values, errors
+/// in a method's list, `deprecated` marks, action groups and imported
+/// names, each written as at the lower minor, or with a position no
+/// smaller; and a single `result` field becomes a results list. Only the
+/// header's minor changes otherwise, and it has no fewer digits. So the
+/// check builds one form, and stays linear in the file, however many
+/// minors it declares (ADR 0068, rule 5).
+fn canonical_limit(unit: &Unit, limits: &Limits) -> Option<Diagnostic> {
+    let v = unit.version;
+    let n = canon::canonical(&project::project(&unit.file, v.minor)).len();
+    (n > limits.source).then(|| {
+        Diagnostic::new(
+            unit.file.interface.name.span,
+            Code::Limit,
+            format!(
+                "the canonical form of {}.{} is {n} octets, over the source limit of {}: it writes out every field's position, and must check again under the file's limits",
+                v.major, v.minor, limits.source
+            ),
+        )
+    })
+}
+
 struct Loader<'l, 'r> {
     resolve: &'l mut Resolver<'r>,
     limits: &'l Limits,
@@ -292,6 +321,9 @@ impl Loader<'_, '_> {
         let unit = self.model.units.len() - 1;
         let mut diags = rules::run(&self.model, unit, self.limits);
         diags.extend(crate::doc::check(&self.model, unit));
+        if diags.is_empty() {
+            diags.extend(canonical_limit(&self.model.units[unit], self.limits));
+        }
         if diags.is_empty() {
             Ok(unit)
         } else {

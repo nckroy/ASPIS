@@ -21,6 +21,11 @@ workspace = true
 [dependencies]
 abnf = { path = "../../crates/abnf" }
 kargs = { path = "../../crates/kargs" }
+# C07's parsers and generated decoders, for the `idl-` targets.
+idl = { path = "../../crates/idl" }
+idl-rt = { path = "../../crates/idl-rt" }
+aspis-interfaces = { path = "../../crates/interfaces" }
+idl-fixtures = { path = "../../crates/idl-fixtures" }
 fuzz-alloc = { path = "../alloc" }
 
 [[bin]]
@@ -47,6 +52,10 @@ path = "tests/generator.rs"
 [[test]]
 name = "linear"
 path = "tests/linear.rs"
+
+[[test]]
+name = "bounds"
+path = "tests/bounds.rs"
 
 [[test]]
 name = "oracles"

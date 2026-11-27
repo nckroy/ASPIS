@@ -4,9 +4,10 @@
 //! Entry functions for fuzz targets (ADR 0068, rules 4 and 5;
 //! docs/design/call-language.md, "The gate for each target").
 //!
-//! C71's harness wraps each in a libFuzzer target; until then the crates'
-//! replay tests run them over every vector and over mutations. Each takes
-//! raw input, and panics only when a property breaks: that is the oracle.
+//! C71's harness wraps each in a libFuzzer target (`idl-names`,
+//! `idl-decode` and `idl-generated`); the crates' replay tests also run
+//! them over every vector and over mutations. Each takes raw input, and
+//! panics only when a property breaks: that is the oracle.
 //! They are plain functions, not behind `cfg(fuzzing)`, so the replay
 //! tests run them under plain `cargo test`, and they need no fuzz
 //! dependency.
@@ -19,10 +20,13 @@ use crate::{
     rules::{Module, Op, Verdict},
 };
 
-/// The longest message [`decode`] takes. Longer input is ignored: one IPC
-/// message is at most 960 octets, and the target's `max_len` is that plus
-/// 1 KiB ("The gate for each target", item 1). RPC frames are C18's and
-/// C29's targets.
+/// The longest message [`decode`] takes. Longer input is ignored. A body,
+/// spilled or not, may be this long. `idl-decode`'s `max_len` leaves room
+/// for it after the longest frame; after a shorter frame the target's
+/// inputs run past it, and only the harness's own checks judge the rest.
+/// Each large field's bound seeds exercise over-bound rejection ("The
+/// gate for each target", item 1). RPC frames are C18's and C29's
+/// targets.
 pub const MAX_MESSAGE: usize = 16 << 10;
 
 /// A message's JSON is at most this long. A control character takes six

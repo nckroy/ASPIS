@@ -4,8 +4,8 @@
 # The nightly QEMU matrix (C68; ADR 0036, rule 4): each CPU with each GIC,
 # at 1, 4 and 8 cores and 1 and 3 GiB, plus a run with the firmware at EL2.
 # Beside it, the nightly fuzzing (C71; ADR 0068, rule 8): every fuzz
-# target for 10 minutes on the merged, cached corpus, and the ABNF
-# differential on 20,000 generated cases; and TLC with the nightly
+# target for 10 minutes on the merged, cached corpus, in two shards, and
+# the ABNF differential on 20,000 generated cases; and TLC with the nightly
 # constants (C12; ADR 0068, rule 10), after crates/ksched's seeded host
 # tests at 20 times their per-change runs.
 
@@ -33,16 +33,19 @@ jobs:
       - run: cargo xtask matrix
 
   # Every fuzz target for 10 minutes of fuzzing, on the corpus the last
-  # night saved (docs/design/call-language.md, "Nightly"). The harness
-  # merges each target's corpus after its run, and this job saves it for
-  # the next night and for every pull request's replay. `--budget 4200`
-  # caps the fuzzing at 70 minutes in all: 7 targets get 10 minutes each,
-  # and each new target shortens the others' share. Corpus loads, merges,
-  # the builds and coverage come on top. When the share falls under about
-  # 8 minutes (9 targets), this becomes a matrix over `--shard i/n`, each
-  # shard saving its own targets' corpora ("The harness"). The step's own
-  # timeout fails the step, rather than canceling the job, so the corpus,
-  # coverage and findings are still saved.
+  # night saved (docs/design/call-language.md, "Nightly"), in a matrix of
+  # two shards: `--shard i/2` runs every second target from the i-th, 6
+  # and 5 of the 11. The harness merges each target's corpus after its
+  # run, and each shard saves its own targets' corpora under its own
+  # cache key, for the next night and for every pull request's replay,
+  # which restores both. `--budget 4200` caps a shard's fuzzing at 70
+  # minutes: up to 7 targets a shard get 10 minutes each, and each one
+  # more shortens the others' share. Corpus loads, merges, the builds and
+  # coverage come on top. A third shard comes when a shard's share gets
+  # too short (docs/design/call-language.md, "Seams for later",
+  # `--shard`; `tests/harness.rs`'s `nightly_shards` fails then).
+  # The step's own timeout fails the step, rather than canceling the job,
+  # so the corpus, coverage and findings are still saved.
   #
   # Until ASPIS's first release, findings are fixed in the open: the
   # findings and logs uploaded here are public for 7 days, and the job's
@@ -56,9 +59,13 @@ jobs:
   # `kernel-calls`, once the kernel interfaces' IDL and the interface
   # library exist (C07 and C17; ADR 0068, rule 11).
   fuzz:
-    name: Fuzz targets
+    name: Fuzz targets (shard ${{ matrix.shard }}/2)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
@@ -75,21 +82,45 @@ jobs:
             ~/.cargo/bin/cargo-deny
           key: fuzz-tools-${{ runner.os }}-${{ runner.arch }}-${{ steps.pins.outputs.hash }}-${{ hashFiles('rust-toolchain.toml') }}
       - run: cargo xtask fuzz install
-      - name: Fuzz corpus
+      # Both shards' caches (`v2` keys, apart from the unsharded `v1`
+      # cache), as the per-change job restores them: the second restore
+      # adds its directories beside the first's. Then only the shard's own
+      # targets' directories are kept, so it replays and saves only those,
+      # and a target that moves to the other shard, when a row is inserted
+      # mid-table, takes its corpus with it. A third shard adds a restore
+      # step here and in ci.yml's fuzz job.
+      - name: Fuzz corpus (shard 1)
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/fuzz/corpus
-          key: fuzz-corpus-v1-none
-          restore-keys: fuzz-corpus-v1-
+          key: fuzz-corpus-v2-s1-none
+          restore-keys: fuzz-corpus-v2-s1-
+      - name: Fuzz corpus (shard 2)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/fuzz/corpus
+          key: fuzz-corpus-v2-s2-none
+          restore-keys: fuzz-corpus-v2-s2-
+      - name: Keep the shard's own corpora
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          keep="$(cargo xtask fuzz list --shard "$SHARD/2" --names)"
+          mkdir -p build/fuzz/corpus
+          for d in build/fuzz/corpus/*/; do
+            [ -d "$d" ] || continue
+            grep -qxF "$(basename "$d")" <<< "$keep" || rm -rf "$d"
+          done
       # The seed is the run number, printed, so `cargo xtask fuzz run
       # <target> --time 600 --jobs 4 --seed <n>` repeats a target's run.
-      - name: Fuzz every target
+      - name: Fuzz the shard's targets
         timeout-minutes: 100
         env:
           SEED: ${{ github.run_number }}
+          SHARD: ${{ matrix.shard }}
         run: |
           [ -x /usr/bin/time ] || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends time; }
-          cargo xtask fuzz nightly --time 600 --budget 4200 --jobs "$(nproc)" --seed "$SEED"
+          cargo xtask fuzz nightly --shard "$SHARD/2" --time 600 --budget 4200 --jobs "$(nproc)" --seed "$SEED"
       - name: Save the fuzz corpus
         if: always()
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -97,12 +128,12 @@ jobs:
           path: build/fuzz/corpus
           # With the attempt, since a re-run keeps its run_id and a cache
           # key can't be saved twice.
-          key: fuzz-corpus-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          key: fuzz-corpus-v2-s${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Coverage and run records
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: fuzz-coverage
+          name: fuzz-coverage-${{ matrix.shard }}
           path: |
             build/fuzz/coverage/summary.md
             build/fuzz/coverage/*/report.txt
@@ -115,7 +146,7 @@ jobs:
         if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: fuzz-findings
+          name: fuzz-findings-${{ matrix.shard }}
           path: |
             build/fuzz/artifacts
             build/fuzz/logs
