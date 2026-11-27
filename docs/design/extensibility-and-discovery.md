@@ -3,7 +3,7 @@
 
 # Applications that extend the system, and the catalog that finds them
 
-*2026-11-24, updated 2026-11-25. Input to the design session. The decisions it led to are recorded in [ADR 0027](../decisions/0027-applications-extend-the-system.md) and [ADR 0028](../decisions/0028-discovery-and-realm-catalog.md).*
+*2026-11-24, updated 2026-11-26. Input to the design session. The decisions it led to are recorded in [ADR 0027](../decisions/0027-applications-extend-the-system.md) and [ADR 0028](../decisions/0028-discovery-and-realm-catalog.md).*
 
 1. [The tenets](#1-the-tenets)
 2. [What ASPIS already has](#2-what-aspis-already-has)
@@ -361,7 +361,7 @@ sequenceDiagram
 - **Namespace layout.** Where system names (`//<realm>/sys/…`) and the catalog's view sit in the realm's namespace.
 - **Standard service interfaces.** Should ASPIS define standard interfaces for common kinds of service, such as `aspis.sql`, `aspis.kv` and `aspis.queue`, so that providers are interchangeable?
 - **Moving an authority.** How a deploy's authority moves to a successor deploy, for blue/green releases or migrations.
-- **Queries.** Fixed kinds of query, or a small query language.
+- **Queries.** Fixed kinds of query, or selectors composed as an IDL value. A small query language is ruled out: a query is an IDL value, not a string a server parses ([0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 7).
 - **Watching over HTTPS.** How HTTPS clients watch: server-sent events, WebSockets or long polling.
 - **Delay targets.** How quickly a change must reach a node's replica, and its watchers.
 - **Enumeration.** Must every manager support watching every collection, or only directories? Decided: [0028](../decisions/0028-discovery-and-realm-catalog.md), rule 1: every manager's enumeration interface notifies watchers of changes, so watching isn't limited to directories.

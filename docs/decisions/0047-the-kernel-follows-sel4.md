@@ -71,7 +71,7 @@ The project owner chose seL4 as the model throughout on 2026-11-25. Claude draft
 
 - **The kernel stays small.** It has no heap, no policy, no IDs and no network code. Its new objects (eventcounts and their wait sets, memory objects, jobs, the log ring and the framebuffer) are each small, and each meets a need in the Context or an accepted record. The GICv3 ITS's tables are kernel objects too, because the kernel keeps MSI routing to itself ([0055](0055-interrupt-objects.md)).
 - **Developers can learn from seL4's documentation**, which covers most of the kernel's model. ASPIS's departures are listed in one place (rule 3).
-- **Nothing is verified.** seL4's proofs cover its C code in particular configurations, so they say nothing about a Rust kernel. ASPIS's assurance comes from testing, fuzzing (C71) and Rust's memory safety, and it should say so plainly. The invariants of rule 6 are what the tests check first.
+- **Nothing is verified.** seL4's proofs cover its C code in particular configurations, so they say nothing about a Rust kernel. ASPIS's assurance comes from testing, fuzzing (C71), model checking of its concurrent protocols' designs ([0068](0068-the-fuzzing-and-differential-testing-gate.md), rule 10) and Rust's memory safety, and it should say so plainly. The invariants of rule 6 are what the tests check first.
 - **This record settles D13.** Each need in the Context has a record that meets it:
   - copy-on-write clones: [0057](0057-memory-objects-and-the-pager-protocol.md);
   - a capability-table copy: [0049](0049-capability-spaces-rights-and-revocation.md), made by the kernel interface library ([0059](0059-the-kernel-interface-library.md));

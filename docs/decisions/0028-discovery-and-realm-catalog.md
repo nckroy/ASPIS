@@ -4,7 +4,7 @@
 # 0028. Discovery: a realm catalog of interfaces, types and objects, updated in real time
 
 - **Status:** Accepted
-- **Date:** 2026-11-24, updated 2026-11-25
+- **Date:** 2026-11-24, updated 2026-11-26
 
 ## Context
 
@@ -72,7 +72,7 @@ Facts this decision relies on (details and sources in the [design note](../desig
 7. **Queries.**
    - A query can select by ID, name, publisher, type or attribute. It can also select by interface and minimum version, under the DCE rule ([0014](0014-versioned-object-apis.md), rule 3).
    - Results arrive a page at a time, with a sequence number to watch from.
-   - Queries and results have text forms, defined in ABNF ([0013](0013-abnf-for-protocols-and-calls.md), rule 5).
+   - A query is an IDL value, not a string in a query language ([0013](0013-abnf-for-protocols-and-calls.md), rule 7). Queries and results have the canonical text forms of calls, defined in ABNF ([0013](0013-abnf-for-protocols-and-calls.md), rule 5).
 8. **Discovery is authorized.**
    - Seeing an entry is a Cedar action, `discover`. The catalog asks its node's PDP in batches ([0019](0019-authzen-decision-protocol.md)).
    - By default:

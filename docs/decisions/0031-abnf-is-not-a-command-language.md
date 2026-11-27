@@ -4,7 +4,7 @@
 # 0031. ABNF specifies protocols and formats, not the command interpreter
 
 - **Status:** Accepted
-- **Date:** 2026-11-24, updated 2026-11-25
+- **Date:** 2026-11-24, updated 2026-11-26
 
 ## Context
 
@@ -25,9 +25,10 @@ The command interpreter that users work in is still to be designed. That include
 
 - The command interpreter is a design question of its own: whether there is a native interpreter besides dm's commands and the POSIX shell ([0012](0012-posix-compatibility-layer.md)), what its language looks like, and how it is specified.
 - Every RPC and IPC call, every protocol message and every machine-read format that [0013](0013-abnf-for-protocols-and-calls.md), rule 2 covers keeps its normative ABNF grammar.
+- A query or filter that people type is the interpreter's syntax. The interpreter translates it into the IDL value it stands for before sending it ([0013](0013-abnf-for-protocols-and-calls.md), rule 7).
 
 ## References
 
 - [0011, dm](0011-dm-window-system.md), rule 6
-- [0013, ABNF for protocols, formats, and every RPC and IPC call](0013-abnf-for-protocols-and-calls.md), rules 2 and 5
+- [0013, ABNF for protocols, formats, and every RPC and IPC call](0013-abnf-for-protocols-and-calls.md), rules 2, 5 and 7
 - [RFC 5234, Augmented BNF for Syntax Specifications: ABNF](https://www.rfc-editor.org/rfc/rfc5234)
