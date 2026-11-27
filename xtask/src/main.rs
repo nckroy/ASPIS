@@ -505,7 +505,9 @@ const CRYPTO_SOFT_BACKENDS: &str = "--cfg sha2_backend=\"soft\" --cfg keccak_bac
 /// aspis-crypto's host tests beyond the default run (ADR 0069, rule 7):
 /// with `alloc`, which changes how the lattice key state is stored, and
 /// with the software backends forced, which the known answers otherwise
-/// never reach on a host that has the CPU features.
+/// never reach on a host that has the CPU features. Both add the opt-in
+/// `quic` feature, so AES-128-GCM's and QUIC's vectors run too; the
+/// default run checks the crate without it.
 fn crypto_tests() {
     let cargo = || {
         let mut c = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
@@ -515,12 +517,13 @@ fn crypto_tests() {
     run_cmd(
         cargo()
             .args(["test", "--locked", "--quiet", "-p", "aspis-crypto"])
-            .args(["--features", "alloc"]),
+            .args(["--features", "alloc,quic"]),
     );
     eprintln!("xtask: aspis-crypto with the software backends");
     run_cmd(
         cargo()
             .args(["test", "--locked", "--quiet", "-p", "aspis-crypto"])
+            .args(["--features", "quic"])
             .env("RUSTFLAGS", CRYPTO_SOFT_BACKENDS)
             .env("CARGO_TARGET_DIR", build_dir().join("target-crypto-soft")),
     );
@@ -722,9 +725,9 @@ fn matrix() {
     }
 }
 
-/// aspis-crypto's families, each a cargo feature (ADR 0069, rule 2). They
-/// are its default features, and [`check_crypto_families`] fails lint if
-/// the two lists differ.
+/// aspis-crypto's default families, each a cargo feature (ADR 0069, rule
+/// 2). They are its default features, and [`check_crypto_families`] fails
+/// lint if the two lists differ.
 const CRYPTO_FAMILIES: &[&str] = &[
     "sha3",
     "sha2",
@@ -734,7 +737,13 @@ const CRYPTO_FAMILIES: &[&str] = &[
     "ml-kem",
     "ml-dsa",
     "composite",
+    "hybrid",
 ];
+
+/// aspis-crypto's opt-in families, which no default includes: `quic`, the
+/// only way to reach AES-128 (ADR 0069, rule 2). Lint checks each alone,
+/// as it does the default ones.
+const CRYPTO_OPT_IN: &[&str] = &["quic"];
 
 /// The crates that would bring std or a source of randomness into
 /// aspis-crypto (ADR 0069, rule 1). `rand_core`, which holds only traits,
@@ -753,10 +762,37 @@ const CRYPTO_FORBIDDEN: &[&str] = &[
 ];
 
 /// Fails if [`CRYPTO_FAMILIES`] isn't aspis-crypto's `default` feature list,
-/// in crates/crypto/Cargo.toml, so no family skips the per-family lint.
+/// in crates/crypto/Cargo.toml, or if a feature other than `default` and
+/// `alloc` is in neither it nor [`CRYPTO_OPT_IN`], so no family skips the
+/// per-family lint. An opt-in family in `default` fails too.
 fn check_crypto_families() {
     let manifest = fs::read_to_string(root().join("crates/crypto/Cargo.toml"))
         .unwrap_or_else(|e| fail(format!("crates/crypto/Cargo.toml: {e}")));
+    let features: Vec<&str> = manifest
+        .lines()
+        .skip_while(|l| l.trim() != "[features]")
+        .skip(1)
+        .take_while(|l| !l.trim_start().starts_with('['))
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .filter_map(|l| l.split_once('=').map(|(name, _)| name.trim()))
+        .collect();
+    for feature in &features {
+        let known = ["default", "alloc"].contains(feature)
+            || CRYPTO_FAMILIES.contains(feature)
+            || CRYPTO_OPT_IN.contains(feature);
+        if !known {
+            fail(format!(
+                "aspis-crypto's feature {feature:?} is in neither xtask's CRYPTO_FAMILIES nor CRYPTO_OPT_IN"
+            ));
+        }
+    }
+    for family in CRYPTO_OPT_IN {
+        if !features.contains(family) {
+            fail(format!(
+                "aspis-crypto has no feature {family:?}, which xtask's CRYPTO_OPT_IN names"
+            ));
+        }
+    }
     let default = manifest
         .lines()
         .find_map(|l| l.trim().strip_prefix("default = ["))
@@ -771,6 +807,50 @@ fn check_crypto_families() {
         fail(format!(
             "aspis-crypto's default features {listed:?} differ from xtask's CRYPTO_FAMILIES {CRYPTO_FAMILIES:?}"
         ));
+    }
+}
+
+/// The manifests allowed to turn on aspis-crypto's `quic` feature, and so
+/// reach AES-128 (ADR 0003, rule 4; ADR 0069, rule 2). None does yet: C29's
+/// QUIC is the first that should, and the fuzz workspace's manifests join
+/// when C71 wraps aspis-crypto's fuzz entry points (rule 8).
+const CRYPTO_QUIC_USERS: &[&str] = &[];
+
+/// Fails if a manifest outside [`CRYPTO_QUIC_USERS`] turns on aspis-crypto's
+/// `quic` feature. Cargo merges features across a build, so naming `quic`
+/// anywhere can bring AES-128 to every crate built beside it.
+///
+/// The check reads each manifest as text, so it errs on the side of
+/// failing: a manifest fails if it forwards `aspis-crypto/quic` (or
+/// `aspis-crypto?/quic`), or if it names aspis-crypto at all and has a
+/// `"quic"` string outside a comment. A manifest that fails only because
+/// another crate has a `quic` feature belongs to QUIC code anyway, and
+/// goes on the list.
+fn check_crypto_quic_users() {
+    let manifests = grammars::tracked(&["*Cargo.toml"]);
+    for path in manifests
+        .iter()
+        .filter(|p| Path::new(p).file_name().is_some_and(|n| n == "Cargo.toml"))
+        .filter(|p| *p != "crates/crypto/Cargo.toml")
+        .filter(|p| !CRYPTO_QUIC_USERS.contains(&p.as_str()))
+    {
+        let text =
+            fs::read_to_string(root().join(path)).unwrap_or_else(|e| fail(format!("{path}: {e}")));
+        let lines: Vec<&str> = text
+            .lines()
+            .map(|l| l.split_once('#').map_or(l, |(code, _)| code))
+            .collect();
+        let forwards = lines
+            .iter()
+            .any(|l| l.contains("aspis-crypto/quic") || l.contains("aspis-crypto?/quic"));
+        let names_crypto = lines.iter().any(|l| l.contains("aspis-crypto"));
+        let names_quic = lines.iter().any(|l| l.contains("\"quic\""));
+        if forwards || (names_crypto && names_quic) {
+            fail(format!(
+                "{path} may turn on aspis-crypto's `quic` feature, which reaches AES-128; \
+                 only the manifests in xtask's CRYPTO_QUIC_USERS may (ADR 0069, rule 2)"
+            ));
+        }
     }
 }
 
@@ -868,7 +948,8 @@ fn lint() {
     // it (ADR 0069, rule 2): every target still compiles, nothing is left
     // unused, and the family alone builds without std.
     check_crypto_families();
-    for family in CRYPTO_FAMILIES {
+    check_crypto_quic_users();
+    for family in CRYPTO_FAMILIES.iter().chain(CRYPTO_OPT_IN) {
         run_cmd(
             cargo()
                 .args(["clippy", "--locked", "--all-targets", "-p", "aspis-crypto"])
@@ -898,7 +979,7 @@ fn lint() {
             ])
             .args([
                 "--features",
-                "idl-rt/alloc,aspis-interfaces/alloc,idl-fixtures/alloc,aspis-crypto/alloc",
+                "idl-rt/alloc,aspis-interfaces/alloc,idl-fixtures/alloc,aspis-crypto/alloc,aspis-crypto/quic",
             ])
             .args(["--", "-D", "warnings"]),
     );

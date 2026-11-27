@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! The AEADs of ADR 0003, rule 4 (feature `aead`): ChaCha20-Poly1305 (RFC
-//! 8439, section 2.8) and AES-256-GCM (NIST SP 800-38D), and AES-128-GCM
-//! for QUIC's Initial packets and Retry tags alone.
+//! 8439, section 2.8) and AES-256-GCM (NIST SP 800-38D), and, with the
+//! `quic` feature alone, AES-128-GCM for QUIC's Initial packets and Retry
+//! tags.
 //!
 //! ChaCha20-Poly1305 and AES-256-GCM take a 256-bit key, and they protect
 //! secrets. AES-128-GCM takes a 128-bit key, and rule 4 admits it only for
@@ -11,7 +12,11 @@
 //! Initial packets with a key derived from the client's Destination
 //! Connection ID, and its Retry integrity tag with a key the RFC fixes
 //! (RFC 9001, sections 5.2 and 5.8). Those keys guard against corruption,
-//! not eavesdropping. Every key that protects secrets is 256 bits.
+//! not eavesdropping. Every key that protects secrets is 256 bits. So
+//! `Aes128GcmKey` and `AES_128_KEY_LEN` exist only with the `quic`
+//! feature, which isn't a default one. A crate that doesn't name it can't
+//! reach AES-128 when built on its own, and `cargo xtask lint` keeps
+//! `quic` to the QUIC code it lists (ADR 0069, rule 2).
 //!
 //! Each takes a 96-bit nonce and gives a 128-bit tag. Nonces are the
 //! caller's to manage: a nonce must never repeat under one key, which TLS
@@ -23,7 +28,9 @@
 //! a tag doesn't verify, the output is zeroed before the error returns, so
 //! no unauthenticated octets reach the caller.
 
-use aes_gcm::{Aes128Gcm, Aes256Gcm, AesGcm};
+#[cfg(feature = "quic")]
+use aes_gcm::Aes128Gcm;
+use aes_gcm::{Aes256Gcm, AesGcm};
 use chacha20poly1305::ChaCha20Poly1305;
 use chacha20poly1305::aead::{
     AeadInOut, KeyInit,
@@ -36,7 +43,8 @@ use crate::Error;
 
 /// The key length in octets of ChaCha20-Poly1305 and AES-256-GCM.
 pub const KEY_LEN: usize = 32;
-/// The key length in octets of AES-128-GCM.
+/// The key length in octets of AES-128-GCM (feature `quic`).
+#[cfg(feature = "quic")]
 pub const AES_128_KEY_LEN: usize = 16;
 /// The nonce length in octets.
 pub const NONCE_LEN: usize = 12;
@@ -260,10 +268,11 @@ aead_key!(
     KEY_LEN
 );
 
+#[cfg(feature = "quic")]
 aead_key!(
     /// An AES-128-GCM key (NIST SP 800-38D), for QUIC v1's Initial
     /// packets and Retry integrity tags only (RFC 9001, sections 5.2 and
-    /// 5.8).
+    /// 5.8). It exists only with the `quic` feature.
     ///
     /// ADR 0003, rule 4 admits it only for keys a standard derives from
     /// public values. An Initial key comes from the client's Destination
@@ -278,7 +287,9 @@ aead_key!(
 
 #[cfg(test)]
 mod tests {
-    use super::{Aes128Gcm, Aes256Gcm, ChaCha20Poly1305, Limits};
+    #[cfg(feature = "quic")]
+    use super::Aes128Gcm;
+    use super::{Aes256Gcm, ChaCha20Poly1305, Limits};
 
     /// The limits are the libraries' own, at their edges. Inputs this
     /// long can't be allocated in a test, so only the checks are run.
@@ -291,8 +302,11 @@ mod tests {
         assert!(Aes256Gcm::fits(p_max, (1 << 61) - 1));
         assert!(!Aes256Gcm::fits(p_max + 1, 0));
         assert!(!Aes256Gcm::fits(0, 1 << 61));
-        assert!(Aes128Gcm::fits(p_max, (1 << 61) - 1));
-        assert!(!Aes128Gcm::fits(p_max + 1, 0));
-        assert!(!Aes128Gcm::fits(0, 1 << 61));
+        #[cfg(feature = "quic")]
+        {
+            assert!(Aes128Gcm::fits(p_max, (1 << 61) - 1));
+            assert!(!Aes128Gcm::fits(p_max + 1, 0));
+            assert!(!Aes128Gcm::fits(0, 1 << 61));
+        }
     }
 }

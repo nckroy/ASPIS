@@ -3,21 +3,32 @@
 
 //! Replays the fuzz entry points of `aspis_crypto::fuzz` (ADR 0068, rule
 //! 5; ADR 0069, rule 8) over every public key, ciphertext, signature,
-//! QUIC packet and identifier in `tests/data/`, and over mutations of
-//! each, so they run
-//! under `cargo test` with no fuzz engine. C71's harness seeds its corpora
-//! from the same files.
+//! QUIC packet and identifier in `tests/data/`, X25519MLKEM768 key shares
+//! built from them, and mutations of each, so they run under `cargo test`
+//! with no fuzz engine. C71's harness seeds its corpora from the same
+//! files.
 //!
 //! The differential seam runs here against no oracle, and against one
 //! built on the libraries' raw APIs and aspis-crypto's public API, which
 //! must agree. C71's oracle is libcrux, inside `fuzz/`.
+//!
+//! AES-128-GCM and QUIC's header protection exist only with the crate's
+//! `quic` feature. Without it, their seeds go through the entries too, and
+//! the tests check that those selectors do nothing.
 
 mod common;
 
 use aspis_crypto::Error;
-use aspis_crypto::aead::{Aes128GcmKey, Aes256GcmKey, ChaCha20Poly1305Key};
+#[cfg(feature = "quic")]
+use aspis_crypto::aead::Aes128GcmKey;
+use aspis_crypto::aead::{Aes256GcmKey, ChaCha20Poly1305Key};
 use aspis_crypto::algorithm::{Algorithm, JoseName, TlsCodepoint};
-use aspis_crypto::fuzz::{self, AEAD_128_KEY, AEAD_KEY, DIFFERENTIAL_PRIMITIVES, Oracle};
+#[cfg(feature = "quic")]
+use aspis_crypto::fuzz::AEAD_128_KEY;
+use aspis_crypto::fuzz::{
+    self, AEAD_KEY, DIFFERENTIAL_PRIMITIVES, KEY_SHARE_M, ML_KEM_SEED, Oracle, X25519_SEED,
+};
+use aspis_crypto::hybrid::X25519MlKem768DecapsulationKey;
 use common::{Value, base64, field, hex, vectors};
 
 const RFC7748: &str = include_str!("data/rfc7748.json");
@@ -129,6 +140,41 @@ fn public_keys() -> Vec<Vec<u8>> {
             "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
         )],
     ));
+    out
+}
+
+/// `fuzz::key_share` inputs: client shares (selector 0) of each ACVP
+/// encapsulation key, five of which fail the modulus check, with RFC
+/// 7748's public keys; server shares (selector 1) of each ACVP ciphertext
+/// with the same keys; the fixed client key's share, and a server share
+/// made for it, which decapsulates; and shares whose X25519 key is all
+/// zeros, which give `NonContributory`.
+fn key_shares() -> Vec<Vec<u8>> {
+    let x = rfc(RFC7748)
+        .into_iter()
+        .find(|t| t.get("tcId").as_str() == "Section 6.1")
+        .unwrap();
+    let keys = [field(&x, "alicePublicKey"), field(&x, "bobPublicKey")];
+    let mut out = Vec::new();
+    for (i, t) in acvp(KEM_KEYGEN)
+        .iter()
+        .chain(&acvp(KEM_ENCAP_DECAP))
+        .enumerate()
+    {
+        let pk = &keys[i % 2];
+        out.push(with(0, &[&field(t, "ek"), pk]));
+        if t.try_get("c").is_some() {
+            out.push(with(1, &[&field(t, "c"), pk]));
+        }
+    }
+    let client = X25519MlKem768DecapsulationKey::from_seed(&ML_KEM_SEED, &X25519_SEED);
+    let share = client.client_share();
+    let (server, _) = share.encapsulate(&KEY_SHARE_M, &[0x77; 32]).unwrap();
+    let (share, server) = (share.to_bytes(), server.to_bytes());
+    out.push(with(0, &[&share]));
+    out.push(with(1, &[&server]));
+    out.push(with(0, &[&share[..1184], &[0; 32]]));
+    out.push(with(1, &[&server[..1088], &[0; 32]]));
     out
 }
 
@@ -259,7 +305,8 @@ fn verify_inputs() -> Vec<(Vec<u8>, Expect)> {
 }
 
 /// `fuzz::aead_open` inputs that open: messages sealed under the fixed
-/// keys, with the nonce and aad the entry reads.
+/// keys, with the nonce and aad the entry reads. AES-128-GCM's need the
+/// `quic` feature.
 fn aead_inputs() -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     let messages: [&[u8]; 3] = [b"", b"a record", &[0x5a; 300]];
@@ -275,10 +322,13 @@ fn aead_inputs() -> Vec<Vec<u8>> {
             .seal(&nonce, aad, pt, &mut ct)
             .unwrap();
         out.push(with(1, &[&nonce, &[3], aad, &ct]));
-        Aes128GcmKey::from_bytes(&AEAD_128_KEY)
-            .seal(&nonce, aad, pt, &mut ct)
-            .unwrap();
-        out.push(with(2, &[&nonce, &[3], aad, &ct]));
+        #[cfg(feature = "quic")]
+        {
+            Aes128GcmKey::from_bytes(&AEAD_128_KEY)
+                .seal(&nonce, aad, pt, &mut ct)
+                .unwrap();
+            out.push(with(2, &[&nonce, &[3], aad, &ct]));
+        }
     }
     out
 }
@@ -292,7 +342,8 @@ fn rfc9001() -> Vec<Value> {
 /// them: the AEAD's selector, the packet's nonce, its unprotected header
 /// as the aad, and the protected payload. They are under the RFC's keys,
 /// not the entry's fixed ones, so each is refused with `Verification`.
-/// The Retry tag goes in as a ciphertext with no plaintext.
+/// The Retry tag goes in as a ciphertext with no plaintext. Without the
+/// `quic` feature, the AES-128-GCM ones (selector 2) open nothing.
 fn quic_inputs() -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for t in rfc9001() {
@@ -385,6 +436,7 @@ fn replay_vectors_and_error_kinds() {
     let mut kinds = Vec::new();
     replay(fuzz::public_key, &public_keys(), &mut kinds);
     replay(fuzz::ciphertext, &ciphertexts(), &mut kinds);
+    replay(fuzz::key_share, &key_shares(), &mut kinds);
     replay(fuzz::signature, &signatures(), &mut kinds);
     let verify: Vec<Vec<u8>> = verify_inputs().into_iter().map(|(v, _)| v).collect();
     replay(fuzz::verify, &verify, &mut kinds);
@@ -421,6 +473,21 @@ fn vectors_accepted() {
     for c in ciphertexts() {
         assert_eq!(fuzz::ciphertext(&c), Ok(()));
     }
+    // All but the last two, whose X25519 keys are all zeros. ML-KEM's
+    // key-check vectors include five keys that fail the modulus check.
+    let shares = key_shares();
+    let mut modulus = 0;
+    for s in &shares[..shares.len() - 2] {
+        match fuzz::key_share(s) {
+            Ok(()) => {}
+            Err(Error::Modulus) if s[0] == 0 => modulus += 1,
+            r => panic!("{r:?}"),
+        }
+    }
+    assert_eq!(modulus, 5);
+    for s in &shares[shares.len() - 2..] {
+        assert_eq!(fuzz::key_share(s), Err(Error::NonContributory));
+    }
     for s in signatures() {
         let r = fuzz::signature(&s);
         // Some of the sigVer vectors have malformed hints or z.
@@ -432,11 +499,17 @@ fn vectors_accepted() {
     for a in aead_inputs() {
         assert_eq!(fuzz::aead_open(&a), Ok(()));
     }
-    // RFC 9001's four packets, under keys other than the entry's.
+    // RFC 9001's four packets, under keys other than the entry's. Without
+    // `quic`, AES-128-GCM's selector returns `Ok` and opens nothing.
     let quic = quic_inputs();
     assert_eq!(quic.len(), 4);
     for q in quic {
-        assert_eq!(fuzz::aead_open(&q), Err(Error::Verification));
+        let expect = if cfg!(feature = "quic") || q[0] != 2 {
+            Err(Error::Verification)
+        } else {
+            Ok(())
+        };
+        assert_eq!(fuzz::aead_open(&q), expect);
     }
     let verify = verify_inputs();
     // RFC 8032's five, ACVP's sigGen and sigVer, RFC 10073's two, and two
@@ -538,7 +611,8 @@ fn differential_inputs() -> Vec<Vec<u8>> {
         out.push(with(20, &[&sk, &rnd, &len, &ctx, &m]));
         out.push(with(20, &[&sk, &rnd, &[0], &m]));
     }
-    // RFC 9001's AES-128-GCM payloads and AES-128 header protection.
+    // RFC 9001's AES-128-GCM payloads and AES-128 header protection,
+    // which are skipped without `quic`.
     for t in rfc9001() {
         let id = t.get("tcId").as_str().to_string();
         if id.starts_with("A.4") {
@@ -628,6 +702,7 @@ impl Oracle for Raw {
             .seal_in_place(nonce, aad, ct)
             .ok()
     }
+    #[cfg(feature = "quic")]
     fn aes128gcm_seal(
         &self,
         key: &[u8; 16],
@@ -643,12 +718,14 @@ impl Oracle for Raw {
             .ok()?;
         Some(tag.into())
     }
+    #[cfg(feature = "quic")]
     fn aes128_ecb(&self, key: &[u8; 16], block: &[u8; 16]) -> Option<[u8; 16]> {
         use aes::cipher::{BlockCipherEncrypt, KeyInit};
         let mut b = aes::Block::from(*block);
         aes::Aes128::new(key.into()).encrypt_block(&mut b);
         Some(b.into())
     }
+    #[cfg(feature = "quic")]
     fn aes256_ecb(&self, key: &[u8; 32], block: &[u8; 16]) -> Option<[u8; 16]> {
         use aes::cipher::{BlockCipherEncrypt, KeyInit};
         let mut b = aes::Block::from(*block);
@@ -758,6 +835,7 @@ fn differential_detects_disagreement() {
 }
 
 /// A wrong AES block makes the header-protection comparison panic.
+#[cfg(feature = "quic")]
 #[test]
 #[should_panic(expected = "header-protection mask differs from the oracle")]
 fn differential_detects_a_wrong_mask() {
@@ -770,4 +848,38 @@ fn differential_detects_a_wrong_mask() {
         }
     }
     fuzz::differential(&Flip, &with(23, &[&[1; 32], &[2; 16]]));
+}
+
+/// Without `quic`, the differential's AES-128-GCM and header-protection
+/// selectors (21 to 23) are skipped: an oracle that panics on their
+/// methods is never called, and the numbering is unchanged.
+#[cfg(not(feature = "quic"))]
+#[test]
+fn quic_selectors_skipped() {
+    struct Loud;
+    impl Oracle for Loud {
+        fn aes128gcm_seal(
+            &self,
+            _key: &[u8; 16],
+            _nonce: &[u8; 12],
+            _aad: &[u8],
+            _pt: &[u8],
+            _ct: &mut [u8],
+        ) -> Option<[u8; 16]> {
+            panic!("AES-128-GCM reached without quic")
+        }
+        fn aes128_ecb(&self, _key: &[u8; 16], _block: &[u8; 16]) -> Option<[u8; 16]> {
+            panic!("AES-128 reached without quic")
+        }
+        fn aes256_ecb(&self, _key: &[u8; 32], _block: &[u8; 16]) -> Option<[u8; 16]> {
+            panic!("AES-256 header protection reached without quic")
+        }
+    }
+    assert_eq!(DIFFERENTIAL_PRIMITIVES, 24);
+    for sel in 21..24 {
+        fuzz::differential(&Loud, &with(sel, &[&[7; 64]]));
+    }
+    for d in differential_inputs() {
+        fuzz::differential(&Loud, &d);
+    }
 }

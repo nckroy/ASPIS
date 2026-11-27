@@ -19,9 +19,10 @@ autotests = false
 workspace = true
 
 # One feature per family, so a user such as the IDL compiler builds only
-# what it takes (ADR 0069, rule 2).
+# what it takes (ADR 0069, rule 2). Every family but `quic` is a default
+# feature; `quic` is opt-in, and AES-128 is reachable only through it.
 [features]
-default = ["sha3", "sha2", "aead", "x25519", "ed25519", "ml-kem", "ml-dsa", "composite"]
+default = ["sha3", "sha2", "aead", "x25519", "ed25519", "ml-kem", "ml-dsa", "composite", "hybrid"]
 # Lets the crate allocate: the lattice crates then keep their large key
 # state on the heap rather than the stack. The API doesn't change.
 alloc = ["zeroize/alloc", "ml-kem?/alloc", "ml-dsa?/alloc"]
@@ -30,12 +31,19 @@ sha3 = ["dep:sha3", "dep:shake"]
 # SHA-256, SHA-384 and SHA-512 (FIPS 180-4), HMAC (RFC 2104) and HKDF
 # (RFC 5869).
 sha2 = ["dep:sha2", "dep:hmac", "dep:hkdf"]
-# ChaCha20-Poly1305 (RFC 8439), AES-256-GCM and AES-128-GCM (NIST SP
-# 800-38D), and QUIC's header-protection masks (RFC 9001, section 5.4),
-# from the AES block and ChaCha20 stream functions those AEADs are built
-# on. AES-128 serves only QUIC's Initial and Retry protection (ADR 0003,
-# rule 4).
-aead = ["dep:chacha20poly1305", "dep:aes-gcm", "dep:aes", "dep:chacha20"]
+# ChaCha20-Poly1305 (RFC 8439) and AES-256-GCM (NIST SP 800-38D), the
+# bulk ciphers of ADR 0003, rule 4.
+aead = ["dep:chacha20poly1305", "dep:aes-gcm"]
+# QUIC v1's fixed ciphers (ADR 0069, rule 2), not a default feature:
+# AES-128-GCM for Initial packets and Retry tags (NIST SP 800-38D; RFC
+# 9001, sections 5.2 and 5.8), and the header-protection masks (RFC 9001,
+# section 5.4), from the AES block and ChaCha20 stream functions the AEADs
+# are built on. ADR 0003, rule 4 admits AES-128 only for these keys, which
+# come from public values. A crate that doesn't name `quic` can't reach
+# AES-128 when built on its own, but cargo unifies features across a build,
+# so `cargo xtask lint` fails if a manifest outside its CRYPTO_QUIC_USERS
+# list names `quic`.
+quic = ["aead", "dep:aes", "dep:chacha20"]
 # X25519 (RFC 7748).
 x25519 = ["dep:x25519-dalek"]
 # Ed25519 (RFC 8032), verified strictly. curve25519-dalek gives the
@@ -48,6 +56,9 @@ ml-dsa = ["dep:ml-dsa"]
 # The composite signature id-MLDSA65-Ed25519-SHA512 (RFC 10073; ADR 0069,
 # rule 4), whose message representative takes SHA-512.
 composite = ["ml-dsa", "ed25519", "sha2"]
+# The hybrid key exchange X25519MLKEM768 (RFC 10024), TLS 1.3's group for
+# ADR 0003, rule 1, built from `x25519` and `ml-kem`.
+hybrid = ["x25519", "ml-kem"]
 
 # The primitives, from the workspace's pins (ADR 0069, rule 1). Every one is
 # built with its `zeroize` feature, so its key state is cleared on drop
@@ -79,6 +90,8 @@ ml-dsa = { workspace = true, optional = true, features = ["zeroize", "rand_core"
 
 # Each test names the families it uses, so a build with fewer families,
 # such as the IDL compiler's (sha3 alone), still compiles every target.
+# The AES-128 cases of aead, fuzz and secrets run only with `quic`, and
+# the rest of each without it.
 [[test]]
 name = "hash"
 path = "tests/hash.rs"
@@ -97,7 +110,7 @@ required-features = ["aead"]
 [[test]]
 name = "quic"
 path = "tests/quic.rs"
-required-features = ["aead", "sha2"]
+required-features = ["quic", "sha2"]
 
 [[test]]
 name = "x25519"
@@ -125,13 +138,18 @@ path = "tests/composite.rs"
 required-features = ["composite"]
 
 [[test]]
+name = "hybrid"
+path = "tests/hybrid.rs"
+required-features = ["hybrid", "sha3"]
+
+[[test]]
 name = "algorithm"
 path = "tests/algorithm.rs"
 
 [[test]]
 name = "fuzz"
 path = "tests/fuzz.rs"
-required-features = ["sha3", "sha2", "aead", "x25519", "ed25519", "ml-kem", "ml-dsa", "composite"]
+required-features = ["sha3", "sha2", "aead", "x25519", "ed25519", "ml-kem", "ml-dsa", "composite", "hybrid"]
 
 [[test]]
 name = "secrets"

@@ -79,14 +79,13 @@ pub enum Algorithm {
     /// The hybrid key exchange X25519MLKEM768 (RFC 10024), ASPIS's TLS
     /// group (ADR 0003, rule 1). It has no OID.
     ///
-    /// This crate gives its two halves, the `ml_kem` and `x25519`
-    /// modules, not the hybrid. The ML-KEM part comes first,
-    /// the reverse of the name: the client's share is the encapsulation
-    /// key (1,184 octets) followed by the X25519 public key (32), the
-    /// server's share is the ciphertext (1,088) followed by the X25519
-    /// public key (32), and the shared secret is ML-KEM's (32) followed by
-    /// X25519's (32). The caller assembles the 64-octet secret and keeps it
-    /// in a clearing buffer such as [`crate::Zeroizing`].
+    /// The `hybrid` module, with the `hybrid` feature, implements it from
+    /// the `ml_kem` and `x25519` modules. The ML-KEM part comes first, the
+    /// reverse of the name: the client's share is the encapsulation key
+    /// (1,184 octets) followed by the X25519 public key (32), the server's
+    /// share is the ciphertext (1,088) followed by the X25519 public key
+    /// (32), and the shared secret is ML-KEM's (32) followed by X25519's
+    /// (32).
     X25519MlKem768,
     /// ML-DSA-65 (FIPS 204).
     MlDsa65,

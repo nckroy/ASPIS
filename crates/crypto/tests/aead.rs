@@ -10,11 +10,17 @@
 //! notice; its values are copied below with this citation. Cases 5, 6, 17
 //! and 18 use 64-bit and 480-bit IVs, which the 96-bit-only API doesn't
 //! take. RFC 9001's AES-128-GCM vectors are in `quic.rs`.
+//!
+//! AES-128-GCM exists only with the crate's `quic` feature, so its cases
+//! run only there. Without it, the rest run with ChaCha20-Poly1305 and
+//! AES-256-GCM.
 
 mod common;
 
 use aspis_crypto::Error;
-use aspis_crypto::aead::{Aes128GcmKey, Aes256GcmKey, ChaCha20Poly1305Key, TAG_LEN};
+#[cfg(feature = "quic")]
+use aspis_crypto::aead::Aes128GcmKey;
+use aspis_crypto::aead::{Aes256GcmKey, ChaCha20Poly1305Key, TAG_LEN};
 use common::{array, field, hex, vectors};
 
 const RFC8439: &str = include_str!("data/rfc8439.json");
@@ -29,13 +35,14 @@ struct Case {
     tag: [u8; 16],
 }
 
-/// Any of the AEADs, so each check runs over all three. AES-GCM's key
-/// schedule is far larger than ChaCha20's key, which doesn't matter in a
-/// test.
+/// Any of the AEADs, so each check runs over all of them: three with
+/// `quic`, two without. AES-GCM's key schedule is far larger than
+/// ChaCha20's key, which doesn't matter in a test.
 #[allow(clippy::large_enum_variant)]
 enum Key {
     ChaCha(ChaCha20Poly1305Key),
     Aes(Aes256GcmKey),
+    #[cfg(feature = "quic")]
     Aes128(Aes128GcmKey),
 }
 
@@ -46,15 +53,17 @@ impl Key {
     /// AES-128-GCM or AES-256-GCM, by the key's length.
     fn aes(k: &[u8]) -> Self {
         match k.len() {
+            #[cfg(feature = "quic")]
             16 => Key::Aes128(Aes128GcmKey::from_bytes(k.try_into().unwrap())),
             _ => Key::Aes(Aes256GcmKey::from_bytes(k.try_into().unwrap())),
         }
     }
-    /// Every AEAD under keys of `octet`.
-    fn all(octet: u8) -> [Self; 3] {
-        [
+    /// Every AEAD built under keys of `octet`.
+    fn all(octet: u8) -> Vec<Self> {
+        vec![
             Key::chacha(&[octet; 32]),
             Key::aes(&[octet; 32]),
+            #[cfg(feature = "quic")]
             Key::aes(&[octet; 16]),
         ]
     }
@@ -62,6 +71,7 @@ impl Key {
         match self {
             Key::ChaCha(k) => k.seal_in_place(n, aad, buf),
             Key::Aes(k) => k.seal_in_place(n, aad, buf),
+            #[cfg(feature = "quic")]
             Key::Aes128(k) => k.seal_in_place(n, aad, buf),
         }
     }
@@ -75,6 +85,7 @@ impl Key {
         match self {
             Key::ChaCha(k) => k.open_in_place(n, aad, buf, tag),
             Key::Aes(k) => k.open_in_place(n, aad, buf, tag),
+            #[cfg(feature = "quic")]
             Key::Aes128(k) => k.open_in_place(n, aad, buf, tag),
         }
     }
@@ -82,6 +93,7 @@ impl Key {
         match self {
             Key::ChaCha(k) => k.seal(n, aad, pt, out),
             Key::Aes(k) => k.seal(n, aad, pt, out),
+            #[cfg(feature = "quic")]
             Key::Aes128(k) => k.seal(n, aad, pt, out),
         }
     }
@@ -89,6 +101,7 @@ impl Key {
         match self {
             Key::ChaCha(k) => k.open(n, aad, ct, out),
             Key::Aes(k) => k.open(n, aad, ct, out),
+            #[cfg(feature = "quic")]
             Key::Aes128(k) => k.open(n, aad, ct, out),
         }
     }
@@ -110,8 +123,8 @@ fn rfc8439_cases() -> Vec<Case> {
         .collect()
 }
 
-/// The GCM specification's test cases 1 to 4 (AES-128) and 13 to 16
-/// (AES-256), from Appendix B.
+/// The GCM specification's test cases 1 to 4 (AES-128), with the `quic`
+/// feature, and 13 to 16 (AES-256), from Appendix B.
 fn gcm_cases() -> Vec<Case> {
     let k128 = "feffe9928665731c6d6a8f9467308308";
     let k = "feffe9928665731c6d6a8f9467308308feffe9928665731c6d6a8f9467308308";
@@ -191,6 +204,9 @@ fn gcm_cases() -> Vec<Case> {
             "76fc6ece0f4e1768cddf8853bb2d551b",
         ),
     ]
+    .into_iter()
+    .filter(|c| cfg!(feature = "quic") || c.key.len() == 32)
+    .collect()
 }
 
 /// Seals and opens `case` both ways, and checks the answers.
@@ -234,7 +250,8 @@ fn rfc8439_seal_and_open() {
 #[test]
 fn gcm_spec_cases_1_to_4_and_13_to_16() {
     let cases = gcm_cases();
-    assert_eq!(cases.iter().filter(|c| c.key.len() == 16).count(), 4);
+    let aes_128 = if cfg!(feature = "quic") { 4 } else { 0 };
+    assert_eq!(cases.iter().filter(|c| c.key.len() == 16).count(), aes_128);
     assert_eq!(cases.iter().filter(|c| c.key.len() == 32).count(), 4);
     for case in &cases {
         check(&Key::aes(&case.key), case);

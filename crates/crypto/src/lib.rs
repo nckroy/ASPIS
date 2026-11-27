@@ -17,13 +17,18 @@
 //!   (FIPS 180-4), HMAC and HKDF ([`mac`]), for TLS 1.3's key schedule
 //!   (ADR 0020, rule 3) and the entropy service's DRBG;
 //! - `aead`: ChaCha20-Poly1305 and AES-256-GCM ([`aead`]), the bulk
-//!   ciphers of ADR 0003, rule 4; AES-128-GCM, which rule 4 admits only
-//!   for QUIC v1's Initial packets and Retry tags, whose keys come from
-//!   public values; and QUIC's header-protection masks ([`quic`], RFC
-//!   9001, section 5.4);
+//!   ciphers of ADR 0003, rule 4;
+//! - `quic`, which needs `aead`: QUIC v1's fixed ciphers, AES-128-GCM
+//!   (`aead::Aes128GcmKey`) and the header-protection masks (`quic`, RFC
+//!   9001, section 5.4). ADR 0003, rule 4 admits AES-128 only for QUIC
+//!   v1's Initial packets and Retry tags, whose keys come from public
+//!   values;
 //! - `x25519` and `ml-kem`: X25519 ([`x25519`], RFC 7748) and ML-KEM-768
 //!   ([`ml_kem`], FIPS 203), the halves of the hybrid key exchange (ADR
 //!   0003, rule 1);
+//! - `hybrid`, which needs `x25519` and `ml-kem`: the hybrid itself, TLS
+//!   1.3's group X25519MLKEM768 ([`hybrid`], RFC 10024), with its shares,
+//!   their checks and the 64-octet shared secret;
 //! - `ed25519` and `ml-dsa`: verification of standalone Ed25519
 //!   ([`ed25519`], RFC 8032) and ML-DSA-65 ([`ml_dsa`], FIPS 204)
 //!   signatures, the components of ASPIS's composite signature (ADR 0003,
@@ -32,6 +37,12 @@
 //! - `composite`: ASPIS's signature, `id-MLDSA65-Ed25519-SHA512`
 //!   ([`composite`], RFC 10073; ADR 0020, rule 2), which needs the two
 //!   signature families and `sha2`.
+//!
+//! Every family is a default feature but `quic`, and AES-128 is reachable
+//! only through `quic`. A crate that doesn't name it can't reach AES-128
+//! when built on its own; cargo unifies features across a build, so
+//! `cargo xtask lint` keeps `quic` to the QUIC code it lists, where ADR
+//! 0003, rule 4 admits AES-128 (rule 2).
 //!
 //! Two modules are built whatever the families: [`algorithm`], the
 //! algorithms' identifiers (rule 6), and [`fuzz`], the entry points C71's
@@ -79,13 +90,15 @@ pub mod ed25519;
 pub mod fuzz;
 #[cfg(any(feature = "sha3", feature = "sha2"))]
 pub mod hash;
+#[cfg(feature = "hybrid")]
+pub mod hybrid;
 #[cfg(feature = "sha2")]
 pub mod mac;
 #[cfg(feature = "ml-dsa")]
 pub mod ml_dsa;
 #[cfg(feature = "ml-kem")]
 pub mod ml_kem;
-#[cfg(feature = "aead")]
+#[cfg(feature = "quic")]
 pub mod quic;
 #[cfg(feature = "ml-dsa")]
 mod rng;
