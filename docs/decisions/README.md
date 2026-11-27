@@ -38,7 +38,7 @@ These come from the project brief and aren't re-decided here:
 |---|---|---|---|
 | [0001](0001-object-identifiers.md) | Object identifiers: 256 bits, self-certifying, no clock | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0002](0002-capability-security-model.md) | Capabilities in the kernel; object IDs are names | Accepted | 2026-11-24, updated 2026-11-25 |
-| [0003](0003-hybrid-post-quantum-cryptography.md) | Hybrid post-quantum cryptography | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0003](0003-hybrid-post-quantum-cryptography.md) | Hybrid post-quantum cryptography | Accepted | 2026-11-24, updated 2026-11-26 |
 | [0004](0004-network-transparency-and-failure.md) | Network transparency: scope and failure semantics | Accepted | 2026-11-24 |
 | [0005](0005-single-level-store.md) | Single-level store as the primary I/O model | Accepted | 2026-11-24 |
 | [0006](0006-uefi-boot-image.md) | Boot: a UEFI PE32+ image loaded by GRUB | Accepted | 2026-11-24, updated 2026-11-25 |
@@ -55,7 +55,7 @@ These come from the project brief and aren't re-decided here:
 | [0017](0017-openid-federation-membership.md) | Joining OpenID Federation topologies | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0018](0018-cedar-policy-language.md) | Cedar as the realm's policy language and engine | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0019](0019-authzen-decision-protocol.md) | AuthZEN for requesting and receiving authorization decisions | Accepted | 2026-11-24, updated 2026-11-25 |
-| [0020](0020-realm-certificate-authority.md) | The realm as its own certificate authority, with hybrid post-quantum certificates | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0020](0020-realm-certificate-authority.md) | The realm as its own certificate authority, with hybrid post-quantum certificates | Accepted | 2026-11-24, updated 2026-11-26 |
 | [0021](0021-entropy-before-keys.md) | Entropy: no key before the generator is seeded | Accepted | 2026-11-24 |
 | [0022](0022-spiffe-and-wimse-workload-identity.md) | Workload identity that conforms to SPIFFE and WIMSE | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0023](0023-copyright-notices.md) | Copyright notices | Accepted | 2026-11-24, updated 2026-11-25 |
@@ -104,3 +104,4 @@ These come from the project brief and aren't re-decided here:
 | [0066](0066-capability-parameters-and-server-streams.md) | Capability parameters and server streams | Accepted | 2026-11-25 |
 | [0067](0067-the-aspis-idl.md) | The ASPIS IDL | Accepted | 2026-11-25 |
 | [0068](0068-the-fuzzing-and-differential-testing-gate.md) | The fuzzing and differential-testing gate | Accepted | 2026-11-25, updated 2026-11-26 |
+| [0069](0069-cryptography-libraries.md) | The cryptography libraries: RustCrypto and dalek | Proposed | 2026-11-26 |

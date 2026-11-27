@@ -18,4 +18,5 @@ bootinfo.workspace = true
 kargs.workspace = true
 uefi = { version = "0.41", default-features = false, features = ["panic_handler", "alloc", "global_allocator"] }
 uefi-raw = "0.17"
-sha2 = { version = "0.11", default-features = false }
+# The workspace's pin (ADR 0069, rule 1).
+sha2.workspace = true

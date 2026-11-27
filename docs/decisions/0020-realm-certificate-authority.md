@@ -4,7 +4,7 @@
 # 0020. The realm as its own certificate authority, with hybrid post-quantum certificates
 
 - **Status:** Accepted
-- **Date:** 2026-11-24, updated 2026-11-25
+- **Date:** 2026-11-24, updated 2026-11-26
 
 ## Context
 
@@ -47,7 +47,7 @@ Facts this decision relies on (details and sources in the [design note](../desig
    - **RPC.** RPC's secure channel is TLS 1.3 (RFC 9846) over QUIC (RFC 9000, RFC 9001), which fits [0004](0004-network-transparency-and-failure.md)'s IPv6 and UDP transport. It has its own ALPN identifier.
    - **Mutual authentication.** Both network servers present node certificates.
    - **HTTPS** inside the realm uses the same TLS stack.
-   - **Cipher suites** follow [0003](0003-hybrid-post-quantum-cryptography.md) rule 4: `TLS_CHACHA20_POLY1305_SHA256` by default, and `TLS_AES_256_GCM_SHA384` where hardware AES exists.
+   - **Cipher suites** follow [0003](0003-hybrid-post-quantum-cryptography.md) rule 4: `TLS_CHACHA20_POLY1305_SHA256` by default, and `TLS_AES_256_GCM_SHA384` where hardware AES exists. QUIC's Initial packets and Retry tags use AES-128-GCM, and an Initial packet's header protection uses AES-128, as RFC 9001 requires and [0003](0003-hybrid-post-quantum-cryptography.md) rule 4 admits.
    - **Hashes.** TLS 1.3's key schedule keeps SHA-256 or SHA-384, and RFC 10073 pre-hashes with SHA-512. [0003](0003-hybrid-post-quantum-cryptography.md), rule 3 admits the hashes a standard protocol specifies.
    - **Certificates replace no token.** Certificates authenticate nodes and servers. Principals still authenticate with tokens when they bind ([0015](0015-jwt-tokens-and-oidc-identity.md)).
 4. **What the realm certifies.**
@@ -110,7 +110,7 @@ Facts this decision relies on (details and sources in the [design note](../desig
   - Each side that authenticates sends about 15 KB, roughly seven times a classical chain.
   - Under QUIC's amplification limit, a new client's first connection costs an extra round trip.
   - Long-lived connections, address-validation tokens and session resumption spread that cost between nodes.
-- **One TLS stack serves RPC and HTTPS.** It must support RFC 10024, RFC 10073 and the composite TLS draft. Choosing it joins [0003](0003-hybrid-post-quantum-cryptography.md)'s library choice in the design session.
+- **One TLS stack serves RPC and HTTPS.** It must support RFC 10024, RFC 10073 and the composite TLS draft. Choosing it is D65's ([design backlog](../design/design-backlog.md#m4-a-founding-node-with-an-identity)). Its cryptography comes from `aspis-crypto`, as proposed in [0069](0069-cryptography-libraries.md), rule 2: a stack that takes a crypto provider, as rustls does, gets one built on `aspis-crypto`.
 - **Interoperability is limited.**
   - A PKI can import or cross-sign an intermediate only if it can process RFC 10073 keys, and its relying parties must verify composite signatures.
   - A path through a classical cross-signer is only as strong as that signer's classical signature. That matches the classical trust at the edge in [0017](0017-openid-federation-membership.md).

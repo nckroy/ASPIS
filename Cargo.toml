@@ -15,6 +15,7 @@ members = [
     "crates/initfs",
     "crates/glyph-atlas",
     "crates/abnf",
+    "crates/crypto",
     "crates/idl-rt",
     "crates/idl",
     "crates/interfaces",
@@ -52,6 +53,35 @@ abnf = { path = "crates/abnf" }
 idl-rt = { path = "crates/idl-rt", default-features = false }
 idl = { path = "crates/idl" }
 idl-fixtures = { path = "crates/idl-fixtures" }
+# Each user names the families it needs (ADR 0069, rule 2).
+aspis-crypto = { path = "crates/crypto", default-features = false }
+# The cryptographic primitives (ADR 0069, rule 1): one version of each,
+# default features off, so none brings in std, getrandom or another source
+# of randomness. Only aspis-crypto uses them, apart from sha2, which the
+# boot stub and initfs use for the initial image's digests (ADR 0037), and
+# xtask to check the TLC jar's checksum.
+# shake carries SHAKE256, which sha3 dropped in 0.12.
+sha2 = { version = "0.11.2", default-features = false }
+sha3 = { version = "0.12.0", default-features = false }
+shake = { version = "0.1.0", default-features = false }
+hmac = { version = "0.13.0", default-features = false }
+hkdf = { version = "0.13.0", default-features = false }
+chacha20poly1305 = { version = "0.11.0", default-features = false }
+aes-gcm = { version = "0.11.1", default-features = false }
+# aes and chacha20 also come in through aes-gcm and chacha20poly1305.
+# aspis-crypto takes their block and stream functions directly for QUIC's
+# header protection (RFC 9001, section 5.4).
+aes = { version = "0.9.4", default-features = false }
+chacha20 = { version = "0.10.2", default-features = false }
+ml-kem = { version = "0.3.4", default-features = false }
+ml-dsa = { version = "0.1.2", default-features = false }
+# aspis-crypto uses curve25519-dalek directly only for Ed25519's canonical
+# point and scalar checks (ADR 0069, rule 5).
+curve25519-dalek = { version = "5.0.0", default-features = false }
+x25519-dalek = { version = "3.0.0", default-features = false }
+ed25519-dalek = { version = "3.0.0", default-features = false }
+zeroize = { version = "1.9.2", default-features = false }
+subtle = { version = "2.6.1", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
