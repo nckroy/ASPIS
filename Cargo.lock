@@ -43,6 +43,7 @@ dependencies = [
  "glyph-atlas",
  "kargs",
  "kcap",
+ "kirq",
  "kmem",
 ]
 
@@ -290,6 +291,10 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
 ]
+
+[[package]]
+name = "kirq"
+version = "0.1.0"
 
 [[package]]
 name = "kmem"

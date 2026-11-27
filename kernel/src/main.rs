@@ -10,7 +10,11 @@
 //! makes user address spaces from untyped memory, reaching user memory only
 //! by a software walk (ADR 0048). From C11 it names every object by a
 //! capability, in capability spaces with seL4's derivation tree, and gives
-//! all of untyped memory to the boot capability space (ADR 0049).
+//! all of untyped memory to the boot capability space (ADR 0049). From C13a
+//! it drives the interrupt controller, GICv2 or GICv3, takes its own
+//! software-generated interrupts, keeps its clock on the virtual count, arms
+//! the virtual timer only for a deadline, and stops the other cores when it
+//! panics (ADRs 0007, 0051, 0052 and 0055).
 //!
 //! The root server, and everything that runs on top of the kernel, come in
 //! later chunks of M2, and in M3.
@@ -25,11 +29,18 @@ mod cap;
 mod console;
 mod entry;
 mod exceptions;
+// C12 and C13b build on most of it: until then, only the boot, the panic
+// path and the in-QEMU tests use it.
+#[cfg_attr(not(aspis_test_build), allow(dead_code))]
+mod irq;
 mod log;
 mod mm;
 mod settings;
 #[cfg(aspis_test_build)]
 mod testing;
+// C12 arms deadlines: until then, only the in-QEMU tests do.
+#[cfg_attr(not(aspis_test_build), allow(dead_code))]
+mod timer;
 mod uart;
 
 use bootinfo::{BootInfo, MemoryType, initfs_check, start};
@@ -227,6 +238,12 @@ pub extern "C" fn kernel_main(boot_info_phys: u64) -> ! {
         }
     }
 
+    // The interrupt controller and the timer (C13a). Interrupts stay
+    // masked, except in the kernel's windows, and the timer is armed only
+    // for a deadline.
+    irq::init(fdt.as_ref());
+    timer::init(fdt.as_ref());
+
     #[cfg(aspis_test_build)]
     if !s.test_panic {
         testing::run();
@@ -405,6 +422,9 @@ static PANICKING: AtomicBool = AtomicBool::new(false);
 
 /// The panic path (ADR 0009, rule 5; ADR 0042, rule 7): always the UART,
 /// the framebuffer unless it is retired, and the ring. It takes no lock.
+/// Once the report is on the UART, it stops every other core with the stop
+/// SGI (ADR 0052, rule 4), one precomputed write, and doesn't wait for
+/// them.
 #[panic_handler]
 fn panic(p: &PanicInfo<'_>) -> ! {
     // SAFETY: masking exceptions.
@@ -428,6 +448,9 @@ fn panic(p: &PanicInfo<'_>) -> ! {
     uart::write("\nKERNEL PANIC: ");
     uart::write(line.as_str());
     uart::write("\n");
+    // The UART line first, then the stop: the report is out whatever the
+    // stop does. Before `irq::init` has finished, nothing is sent.
+    irq::send_stop_to_others();
     log::push(log::Level::Panic, "panic", line.as_str());
 
     if console::state() != FbState::Retired {
@@ -457,34 +480,6 @@ mod tests {
         // without disturbing it, by checking that going back is refused.
         assert_eq!(console::state(), FbState::Kernel);
         assert!(console::advance(FbState::Kernel).is_err());
-    });
-
-    crate::kernel_test!(virtual_count_has_no_offset, {
-        // The kernel's clock is the virtual count (ADR 0051, rule 4). When
-        // the stub is entered at EL2 it zeroes CNTVOFF_EL2 and lets EL1 read
-        // the physical counter, so the virtual count read between two
-        // physical reads must fall between them. Tests run under QEMU's TCG,
-        // with no hypervisor of their own to set an offset.
-        fn read(physical: bool) -> u64 {
-            let t: u64;
-            // SAFETY: reading a counter has no side effects; the ISB keeps
-            // the read in program order.
-            unsafe {
-                if physical {
-                    core::arch::asm!("isb", "mrs {}, cntpct_el0", out(reg) t, options(nomem, nostack));
-                } else {
-                    core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) t, options(nomem, nostack));
-                }
-            }
-            t
-        }
-        let before = read(true);
-        let virtual_count = read(false);
-        let after = read(true);
-        assert!(
-            before <= virtual_count && virtual_count <= after,
-            "virtual count {virtual_count} outside [{before}, {after}]: CNTVOFF_EL2 isn't zero"
-        );
     });
 
     crate::kernel_test!(arguments_after_an_error_are_ignored, {

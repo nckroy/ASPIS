@@ -5,11 +5,12 @@
 //!
 //! The ring is a fixed-size ring of variable-length records in kernel
 //! memory, 256 KiB by default (rule 1). Each record holds a sequence number
-//! counting from zero at boot, the generic timer's count, a level, the CPU
-//! that wrote it, a short ASCII source tag and up to 1024 bytes of UTF-8
-//! text (rule 2). Writing never blocks, and the oldest records are
-//! overwritten (rule 3). The ring keeps every level; the UART and the
-//! framebuffer show records at or above `log.level` (rule 4).
+//! counting from zero at boot, the kernel's clock (the virtual count, from
+//! `timer::now`), a level, the CPU that wrote it, a short ASCII source tag
+//! and up to 1024 bytes of UTF-8 text (rule 2). Writing never blocks, and
+//! the oldest records are overwritten (rule 3). The ring keeps every level;
+//! the UART and the framebuffer show records at or above `log.level` (rule
+//! 4).
 //!
 //! M1 runs on one CPU with exceptions masked, so the ring has one writer
 //! at a time. The reservation that lets several CPUs write at once, without
@@ -101,13 +102,6 @@ pub fn size() -> usize {
     SIZE.load(Ordering::Relaxed)
 }
 
-fn ticks() -> u64 {
-    let t: u64;
-    // SAFETY: reading the virtual counter has no side effects.
-    unsafe { core::arch::asm!("mrs {}, cntvct_el0", out(reg) t, options(nomem, nostack)) };
-    t
-}
-
 fn ring() -> *mut u8 {
     RING.0.get().cast()
 }
@@ -162,7 +156,7 @@ pub fn push(level: Level, tag: &str, text: &str) -> u64 {
     h[5] = level as u8;
     h[6..8].copy_from_slice(&0u16.to_le_bytes()); // CPU 0: M1 runs one CPU.
     h[8..16].copy_from_slice(&seq.to_le_bytes());
-    h[16..24].copy_from_slice(&ticks().to_le_bytes());
+    h[16..24].copy_from_slice(&crate::timer::now().to_le_bytes());
     h[24] = tag.len() as u8;
     h[26..28].copy_from_slice(&(text.len() as u16).to_le_bytes());
     let at = (head % size) as usize;

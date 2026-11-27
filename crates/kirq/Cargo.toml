@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "kirq"
+description = "The ASPIS kernel's interrupt-controller and timer logic (ADRs 0051, 0052 and 0055), tested on the host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/sgi 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
+
+[lints]
+workspace = true
+
+[[test]]
+name = "layout"
+path = "tests/layout.rs"
+
+[[test]]
+name = "redist"
+path = "tests/redist.rs"
+
+[[test]]
+name = "sgi"
+path = "tests/sgi.rs"
+
+[[test]]
+name = "dt"
+path = "tests/dt.rs"
+
+[[test]]
+name = "dispatch"
+path = "tests/dispatch.rs"
+
+[[test]]
+name = "timer"
+path = "tests/timer.rs"

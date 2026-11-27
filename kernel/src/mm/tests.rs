@@ -375,6 +375,66 @@ crate::kernel_test!(device_untyped_leaves_out_ram_uart_and_gic, {
     });
 });
 
+crate::kernel_test!(gic_frames_are_device_memory_and_withheld, {
+    // SAFETY: written only by `init`.
+    let devices = unsafe { DEVICES.get() };
+    let layout = devices.layout.as_ref().expect("no GIC layout");
+    let mapped = |pa: u64| layout.mapped().any(|f| f.base <= pa && pa < f.end());
+    let mut frames = 0;
+    for f in layout.mapped() {
+        frames += 1;
+        // Each mapped frame is one the device tree names, and withheld.
+        assert!(
+            devices
+                .gic()
+                .iter()
+                .any(|&(b, s)| b <= f.base && f.end() <= b + s),
+            "GIC frame {:#x} isn't the device tree's",
+            f.base
+        );
+        each_piece(|u| {
+            if u.is_device() {
+                assert!(
+                    !overlaps((u.base(), u.base() + u.size()), (f.base, f.end())),
+                    "device piece {:#x} holds GIC frame {:#x}",
+                    u.base(),
+                    f.base
+                );
+            }
+        });
+        // It translates, by hardware and by software walk, to itself.
+        let va = device_va(f.base, f.size).expect("a GIC frame isn't mapped");
+        assert!(in_device_window(va) && in_device_window(va + f.size - 1));
+        let par = arch::at_s1e1r(va);
+        assert_eq!(
+            par & arch::PAR_F,
+            0,
+            "GIC frame {:#x} doesn't translate",
+            f.base
+        );
+        assert_eq!(par & 0x0000_ffff_ffff_f000, f.base);
+        let mut at = 0;
+        while at < f.size {
+            assert_eq!(kernel_tables().walk(va + at).pa(va + at), Some(f.base + at));
+            at += 0x1_0000;
+        }
+    }
+    assert!(frames >= 2);
+    // Every leaf over a GIC frame is device memory, in the device window,
+    // never executable; the frames the kernel doesn't map have none.
+    each_kernel_leaf(|va, leaf| {
+        let range = (leaf.pa, leaf.pa + leaf.size());
+        for &(b, s) in devices.gic() {
+            if overlaps(range, (b, b + s)) {
+                assert!(mapped(leaf.pa), "unmapped GIC frame {b:#x} is mapped");
+                assert!(in_device_window(va));
+                assert_eq!(leaf.attr_index, MAIR_DEVICE);
+                assert!(leaf.el1_write && leaf.pxn && leaf.uxn && leaf.device_bit);
+            }
+        }
+    });
+});
+
 crate::kernel_test!(boot_allocator_is_sealed, {
     // SAFETY: one CPU; nothing else holds the allocator.
     let alloc = unsafe { BOOT_ALLOC.get_mut() };

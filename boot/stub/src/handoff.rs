@@ -106,6 +106,29 @@ global_asm!(
     "    mov x3, #3",
     "    msr cnthctl_el2, x3",
     "    msr cntvoff_el2, xzr",
+    // With a GICv3 system-register interface (ID_AA64PFR0_EL1.GIC, bits
+    // 27:24, not 0), let EL1 use ICC_*_EL1, as Linux's EL2 setup does:
+    // ICC_SRE_EL2.SRE (bit 0) for EL2's own interface, and .Enable (bit 3),
+    // without which EL1's accesses to ICC_SRE_EL1 trap to EL2. The ISB is
+    // required: the ICH_* registers are undefined at EL2 until SRE takes
+    // effect. A higher exception level can keep SRE at 0 (it is then RAZ/WI),
+    // and an ICH_* access would trap, so read it back and skip the rest if
+    // it didn't stick, as Linux does. ICH_HCR_EL2 = 0 turns the virtual
+    // interface off. Generic encodings, so no `.arch` directive is needed
+    // (kernel specification, "The timer and deadlines", "The stub at EL2";
+    // C13a).
+    "    mrs x4, id_aa64pfr0_el1",
+    "    ubfx x4, x4, #24, #4",
+    "    cbz x4, 4f",
+    "    mrs x4, s3_4_c12_c9_5",
+    "    orr x4, x4, #1",
+    "    orr x4, x4, #8",
+    "    msr s3_4_c12_c9_5, x4",
+    "    isb",
+    "    mrs x4, s3_4_c12_c9_5",
+    "    tbz x4, #0, 4f",
+    "    msr s3_4_c12_c11_0, xzr",
+    "4:",
     // CPTR_EL2: only its RES1 bits, so FP, SIMD and SVE don't trap to EL2.
     // Bit 12 (TSM) is RES1 without SME and traps SME with it: clear it
     // when the CPU has SME.
