@@ -3,7 +3,7 @@
 
 # The call language
 
-*2026-11-25, updated 2026-11-26. The call-language specification: the grammars, octet layouts, tables and worked examples behind the M2 call-language records. It follows ADRs 0062 to 0068, and the proposed [0069](../decisions/0069-cryptography-libraries.md) for `aspis-crypto`'s entries.*
+*2026-11-25, updated 2026-11-27. The call-language specification: the grammars, octet layouts, tables and worked examples behind the M2 call-language records. It follows ADRs 0062 to 0068, and [0069](../decisions/0069-cryptography-libraries.md) for `aspis-crypto`'s entries.*
 
 This note is the detail that the call-language records cite. The records say what is decided, what is guaranteed, and why. This note says exactly how: every octet layout, grammar, constraint, table and worked example.
 
@@ -2421,7 +2421,7 @@ How is clock skew injected, and what is the lease's clock-uncertainty bound?
 
 Which crates supply DER, JOSE, JSON, TLS, QUIC and TOML, and is each fuzzed upstream?
 
-- **Owner:** the chunks that use them. [0069](../decisions/0069-cryptography-libraries.md) (Proposed) settles the primitives' crates, so D33 is settled in part. Whether RustCrypto's and dalek's decoders are fuzzed upstream is recorded with C71's harness, for C08.
+- **Owner:** the chunks that use them. [0069](../decisions/0069-cryptography-libraries.md) settles the primitives' crates, and with them D33. Whether RustCrypto's and dalek's decoders are fuzzed upstream is recorded with C71's harness, for C08.
 - **From:** [Trust-boundary parsers](#trust-boundary-parsers).
 
 ### L40. Kernel coverage, Kani and OSS-Fuzz

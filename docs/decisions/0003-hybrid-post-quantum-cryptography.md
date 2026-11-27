@@ -4,7 +4,7 @@
 # 0003. Hybrid post-quantum cryptography
 
 - **Status:** Accepted
-- **Date:** 2026-11-24, updated 2026-11-26
+- **Date:** 2026-11-24, updated 2026-11-27
 
 ## Context
 
@@ -18,7 +18,7 @@ The founding requirement is that RPC between nodes be secured with modern, latti
 4. **Bulk encryption:** ChaCha20-Poly1305 by default, because the first board ([0007](0007-initial-hardware-targets.md)) lacks the ARMv8 AES instructions, and ChaCha20 is fast and constant-time in software. AES-256-GCM can be negotiated where hardware AES exists. Every key that protects secrets is 256 bits. Standard protocols keep the ciphers they mandate for keys derived from public values, as rule 3 lets them keep their hashes. QUIC v1 protects its Initial packets and its Retry integrity tag with AES-128-GCM, and the header of an Initial packet with AES-128 (RFC 9001, sections 5.2, 5.4 and 5.8). Those keys come from the connection ID or from the RFC itself, so they guard against corruption, not eavesdropping. Every other packet uses the negotiated suite.
 5. **Crypto agility:** every handshake, key record and signature carries algorithm identifiers. Suites can then be added (ML-KEM-1024 and ML-DSA-87 for CNSA 2.0 deployments; FN-DSA or HQC once standardized) or retired (the classical half, once confidence in the lattice schemes is established).
 6. **No cryptography in the kernel.** It runs in user-space servers: the network server and a key service.
-7. **Libraries:** proposed in [0069](0069-cryptography-libraries.md). RustCrypto and dalek supply the primitives, wrapped by one crate, `aspis-crypto`. Cryspen's libcrux checks them, as the fuzz workspace's differential oracle.
+7. **Libraries:** set by [0069](0069-cryptography-libraries.md). RustCrypto and dalek supply the primitives, wrapped by one crate, `aspis-crypto`. Cryspen's libcrux checks them, as the fuzz workspace's differential oracle.
 
 ## Consequences
 

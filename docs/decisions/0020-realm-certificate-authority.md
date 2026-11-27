@@ -4,7 +4,7 @@
 # 0020. The realm as its own certificate authority, with hybrid post-quantum certificates
 
 - **Status:** Accepted
-- **Date:** 2026-11-24, updated 2026-11-26
+- **Date:** 2026-11-24, updated 2026-11-27
 
 ## Context
 
@@ -110,7 +110,7 @@ Facts this decision relies on (details and sources in the [design note](../desig
   - Each side that authenticates sends about 15 KB, roughly seven times a classical chain.
   - Under QUIC's amplification limit, a new client's first connection costs an extra round trip.
   - Long-lived connections, address-validation tokens and session resumption spread that cost between nodes.
-- **One TLS stack serves RPC and HTTPS.** It must support RFC 10024, RFC 10073 and the composite TLS draft. Choosing it is D65's ([design backlog](../design/design-backlog.md#m4-a-founding-node-with-an-identity)). Its cryptography comes from `aspis-crypto`, as proposed in [0069](0069-cryptography-libraries.md), rule 2: a stack that takes a crypto provider, as rustls does, gets one built on `aspis-crypto`.
+- **One TLS stack serves RPC and HTTPS.** It must support RFC 10024, RFC 10073 and the composite TLS draft. Choosing it is D65's ([design backlog](../design/design-backlog.md#m4-a-founding-node-with-an-identity)). Its cryptography comes from `aspis-crypto`, as [0069](0069-cryptography-libraries.md), rule 2 requires: a stack that takes a crypto provider, as rustls does, gets one built on `aspis-crypto`.
 - **Interoperability is limited.**
   - A PKI can import or cross-sign an intermediate only if it can process RFC 10073 keys, and its relying parties must verify composite signatures.
   - A path through a classical cross-signer is only as strong as that signer's classical signature. That matches the classical trust at the edge in [0017](0017-openid-federation-membership.md).
