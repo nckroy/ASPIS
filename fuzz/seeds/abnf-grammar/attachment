@@ -1,0 +1,4 @@
+; uses: core
+a = u8
+; constraint: not 0
+b = u8

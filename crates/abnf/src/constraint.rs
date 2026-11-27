@@ -113,7 +113,10 @@ pub fn parse(text: &str) -> Result<Constraint, ConstraintError> {
         ["at", "least", n] => Ok(C::AtLeast(integer(n)?)),
         ["in", range] => {
             let (n, m) = range.split_once("..").ok_or(ConstraintError::Syntax)?;
-            Ok(C::In(integer(n)?, integer(m)?))
+            match integers(&[n, m])?.as_slice() {
+                &[n, m] => Ok(C::In(n, m)),
+                _ => Err(ConstraintError::Syntax),
+            }
         }
         ["not", "one", "of", list @ ..] => {
             // `integer 1*( "," SP integer )`: every item but the last ends
@@ -122,13 +125,12 @@ pub fn parse(text: &str) -> Result<Constraint, ConstraintError> {
             if init.is_empty() {
                 return Err(ConstraintError::Syntax);
             }
-            let mut values = Vec::with_capacity(list.len());
+            let mut items = Vec::with_capacity(list.len());
             for item in init {
-                let n = item.strip_suffix(',').ok_or(ConstraintError::Syntax)?;
-                values.push(integer(n)?);
+                items.push(item.strip_suffix(',').ok_or(ConstraintError::Syntax)?);
             }
-            values.push(integer(last)?);
-            Ok(C::NotOneOf(values))
+            items.push(last);
+            Ok(C::NotOneOf(integers(&items)?))
         }
         ["not", "word", list @ ..] if !list.is_empty() => {
             // `word = 1*( %x21-2B / %x2D-7E )`: printable, no comma.
@@ -141,12 +143,11 @@ pub fn parse(text: &str) -> Result<Constraint, ConstraintError> {
             Ok(C::NotWord(list.iter().map(|w| String::from(*w)).collect()))
         }
         ["not", n] => Ok(C::Not(integer(n)?)),
-        ["length", "at", "most", n] => match integer(n)? {
-            _ if n.starts_with('-') => Err(ConstraintError::Syntax),
-            v => u64::try_from(v)
-                .map(C::LengthAtMost)
-                .map_err(|_| ConstraintError::OutOfRange),
-        },
+        // `natural`: no sign, which is a syntax error before any range is.
+        ["length", "at", "most", n] if n.starts_with('-') => Err(ConstraintError::Syntax),
+        ["length", "at", "most", n] => u64::try_from(integer(n)?)
+            .map(C::LengthAtMost)
+            .map_err(|_| ConstraintError::OutOfRange),
         // "ascending tags" is always the tags form (grammars/constraint.abnf).
         ["ascending", "tags"] => Ok(C::AscendingTags),
         ["ascending", r] => Ok(C::Ascending(rule(r)?)),
@@ -164,19 +165,38 @@ pub(crate) fn is_rulename(w: &str) -> bool {
         && b.all(|c| c.is_ascii_alphanumeric() || c == b'-')
 }
 
+/// Several integers, as [`integer`] reads each. Every one must be well
+/// formed before any is out of range: `OutOfRange` says the grammar
+/// allows the text, so a syntax error anywhere comes first (found by C71's
+/// `abnf-constraint` fuzz target).
+fn integers(words: &[&str]) -> Result<Vec<i128>, ConstraintError> {
+    if !words.iter().all(|w| well_formed(w)) {
+        return Err(ConstraintError::Syntax);
+    }
+    words.iter().map(|w| integer(w)).collect()
+}
+
 /// `integer = natural / "-" positive`, `natural = "0" / positive`,
-/// `positive = %x31-39 *DIGIT`, within -2^63 to 2^64 - 1.
-fn integer(w: &str) -> Result<i128, ConstraintError> {
+/// `positive = %x31-39 *DIGIT`, whatever its value.
+fn well_formed(w: &str) -> bool {
     let (negative, digits) = match w.strip_prefix('-') {
         Some(d) => (true, d),
         None => (false, w),
     };
-    let well_formed = !digits.is_empty()
+    !digits.is_empty()
         && digits.bytes().all(|b| b.is_ascii_digit())
-        && (digits == "0" && !negative || !digits.starts_with('0'));
-    if !well_formed {
+        && (digits == "0" && !negative || !digits.starts_with('0'))
+}
+
+/// `integer`, within -2^63 to 2^64 - 1.
+fn integer(w: &str) -> Result<i128, ConstraintError> {
+    if !well_formed(w) {
         return Err(ConstraintError::Syntax);
     }
+    let (negative, digits) = match w.strip_prefix('-') {
+        Some(d) => (true, d),
+        None => (false, w),
+    };
     // At most 20 digits fit; more are out of range, not malformed.
     let mut v: i128 = 0;
     for b in digits.bytes() {

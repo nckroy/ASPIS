@@ -33,6 +33,9 @@
 //! The crate is `no_std`, allocates nothing and never panics on its input.
 
 #![no_std]
+// It parses the boot command line, so it is fuzzed with no sanitizer
+// (ADR 0068, rule 2).
+#![forbid(unsafe_code)]
 #![deny(
     clippy::indexing_slicing,
     clippy::panic,

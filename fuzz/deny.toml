@@ -1,0 +1,31 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+# cargo-deny's checks of the fuzz workspace, run by `cargo xtask fuzz
+# build` (ADR 0068, rules 2 and 3; docs/design/call-language.md, "Engine
+# and tools").
+
+[graph]
+all-features = false
+
+[licenses]
+confidence-threshold = 0.9
+# The permissive licenses ADR 0008, rule 4 allows. NCSA is libFuzzer's,
+# in libfuzzer-sys: it runs only in CI and on developers' machines, and is
+# never linked into ASPIS code or shipped, so it is outside rule 4 (ADR
+# 0068, rule 2; "CI-only tools and ADR 0008, rule 4").
+allow = ["MIT", "Apache-2.0", "MPL-2.0", "BSD-3-Clause", "NCSA"]
+# The list is ADR 0008's, whether or not today's lock uses each one.
+unused-allowed-license = "allow"
+# ASPIS's own crates (fuzz-gate, fuzz-alloc, abnf, kargs) are unpublished,
+# MPL-2.0 like every ASPIS crate (ADR 0008).
+private = { ignore = true }
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

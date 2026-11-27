@@ -25,6 +25,7 @@
 //! cargo xtask fuzz-dict                     a libFuzzer dictionary per
 //!                                           grammar, in build/fuzz/dict
 //! cargo xtask grub                          GRUB 2.14 arm64-efi, in Docker
+//! cargo xtask fuzz <command>                the fuzz targets (fuzz/README.md)
 //! ```
 //!
 //! `run` options:
@@ -45,6 +46,7 @@
 //! ```
 
 mod esp;
+mod fuzz;
 mod fuzz_dict;
 mod grammars;
 mod idl;
@@ -113,7 +115,7 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let Some(cmd) = args.first() else {
         eprintln!(
-            "usage: cargo xtask build|run|test|check-production|matrix|lint|grammars|idl|fuzz-dict|grub [options]"
+            "usage: cargo xtask build|run|test|check-production|matrix|lint|grammars|idl|fuzz-dict|fuzz|grub [options]"
         );
         exit(2)
     };
@@ -146,6 +148,7 @@ fn main() {
         "grammars" => grammars::check(),
         "idl" => idl::check(rest.iter().any(|a| a == "--write")),
         "fuzz-dict" => fuzz_dict::write(),
+        "fuzz" => fuzz::run(rest),
         other => fail(format!("unknown command {other}")),
     }
 }
@@ -452,6 +455,21 @@ fn test() {
             .args(["test", "--locked", "--quiet", "-p", "aspis-interfaces"])
             .args(["--features", "alloc"]),
     );
+    // The fuzz targets' seeds and regressions, through their entry
+    // functions without libFuzzer, and the harness's own tests (ADR 0068,
+    // rule 7). Neither crate depends on libFuzzer, so this builds no C++.
+    run_cmd(
+        fuzz::cargo()
+            .args([
+                "test",
+                "--locked",
+                "--quiet",
+                "--manifest-path",
+                fuzz::MANIFEST,
+            ])
+            .args(["-p", "fuzz-gate", "-p", "fuzz-alloc", "--target-dir"])
+            .arg(fuzz::host_target_dir()),
+    );
     build(Flavor::Production);
     check_production();
     build(Flavor::Test);
@@ -646,6 +664,16 @@ fn lint() {
             .args(["build", "--locked", "--target", "aarch64-unknown-none"])
             .args(["-p", "idl-rt", "-p", "aspis-interfaces"])
             .env("CARGO_TARGET_DIR", build_dir().join("target-nostd")),
+    );
+    // The fuzz workspace: the harness, the allocator and the targets.
+    // Checking the targets builds libFuzzer's C++ once.
+    run_cmd(fuzz::cargo().args(["fmt", "--all", "--check", "--manifest-path", fuzz::MANIFEST]));
+    run_cmd(
+        fuzz::cargo()
+            .args(["clippy", "--locked", "--manifest-path", fuzz::MANIFEST])
+            .args(["--workspace", "--all-targets", "--target-dir"])
+            .arg(fuzz::host_target_dir())
+            .args(["--", "-D", "warnings"]),
     );
     // The kernel and the stub need the build's inputs: lint against them.
     let out = build(Flavor::Production);

@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "fuzz-gate"
+description = "The fuzz targets' entry functions, oracles, seeds and harness (ADR 0068)"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+authors = ["Nicole Roy"]
+publish = false
+rust-version = "1.100"
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/replay 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
+
+[lints]
+workspace = true
+
+[dependencies]
+abnf = { path = "../../crates/abnf" }
+kargs = { path = "../../crates/kargs" }
+fuzz-alloc = { path = "../alloc" }
+
+[[bin]]
+name = "fuzz-gate"
+path = "src/main.rs"
+test = false
+
+[[test]]
+name = "replay"
+path = "tests/replay.rs"
+
+[[test]]
+name = "kinds"
+path = "tests/kinds.rs"
+
+[[test]]
+name = "targets"
+path = "tests/targets.rs"
+
+[[test]]
+name = "generator"
+path = "tests/generator.rs"
+
+[[test]]
+name = "linear"
+path = "tests/linear.rs"
+
+[[test]]
+name = "oracles"
+path = "tests/oracles.rs"
+
+[[test]]
+name = "harness"
+path = "tests/harness.rs"
+
+[[test]]
+name = "differential"
+path = "tests/differential.rs"

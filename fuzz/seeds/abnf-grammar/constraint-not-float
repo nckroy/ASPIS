@@ -1,0 +1,2 @@
+; uses: core
+a = u16 ; constraint: canonical float

@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+# Fuzz seeds, regressions and differential cases are octet-exact inputs
+# (ADR 0068, rule 3). Git must never convert their line endings, whatever
+# a contributor's core.autocrlf says.
+fuzz/seeds/** -text
+fuzz/regressions/** -text
+fuzz/differential/** -text

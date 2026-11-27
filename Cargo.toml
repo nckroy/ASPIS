@@ -23,6 +23,9 @@ members = [
     "tools/logo",
     "xtask",
 ]
+# The fuzz targets are a separate workspace with their own lock file, so
+# fuzz dependencies never enter this one (ADR 0068, rule 3).
+exclude = ["fuzz"]
 
 [workspace.package]
 version = "0.1.0"

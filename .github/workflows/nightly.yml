@@ -3,6 +3,9 @@
 
 # The nightly QEMU matrix (C68; ADR 0036, rule 4): each CPU with each GIC,
 # at 1, 4 and 8 cores and 1 and 3 GiB, plus a run with the firmware at EL2.
+# Beside it, the nightly fuzzing (C71; ADR 0068, rule 8): every fuzz
+# target for 10 minutes on the merged, cached corpus, and the ABNF
+# differential on 20,000 generated cases.
 
 name: Nightly
 
@@ -26,3 +29,126 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
       - run: cargo xtask matrix
+
+  # Every fuzz target for 10 minutes of fuzzing, on the corpus the last
+  # night saved (docs/design/call-language.md, "Nightly"). The harness
+  # merges each target's corpus after its run, and this job saves it for
+  # the next night and for every pull request's replay. `--budget 4200`
+  # caps the fuzzing at 70 minutes in all: 7 targets get 10 minutes each,
+  # and each new target shortens the others' share. Corpus loads, merges,
+  # the builds and coverage come on top. When the share falls under about
+  # 8 minutes (9 targets), this becomes a matrix over `--shard i/n`, each
+  # shard saving its own targets' corpora ("The harness"). The step's own
+  # timeout fails the step, rather than canceling the job, so the corpus,
+  # coverage and findings are still saved.
+  #
+  # Until ASPIS's first release, findings are fixed in the open: the
+  # findings and logs uploaded here are public for 7 days, and the job's
+  # own log, with its backtraces, for the repository's 90-day log
+  # retention (ADR 0068, rule 13; SECURITY.md). From the
+  # first release, a `--redact` mode prints only each target's crash
+  # count, and the findings are encrypted with `age` to the triagers' keys
+  # and kept for 1 day ("Triage and disclosure"). It isn't built yet.
+  #
+  # The in-QEMU kernel-call fuzzer joins as a job of its own,
+  # `kernel-calls`, once the kernel interfaces' IDL and the interface
+  # library exist (C07 and C17; ADR 0068, rule 11).
+  fuzz:
+    name: Fuzz targets
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          qemu: "false"
+      - name: Fuzzing tools' pins
+        id: pins
+        run: echo "hash=$(grep -E '^cargo-(fuzz|deny) *=' fuzz/Cargo.toml | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Fuzzing tools cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/cargo-fuzz
+            ~/.cargo/bin/cargo-deny
+          key: fuzz-tools-${{ runner.os }}-${{ runner.arch }}-${{ steps.pins.outputs.hash }}-${{ hashFiles('rust-toolchain.toml') }}
+      - run: cargo xtask fuzz install
+      - name: Fuzz corpus
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/fuzz/corpus
+          key: fuzz-corpus-v1-none
+          restore-keys: fuzz-corpus-v1-
+      # The seed is the run number, printed, so `cargo xtask fuzz run
+      # <target> --time 600 --jobs 4 --seed <n>` repeats a target's run.
+      - name: Fuzz every target
+        timeout-minutes: 100
+        env:
+          SEED: ${{ github.run_number }}
+        run: |
+          [ -x /usr/bin/time ] || { sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends time; }
+          cargo xtask fuzz nightly --time 600 --budget 4200 --jobs "$(nproc)" --seed "$SEED"
+      - name: Save the fuzz corpus
+        if: always()
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/fuzz/corpus
+          # With the attempt, since a re-run keeps its run_id and a cache
+          # key can't be saved twice.
+          key: fuzz-corpus-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Coverage and run records
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-coverage
+          path: |
+            build/fuzz/coverage/summary.md
+            build/fuzz/coverage/*/report.txt
+            build/fuzz/coverage/*/summary.json
+            build/fuzz/coverage/crates/*/report.txt
+            build/fuzz/runs
+          retention-days: 14
+          if-no-files-found: ignore
+      - name: Findings
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-findings
+          path: |
+            build/fuzz/artifacts
+            build/fuzz/logs
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # The two ABNF checkers on 20,000 generated grammars and their inputs
+  # (ADR 0068, rule 6; "Differential tests"). The seed is the run
+  # number, so `cargo xtask fuzz differential --seed <n> --cases 20000`
+  # repeats it. `--budget 2400` stops starting batches after 40 minutes,
+  # so the run reports what it has, and the step's timeout fails the step
+  # rather than canceling the job, so the cases are still uploaded.
+  abnf-differential:
+    name: ABNF differential
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+        with:
+          qemu: "false"
+      - name: The ABNF differential
+        timeout-minutes: 50
+        env:
+          SEED: ${{ github.run_number }}
+        run: |
+          python3 -c 'import ensurepip' 2>/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq python3-venv; }
+          python3 -m venv "$RUNNER_TEMP/abnf"
+          "$RUNNER_TEMP/abnf/bin/pip" install --quiet abnf==2.9.1
+          ASPIS_PYTHON="$RUNNER_TEMP/abnf/bin/python" cargo xtask fuzz differential --seed "$SEED" --cases 20000 --budget 2400
+      - name: Disagreements
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: abnf-differential
+          path: build/fuzz/differential
+          retention-days: 7
+          if-no-files-found: ignore
