@@ -14,9 +14,9 @@
 //! which resumes from that record. Work always comes before the check, so
 //! every call makes progress.
 //!
-//! C11 has no interrupt controller driver and no threads, so its kernel
-//! uses [`Never`]. C12 and C13a plug in the GIC's check and restart the
-//! system call.
+//! Since C13a the kernel's check is `ISR_EL1.I` (`kernel/src/irq`,
+//! `IrqPending`), and [`Never`] is a check that never finds one. C12
+//! restarts the system call.
 //!
 //! [`UNITS_PER_CHECK`]: crate::UNITS_PER_CHECK
 

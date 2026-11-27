@@ -137,14 +137,14 @@ The records keep the kernel small. What it leaves out, and where that work happe
 
 Records 0047 to 0061 settle the kernel's design questions: the memory model, capability spaces and revocation, IDs for kernel objects, scheduling, SMP, eventcounts, IPC, interrupts, faults, the pager protocol, jobs and budgets, the kernel interface library, processes and spawn, and debugging. The call-language records fix how the kernel's interfaces and messages are written ([0062](../decisions/0062-core-rules-big-endian-fixed-width.md) to [0067](../decisions/0067-the-aspis-idl.md)), and [0068](../decisions/0068-the-fuzzing-and-differential-testing-gate.md), rule 11 adds a nightly kernel-call fuzzer. The [design backlog](design-backlog.md#m2-kernel-objects) marks the kernel's entries under M2, D13 to D24 and D29 to D31, settled. What is still open falls in three groups.
 
-**Mechanism.** The kernel specification lists the kernel's open questions as K01 to K76, under [Open questions](kernel-specification.md#open-questions). The mechanism questions are settled alongside a prototype of C10 to C16, and the specification records each answer ([0047](../decisions/0047-the-kernel-follows-sel4.md), rule 5). The specification names C17 instead for the kernel interface library, and C70 for debugging. The [design backlog](design-backlog.md#m2-kernel-objects) groups all but four of the questions under M2:
+**Mechanism.** The kernel specification lists the kernel's open questions as K01 to K77, under [Open questions](kernel-specification.md#open-questions). The mechanism questions are settled alongside a prototype of C10 to C16, and the specification records each answer ([0047](../decisions/0047-the-kernel-follows-sel4.md), rule 5). The specification names C17 instead for the kernel interface library, and C70 for debugging. The [design backlog](design-backlog.md#m2-kernel-objects) groups all but four of the questions under M2:
 
 | Backlog | What is open | Questions |
 |---|---|---|
 | D150 | Kernel memory bookkeeping: small records and pieces of a job's memory. ASID allocation (K01) was settled with C10 | K01–K06 |
 | D151 | Bindings that hold capabilities, and object sizes. K07 was settled in part with C11 | K07, K08, K15, K29, K33, K50 |
 | D152 | Rights on wait sets, jobs and the main thread; capabilities from listing; identify; capability identity. K11 was settled with C11 | K11, K32, K42, K53, K63, K75 |
-| D153 | The share check, who configures scheduling contexts, priority bands, firmware without PSCI, SGIs and the panic stop | K13, K14, K16, K21, K26, K27 |
+| D153 | The share check, who configures scheduling contexts, priority bands and firmware without PSCI. When the kernel unmasks SError (K77). The SGIs and the panic stop (K26, K27) were settled with C13a | K13, K14, K16, K21, K26, K27, K77 |
 | D154 | How waits end: deadlines, cancellation and suspension | K17–K20, K51, K52 |
 | D155 | Long operations and ordered queues. K22, and K23 in part, were settled with C11 | K22–K25, K31, K34, K41 |
 | D156 | The private ABI and the kernel's messages | K28, K30, K49, K58–K60, K76 |

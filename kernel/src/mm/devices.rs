@@ -11,17 +11,25 @@
 //! with no device tree, with no interrupt controller it knows, or with an
 //! address it would have to translate through a bus's `ranges`, which it
 //! doesn't do yet. C65 reads the same devices from ACPI's MADT and SPCR.
+//!
+//! Beside the flat list of withheld ranges, it records which of the GIC
+//! node's own frames is which ([`kirq::layout::GicLayout`]), for the
+//! mapping and the driver (C13a; kernel specification, "The kernel's
+//! interrupt controller"). A node whose layout the kernel can't read stops
+//! the boot too.
 
 use fdt::Fdt;
 use fdt::node::FdtNode;
 use fdt::standard_nodes::MemoryRegion;
+use kirq::layout::{GicKind, GicLayout, LayoutError};
 
 /// The most `reg` ranges kept. QEMU's `virt` has at most a handful: the
 /// UART, the GIC's distributor, CPU or redistributor and virtualization
 /// frames, and a v2m frame or an ITS.
 const MAX: usize = 32;
 
-/// The interrupt controllers the kernel knows, by `compatible`.
+/// The interrupt controllers the kernel knows, by `compatible`: those of
+/// [`kirq::layout::COMPATIBLE`].
 const GIC: &[&str] = &["arm,cortex-a15-gic", "arm,gic-400", "arm,gic-v3"];
 /// The interrupt controller's children that the kernel drives too.
 const GIC_CHILDREN: &[&str] = &["arm,gic-v2m-frame", "arm,gic-v3-its"];
@@ -40,6 +48,8 @@ pub enum FindError {
     /// The device's node has no `reg` the kernel can read: none, or one
     /// with more than two address or size cells.
     NoReg(&'static str),
+    /// The interrupt controller's node doesn't say which frame is which.
+    Gic(LayoutError),
 }
 
 impl core::fmt::Display for FindError {
@@ -58,6 +68,7 @@ impl core::fmt::Display for FindError {
                 "{what} has addresses translated through a bus's ranges, which the kernel doesn't read yet"
             ),
             Self::NoReg(what) => write!(f, "{what} has no reg the kernel can read"),
+            Self::Gic(e) => write!(f, "{e}"),
         }
     }
 }
@@ -92,6 +103,11 @@ pub struct KernelDevices {
     pub gic: [(u64, u64); MAX],
     #[cfg_attr(not(aspis_test_build), allow(dead_code))]
     pub gic_len: usize,
+    /// The GIC node's own frames, by role.
+    pub layout: Option<GicLayout>,
+    /// The GIC node's `phandle`, if it has one: how the timer's
+    /// `interrupt-parent` names it, whatever bus its frames sit on.
+    pub gic_phandle: Option<u32>,
     /// Every range above: what [`kmem::memmap::Classified::classify`] leaves
     /// out of device untyped memory.
     all: [(u64, u64); MAX],
@@ -104,6 +120,8 @@ impl KernelDevices {
             uart: None,
             gic: [(0, 0); MAX],
             gic_len: 0,
+            layout: None,
+            gic_phandle: None,
             all: [(0, 0); MAX],
             len: 0,
         }
@@ -154,14 +172,32 @@ impl KernelDevices {
             .find_compatible(GIC)
             .ok_or(FindError::NoInterruptController)?;
         const WHAT: &str = "the interrupt controller";
+        let kind = gic
+            .compatible()
+            .and_then(|cs| cs.all().find_map(GicKind::from_compatible))
+            .ok_or(FindError::NoInterruptController)?;
+        // The node's own frames, in order, for its layout.
+        let mut own = [(0, 0); MAX];
         let mut frames = 0;
         for r in physical_reg(fdt, gic, WHAT)? {
             self.push_gic(r);
+            own[frames] = self.gic[self.gic_len - 1];
             frames += 1;
         }
         if frames == 0 {
             return Err(FindError::NoReg(WHAT));
         }
+        let prop = |name| gic.property(name).map(|p| p.value);
+        self.gic_phandle = prop("phandle").and_then(kirq::dt::be_u32);
+        self.layout = Some(
+            GicLayout::new(
+                kind,
+                &own[..frames],
+                prop("#redistributor-regions"),
+                prop("redistributor-stride"),
+            )
+            .map_err(FindError::Gic)?,
+        );
         // The children's addresses are in the GIC node's own address space.
         // An empty `ranges`, as QEMU's `virt` gives, makes them physical
         // addresses. The kernel doesn't translate others.

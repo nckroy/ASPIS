@@ -1094,7 +1094,7 @@ crate::kernel_test!(a_swept_zombie_is_finished_where_it_waits, {
     assert_eq!(finished() - fin, 2);
     assert!(!mdb::has_children(&DirectSlots, e));
     revoke(u);
-    assert_eq!(reset_with(u, &mut budget()), Ok(()));
+    assert_eq!(reset(u), Ok(()));
     verify(&sc, &[]);
     sc.finish();
 });

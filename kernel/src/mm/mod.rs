@@ -46,6 +46,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use devices::KernelDevices;
 pub use devices::{FindError, physical_reg};
 use kernel_map::DeviceWindow;
+use kirq::layout::GicLayout;
 use kmem::boot_alloc::{AllocError, BootAlloc};
 use kmem::desc::{Half, MemType};
 use kmem::layout;
@@ -134,8 +135,16 @@ struct State {
     uart: Option<(u64, u64)>,
     /// The framebuffer's physical address, size and device-window address.
     framebuffer: Option<(u64, u64, u64)>,
+    /// The interrupt controller's mapped frames: physical address, size
+    /// and device-window address, in [`GicLayout::mapped`]'s order.
+    gic: [(u64, u64, u64); GIC_MAPPED],
+    gic_len: usize,
     report: Report,
 }
+
+/// The most interrupt-controller frames mapped: the distributor, and the
+/// CPU interface or every redistributor region.
+const GIC_MAPPED: usize = 1 + kirq::layout::MAX_REDIST_REGIONS;
 
 /// Set once [`init`] and [`seal`] have begun: each runs once.
 static INIT_DONE: AtomicBool = AtomicBool::new(false);
@@ -149,6 +158,8 @@ static STATE: BootCell<State> = BootCell::new(State {
     boot_info: 0,
     uart: None,
     framebuffer: None,
+    gic: [(0, 0, 0); GIC_MAPPED],
+    gic_len: 0,
     report: Report {
         untyped_bytes: 0,
         ram_pieces: 0,
@@ -333,6 +344,21 @@ pub fn init(info_range: (u64, u64), info: &BootInfo<'_>, fdt: Option<&fdt::Fdt<'
             .map(&t, &mut src, (f.base, f.size), MemType::NonCacheable)
             .unwrap_or_else(|e| map_failed("the framebuffer", e))
     });
+    // The interrupt controller's frames the driver uses, as device memory
+    // (C13a; kernel specification, "The kernel's interrupt controller").
+    // Its other frames stay unmapped, and all of them stay out of device
+    // untyped memory.
+    let mut gic = [(0, 0, 0); GIC_MAPPED];
+    let mut gic_len = 0;
+    if let Some(layout) = &devices.layout {
+        for f in layout.mapped() {
+            let va = window
+                .map(&t, &mut src, (f.base, f.size), MemType::Device)
+                .unwrap_or_else(|e| map_failed("the interrupt controller", e));
+            gic[gic_len] = (f.base, f.size, va);
+            gic_len += 1;
+        }
+    }
 
     // The new addresses of what the kernel still reads, found while the
     // boot window still maps the boot information.
@@ -376,6 +402,8 @@ pub fn init(info_range: (u64, u64), info: &BootInfo<'_>, fdt: Option<&fdt::Fdt<'
         boot_info: moved.boot_info,
         uart,
         framebuffer: fb.zip(fb_va).map(|(f, va)| (f.base, f.size, va)),
+        gic,
+        gic_len,
         report: Report {
             direct_map_bytes: c.usable.total() + c.direct_map_ro().map(|(s, e)| e - s).sum::<u64>(),
             above_direct_limit: c.above_direct_limit,
@@ -469,6 +497,42 @@ pub fn report() -> Report {
     unsafe { STATE.get() }.report
 }
 
+/// The interrupt controller's frames, by role, as the device tree gave
+/// them. `None` before [`init`].
+pub fn gic_layout() -> Option<&'static GicLayout> {
+    // SAFETY: written only by `init`, during boot.
+    unsafe { DEVICES.get() }.layout.as_ref()
+}
+
+/// The `phandle` of the interrupt controller's node, if it has one. `None`
+/// before [`init`].
+pub fn gic_phandle() -> Option<u32> {
+    // SAFETY: written only by `init`, during boot.
+    unsafe { DEVICES.get() }.gic_phandle
+}
+
+/// The device-window address of `[pa, pa + size)`, if `init` mapped it as
+/// part of an interrupt-controller frame.
+pub fn device_va(pa: u64, size: u64) -> Option<u64> {
+    let end = pa.checked_add(size)?;
+    let s = state();
+    s.gic[..s.gic_len]
+        .iter()
+        .find(|&&(base, len, _)| base <= pa && end <= base + len)
+        .map(|&(base, _, va)| va + (pa - base))
+}
+
+/// The device tree, through the direct map, for tests that read it again.
+#[cfg(aspis_test_build)]
+pub fn device_tree() -> Option<fdt::Fdt<'static>> {
+    // SAFETY: `init` recorded the boot information's direct-map address.
+    let (info, _) = unsafe { crate::boot_info(state().boot_info) }?;
+    let (pa, len) = info.device_tree()?;
+    let va = layout::direct_va(pa)?;
+    // SAFETY: the device tree, which the direct map keeps read-only.
+    unsafe { crate::device_tree(va, len) }
+}
+
 /// The memory map, as `init` divided it.
 #[cfg_attr(not(aspis_test_build), allow(dead_code))]
 fn classified() -> &'static Classified {
@@ -477,7 +541,6 @@ fn classified() -> &'static Classified {
 }
 
 /// What `init` recorded.
-#[cfg_attr(not(aspis_test_build), allow(dead_code))]
 fn state() -> &'static State {
     // SAFETY: written only by `init` and `seal`, during boot.
     unsafe { STATE.get() }

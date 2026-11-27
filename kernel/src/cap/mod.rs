@@ -11,7 +11,8 @@
 //! - [`DirectSlots`]: slot memory, through the direct map;
 //! - [`KernelHooks`]: what deleting a binding or the last capability to an
 //!   object does to the hardware: unmapping a frame, releasing an ASID;
-//! - [`NoIrq`]: the pending-interrupt check at preemption points.
+//! - [`IrqPending`]: the pending-interrupt check at preemption points,
+//!   `ISR_EL1.I` (C13a).
 //!
 //! and the kernel-internal operations on top: lookup, copy, mint, mutate,
 //! move, delete, revoke, retype, reset, identify, transfer, and Map and
@@ -21,8 +22,10 @@
 //! C11 has no threads, so no system call reaches these yet, and lookups
 //! start at the boot root CNode. C12 and C14 decode invocations, look the
 //! capabilities up from the calling thread's root CNode, and call these.
-//! C12 and C13a replace [`NoIrq`] with the interrupt controller's check and
-//! restart a preempted call.
+//! Since C13a, [`budget`] checks for a pending interrupt, so a long
+//! operation stops at its next preemption point when one waits; the
+//! run-to-end wrappers ([`delete`], [`revoke`], [`retype`]) call again
+//! until it ends. C12 restarts a preempted system call instead.
 //!
 //! Kernel objects carry no IDs (ADR 0050, rule 1): nothing here stores one.
 //!
@@ -32,8 +35,8 @@
 //! must keep are in the kernel specification, "Derivation and revocation"
 //! and "Kernel bindings that hold capabilities".
 //!
-//! - **C12, threads:** a [`Pending`] that asks the GIC, and the restart of a
-//!   system call stopped with [`Preempted`] or [`Error::Preempted`]. The
+//! - **C12, threads:** the restart of a system call stopped with
+//!   [`Preempted`] or [`Error::Preempted`]. The
 //!   thread is a new zombie kind in `kcap::cap::ZombieKind`, with a slot
 //!   array whose slot 0 is its park slot and whose other slots bind its root
 //!   CNode, address space, fault and timeout endpoints and bound
@@ -41,7 +44,6 @@
 //!   the calling thread's root CNode instead of [`boot::root`]. An address
 //!   space's finish deactivates it on every core, not only this one. Control
 //!   capabilities are kinds that can't be derived. K50 is settled there.
-//! - **C13a:** the interrupt-pending source behind [`Pending`].
 //! - **C13b:** the interrupt handler kind, with one binding slot, and the
 //!   interrupt control capability, which can't be derived. K40: the finish
 //!   of a handler, and what a revoke reports when an ITS table refuses it.
@@ -215,23 +217,16 @@ impl Hooks for KernelHooks {
     }
 }
 
-/// The pending-interrupt check at preemption points: never pending. C11
-/// has no interrupt controller driver, and runs with interrupts masked, so
-/// every long operation runs to the end. C13a replaces it with the GIC's
-/// check, and C12 restarts the preempted system call.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NoIrq;
-
-impl Pending for NoIrq {
-    fn pending(&mut self) -> bool {
-        false
-    }
-}
+pub use crate::irq::IrqPending;
 
 /// A budget that checks for a pending interrupt every
-/// [`kcap::UNITS_PER_CHECK`] units (kernel specification K22).
-pub fn budget() -> Budget<NoIrq> {
-    Budget::new(NoIrq)
+/// [`kcap::UNITS_PER_CHECK`] units (kernel specification K22): `ISR_EL1.I`,
+/// which sees an interrupt while the kernel runs with interrupts masked
+/// (kernel specification, "The kernel lock and long operations"). A call
+/// under it returns [`Preempted`] or [`Error::Preempted`] once one waits,
+/// having made progress first.
+pub fn budget() -> Budget<IrqPending> {
+    Budget::new(IrqPending)
 }
 
 /// The capability in a slot.
@@ -292,7 +287,9 @@ pub fn retype_with<P: Pending>(
     ops::retype(&mut DirectSlots, ut, ty, &dest, first, count, budget)
 }
 
-/// [`retype_with`], run to the end.
+/// [`retype_with`], run to the end: a preempted call is made again, and
+/// resumes the reset where the watermark records it. Each call clears at
+/// least one chunk before it checks, so the loop ends.
 pub fn retype(
     ut: SlotRef,
     ty: ObjectType,
@@ -300,13 +297,28 @@ pub fn retype(
     first: u64,
     count: u64,
 ) -> Result<(), Error> {
-    retype_with(ut, ty, dest, first, count, &mut budget())
+    loop {
+        match retype_with(ut, ty, dest, first, count, &mut budget()) {
+            Err(Error::Preempted) => continue,
+            r => return r,
+        }
+    }
 }
 
 /// Resets the piece of the untyped capability in `ut`, which nothing may
 /// derive from (`kcap::ops::reset`). Under `budget`.
 pub fn reset_with<P: Pending>(ut: SlotRef, budget: &mut Budget<P>) -> Result<(), Error> {
     ops::reset(&mut DirectSlots, ut, budget)
+}
+
+/// [`reset_with`], run to the end, as [`retype`].
+pub fn reset(ut: SlotRef) -> Result<(), Error> {
+    loop {
+        match reset_with(ut, &mut budget()) {
+            Err(Error::Preempted) => continue,
+            r => return r,
+        }
+    }
 }
 
 /// Deletes the capability in `slot`, with everything only it reaches. On
@@ -321,12 +333,13 @@ pub fn revoke_with<P: Pending>(slot: SlotRef, budget: &mut Budget<P>) -> Result<
     delete::revoke(&mut DirectSlots, &mut KernelHooks, slot, budget)
 }
 
-/// [`delete_with`], run to the end: [`NoIrq`] never preempts.
+/// [`delete_with`], run to the end: a preempted call is made again, and
+/// resumes from the zombies it left. Each call makes progress first.
 pub fn delete(slot: SlotRef) {
     while delete_with(slot, &mut budget()).is_err() {}
 }
 
-/// [`revoke_with`], run to the end: [`NoIrq`] never preempts.
+/// [`revoke_with`], run to the end, as [`delete`].
 pub fn revoke(slot: SlotRef) {
     while revoke_with(slot, &mut budget()).is_err() {}
 }

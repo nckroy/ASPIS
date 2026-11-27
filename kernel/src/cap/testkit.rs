@@ -178,8 +178,7 @@ impl Scratch {
         for p in [Some(self.ram), self.dev].into_iter().flatten() {
             super::revoke(p);
             assert!(!mdb::has_children(&super::DirectSlots, p));
-            super::reset_with(p, &mut super::budget())
-                .unwrap_or_else(|e| panic!("can't reset the piece: {e:?}"));
+            super::reset(p).unwrap_or_else(|e| panic!("can't reset the piece: {e:?}"));
             assert_eq!(watermark(p), 0);
         }
         for i in FIRST_FREE..SLOTS {
