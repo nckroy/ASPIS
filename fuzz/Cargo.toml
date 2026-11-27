@@ -1,0 +1,121 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+# The fuzz targets (ADR 0068; docs/design/call-language.md, "The fuzzing
+# gate"). This is a separate Cargo workspace with its own Cargo.lock, so
+# fuzz dependencies never enter the product lock file, the images or the
+# SBOM (ADR 0068, rule 3). Run it through `cargo xtask fuzz`, never
+# `cargo fuzz run`, `tmin` or `coverage`, which write under fuzz/ (in
+# iCloud, in the real checkout); see fuzz/README.md.
+
+[package]
+name = "aspis-fuzz"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+authors = ["Nicole Roy"]
+publish = false
+rust-version = "1.100"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "=0.4.13"
+fuzz-gate = { path = "gate" }
+fuzz-alloc = { path = "alloc" }
+
+[lints]
+workspace = true
+
+[workspace]
+resolver = "3"
+members = [".", "gate", "alloc"]
+
+# As the product workspace's, with cargo-fuzz's `--cfg fuzzing`.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }
+
+# The pinned tools, read by `cargo xtask fuzz install` and `build`, and
+# hashed by CI's tool cache. Each is the newest release at least two weeks
+# old when pinned (docs/design/call-language.md, "Engine and tools").
+[workspace.metadata.aspis]
+cargo-fuzz = "0.13.2"
+cargo-deny = "0.20.2"
+
+# The oracle is panics, overflow checks and debug assertions (ADR 0068,
+# rule 2). cargo-fuzz builds with --release and adds -Cdebug-assertions
+# only when -O isn't given; these make the oracle hold whatever flags it
+# is given. `cargo xtask fuzz build` never passes -O, and checks the
+# oracle with its probe target.
+[profile.release]
+debug-assertions = true
+overflow-checks = true
+
+# The matcher's 768 nested levels need about 560 KiB of stack at
+# opt-level 1, as the product workspace builds its tests (crates/abnf).
+[profile.dev]
+opt-level = 1
+
+# One file per target, each a line or two: the entry functions, oracles
+# and seeds live in fuzz/gate. The bins are listed, not discovered, so an
+# iCloud conflict copy is never built as a target.
+
+[[bin]]
+name = "abnf-grammar"
+path = "fuzz_targets/abnf-grammar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "abnf-match"
+path = "fuzz_targets/abnf-match.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "abnf-vectors"
+path = "fuzz_targets/abnf-vectors.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "abnf-constraint"
+path = "fuzz_targets/abnf-constraint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "abnf-generated"
+path = "fuzz_targets/abnf-generated.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kargs-parse"
+path = "fuzz_targets/kargs-parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "kargs-grub"
+path = "fuzz_targets/kargs-grub.rs"
+test = false
+doc = false
+bench = false
+
+# Not a gate target: `cargo xtask fuzz build` runs it to show that overflow
+# checks and the memory bound fire in the fuzz build.
+[[bin]]
+name = "oracle-probe"
+path = "fuzz_targets/oracle-probe.rs"
+test = false
+doc = false
+bench = false

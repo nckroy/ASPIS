@@ -1,0 +1,2 @@
+; uses: core
+a = *OCTET ; constraint: at most 3

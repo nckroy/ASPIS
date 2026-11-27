@@ -24,3 +24,7 @@ ASPIS has made no release. Only `main` is maintained, and fixes land there.
 ## What to expect
 
 The project owner maintains ASPIS alone, so there is no promised response time. Each report is read, and you'll hear back through the advisory. A fix and its disclosure are coordinated in the advisory too. Reporters are credited in the advisory if they want to be.
+
+## Fuzzing findings
+
+CI fuzzes every parser that takes input across a trust boundary ([0068](docs/decisions/0068-the-fuzzing-and-differential-testing-gate.md); [fuzz/README.md](fuzz/README.md)). Until ASPIS's first release, findings from fuzzing are fixed in the open: the crash inputs and logs that CI uploads are public and kept for 7 days, the job logs, with their backtraces, stay public for the repository's 90-day log retention, and each fix commits the input as a regression. From the first release, a fuzzing finding goes into a private security advisory, like any other report. The public logs then name only the target and its crash count, and the crash input is encrypted to the triagers' keys and kept for a day (rule 13).

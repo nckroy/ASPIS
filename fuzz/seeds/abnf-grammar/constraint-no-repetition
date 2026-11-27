@@ -1,0 +1,2 @@
+; uses: core
+a = u8 4OCTET ; constraint: exactly u8 OCTET elements

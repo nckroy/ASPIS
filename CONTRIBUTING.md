@@ -40,6 +40,7 @@ Everyone who takes part follows the [code of conduct](CODE_OF_CONDUCT.md). Repor
 | `cargo xtask lint` | `rustfmt` and `clippy` for every crate, each on the target it builds for |
 | `cargo xtask matrix` | The nightly matrix: four CPU and GIC configurations, 1, 4 and 8 cores, 1 and 3 GiB, and a boot with the firmware at EL2 |
 | `cargo xtask check-production` | Fails if a production image holds test-only code |
+| `cargo xtask fuzz <command>` | The fuzz targets: `install`, `build`, `replay`, `run`, `coverage` and more ([fuzz/README.md](fuzz/README.md)). Building them needs a C++ compiler, for libFuzzer |
 
 Useful `run` options:
 
@@ -51,12 +52,13 @@ Useful `run` options:
 
 ### The checks CI runs
 
-CI runs four jobs on every pull request. `cargo xtask lint` and `cargo xtask test` cover two of them, the Rust lints and the tests. When a pull request changes only Markdown files and `docs/`, CI skips the lints, the tests and the reproducibility check, and runs only the document checks. A change to documents or file headers needs the others too. From the repository root:
+CI runs five jobs on every pull request. `cargo xtask lint`, `cargo xtask test` and `cargo xtask fuzz` cover three of them, the Rust lints, the tests and the fuzz targets. When a pull request changes only Markdown files and `docs/`, CI skips the lints, the tests, the fuzz targets and the reproducibility check, and runs only the document checks. A change to documents or file headers needs the others too. From the repository root:
 
 | CI job | Run it yourself |
 |---|---|
 | rustfmt and clippy | `cargo xtask lint` |
 | Host and QEMU tests | `cargo xtask test` |
+| Fuzz targets | `cargo xtask fuzz install && cargo xtask fuzz build && cargo xtask fuzz replay`, then `cargo xtask fuzz smoke --base main` and, with a Python that has `abnf==2.9.1` in `ASPIS_PYTHON`, `cargo xtask fuzz differential --self-test` and `cargo xtask fuzz differential --seed 0 --cases 300` |
 | Licenses (REUSE) | `pipx run --spec 'reuse[charset-normalizer]==6.3.0' reuse lint` |
 | Sign-offs | `sh tools/ci/check-dco.sh main HEAD` |
 | Grammars and their vectors | `python3 -m venv ~/.venvs/abnf && ~/.venvs/abnf/bin/pip install abnf==2.9.1`, then `~/.venvs/abnf/bin/python -I tools/ci/check-grammars.py grammars` |
@@ -104,10 +106,11 @@ A contribution is licensed under the license of the files it changes or adds: MP
 
 1. **Branch from `main`.**
 2. **Sign off every commit** with `git commit -s`. The sign-off certifies the Developer Certificate of Origin, below. The name in it identifies you; anonymous contributions aren't accepted.
-3. **Push your branch and open a pull request.** CI runs four jobs, and all must pass on a branch that's up to date with `main`:
+3. **Push your branch and open a pull request.** CI runs five jobs, and all must pass on a branch that's up to date with `main`:
    - licenses (REUSE), sign-offs, grammars and their vectors, and diagrams;
    - `rustfmt` and `clippy`;
    - host tests and QEMU tests;
+   - the fuzz targets: every target built, its seeds, regressions and cached corpus replayed, the targets the change touches fuzzed, and the ABNF differential ([0068](docs/decisions/0068-the-fuzzing-and-differential-testing-gate.md));
    - reproducible images: two builds, in different directories and as different users, must give the same `aspis.efi` and `initfs.img` ([0038](docs/decisions/0038-reproducible-builds-and-provenance.md)).
 4. **The project owner merges by rebase**, so history stays linear.
 

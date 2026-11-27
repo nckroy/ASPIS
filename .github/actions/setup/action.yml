@@ -26,6 +26,8 @@ runs:
         rustup toolchain install
         rustc --version
 
+    # Both lock files: `cargo xtask test` and `lint` build the fuzz
+    # workspace's harness too (ADR 0068, rule 7).
     - name: Cargo cache
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
@@ -33,7 +35,7 @@ runs:
           ~/.cargo/registry/index
           ~/.cargo/registry/cache
           ~/.cargo/git/db
-        key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'rust-toolchain.toml') }}
+        key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'fuzz/Cargo.lock', 'rust-toolchain.toml') }}
 
     - name: Packages
       if: inputs.qemu == 'true'

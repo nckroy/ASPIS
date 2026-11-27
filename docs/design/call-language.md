@@ -1819,7 +1819,7 @@ doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF an
 - **Fuzzing runs on the pinned stable toolchain only**: Rust 1.100.0 ([0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 1). There are no sanitizers, so **every crate that parses input from across a trust boundary is `#![forbid(unsafe_code)]`**, as `crates/initfs` already is. That includes every IDL-generated interface crate. The `unsafe` glue that reaches the kernel interface library's entry table lives in `aspis-rt`, and parses nothing ([Back ends](#back-ends)). The oracle is panics, Rust's overflow checks and debug assertions.
 - **Differential tests** check decoders against their grammars, the two ABNF checkers against each other, and ASPIS's PDP against Cedar's own engine.
 - **Model checking** is TLA+ with TLC, for the kernel's concurrent protocols (C12, C14 and C15), leases and catalog sequence numbers.
-- **A nightly in-QEMU fuzzer of the kernel's call surface**, generated from the kernel interfaces' IDL, runs from C13 to C17. It doesn't block per-change CI.
+- **A nightly in-QEMU fuzzer of the kernel's call surface**, generated from the kernel interfaces' IDL, starts once that IDL and the kernel interface library exist (C07 and C17). C71 builds it then, as the nightly job `kernel-calls` ([The kernel-call fuzzer](#the-kernel-call-fuzzer)). It doesn't block per-change CI.
 - **Partition fault injection** between QEMU instances comes from C40, through an unprivileged host-side switch.
 - **Disclosure.** Fuzzing runs in public CI until ASPIS's first release. After it, nightly crash artifacts have short retention and go into a private advisory, and long campaigns run on a private fork or runner ([Triage and disclosure](#triage-and-disclosure)).
 
@@ -1827,10 +1827,11 @@ doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF an
 
 | Tool | Version | License | Use |
 |---|---|---|---|
-| cargo-fuzz | 0.13.x | MIT OR Apache-2.0 | The driver, always with `--sanitizer none` (`-s none`), which adds only stable `-C` flags and `--cfg fuzzing` |
-| libfuzzer-sys | 0.4.x | (MIT OR Apache-2.0) AND NCSA (the bundled LLVM libFuzzer) | The engine. NCSA is a BSD-style permissive license. |
+| cargo-fuzz | 0.13.2, installed by `cargo xtask fuzz install` with `cargo install --locked` | MIT OR Apache-2.0 | The driver, always with `--sanitizer none` (`-s none`), which adds only stable `-C` flags and `--cfg fuzzing`. Used for `build` only ([Layout](#layout)). |
+| libfuzzer-sys | 0.4.13, in `fuzz/Cargo.lock` | (MIT OR Apache-2.0) AND NCSA (the bundled LLVM libFuzzer) | The engine. NCSA is a BSD-style permissive license. |
+| cargo-deny | 0.20.2, the newest release at least two weeks old, installed as cargo-fuzz is | MIT OR Apache-2.0 | Checks the licenses and sources of `fuzz/Cargo.lock`, with `fuzz/deny.toml` |
 | arbitrary | 1.5.x | MIT OR Apache-2.0 | Structure-aware inputs, inside `fuzz/` only. C71 wraps `crates/idl`'s structured value generator in it ([Fuzz entry points](#fuzz-entry-points)). |
-| afl.rs | 0.18.x | Apache-2.0 | A fallback only, if libFuzzer on stable fails C71's first check |
+| afl.rs | 0.18.x | Apache-2.0 | Not used: libFuzzer passed C71's check ([L35](#l35-fuzzing-on-stable-rust)). It stays the fallback if a later toolchain breaks libFuzzer. |
 | TLA+ tools (TLC) | v1.7.4, the newest release that isn't a prerelease (v1.8.0 is still a prerelease, last built 2026-11-26) | MIT | Model checking ([Model checking](#model-checking)) |
 | Apalache | 0.63.x | Apache-2.0 | Optional, for inductive invariants |
 | Eclipse Temurin 21 (LTS), a JRE | pinned to a patch release | GPL-2.0-only WITH Classpath-exception-2.0 | Runs TLC and Apalache. Installed with GitHub's own `actions/setup-java` (`distribution: temurin`), pinned by SHA, as every action in `ci.yml` is. |
@@ -1842,21 +1843,87 @@ doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF an
   - OSS-Fuzz and ClusterFuzzLite, which need an unpinned nightly. Revisit after the first release ([L40](#l40-kernel-coverage-kani-and-oss-fuzz));
   - Cedar's Lean engine, since Cedar's own differential testing covers the engine;
   - Jepsen (JVM, Clojure, EPL).
-- **C71's first task** is to show that `cargo fuzz build -s none` and `cargo fuzz run` work on Rust 1.100.0, on aarch64 Linux (the CI runner) and on aarch64 macOS. The evidence so far is cargo-fuzz's source and cedar-spec's stable CI job; it hasn't been run. If it fails, afl.rs on stable (without CMPLOG) takes its place, and the gate stays the same ([L35](#l35-fuzzing-on-stable-rust)).
-- **Fuzz-only hooks** in a crate sit behind `cfg(fuzzing)`, never a Cargo feature ([0036](../decisions/0036-qemu-configuration-and-test-builds.md), rule 6). The workspace's `check-cfg` adds `fuzzing` beside `aspis_test_build`. An entry function that changes no behavior, such as C07's ([Fuzz entry points](#fuzz-entry-points)), isn't a hook: it is a plain public function, which tests call too.
+- **libFuzzer works on the pinned toolchain** (C71, 2026-11-26; [L35](#l35-fuzzing-on-stable-rust)). What ran where, on Rust 1.100.0:
+  - on aarch64 macOS (Apple clang 21): every target, built, replayed and fuzzed for its campaign, in-process and in fork mode, with coverage feedback growing the corpus and an overflow panicking as a crash with its input saved;
+  - on aarch64 Ubuntu 24.04 (g++ 13.3, the CI runner's image family), in a container: a probe workspace built and fuzzed a kernel-argument target with coverage feedback for 15 s, and the real workspace's `cargo xtask fuzz build` (with the oracle probe) and `replay` passed on its first 6 targets. Fork mode wasn't run on Linux. CI's first run of the `fuzz` job on `ubuntu-24.04-arm` completes the Linux proof.
+- **cargo-fuzz's flags.** With `-s none`, cargo-fuzz passes only stable flags: `-Cpasses=sancov-module`, the `-sanitizer-coverage-*` LLVM options (inline 8-bit counters, the PC table, compare tracing, and the stack depth on Linux), `--cfg fuzzing` and `-Ccodegen-units=1`, in a `--release` build for the host. It adds `-Cdebug-assertions` only without `-O`; `fuzz/Cargo.toml`'s release profile sets debug assertions and overflow checks anyway, and `cargo xtask fuzz build` never passes `-O`. libfuzzer-sys builds libFuzzer's C++17 with the system C++ compiler, so fuzzing needs one.
+- **Fuzz-only hooks** in a crate sit behind `cfg(fuzzing)`, never a Cargo feature ([0036](../decisions/0036-qemu-configuration-and-test-builds.md), rule 6). The fuzz workspace's `check-cfg` declares `fuzzing`. No product crate has such a hook yet, so the product workspace's `check-cfg` adds `fuzzing` beside `aspis_test_build` only when one does. An entry function that changes no behavior, such as C07's ([Fuzz entry points](#fuzz-entry-points)), isn't a hook: it is a plain public function, which tests call too.
 
 ### Layout
 
 - **`fuzz/` is a separate Cargo workspace**, with its own `Cargo.lock`. The root workspace has `exclude = ["fuzz"]`. Fuzz dependencies never enter the product lock file, the images or the CycloneDX SBOM ([0038](../decisions/0038-reproducible-builds-and-provenance.md)).
 - **Files:**
-  - `fuzz/fuzz_targets/<target>.rs`;
+  - `fuzz/fuzz_targets/<target>.rs`, one `[[bin]]` each in `fuzz/Cargo.toml`;
+  - `fuzz/gate/` (crate `fuzz-gate`): the entry functions and oracles, the target table, the seed generators, the dictionaries, the grammar generator, and the harness that `cargo xtask fuzz` runs ([The harness](#the-harness));
+  - `fuzz/alloc/` (crate `fuzz-alloc`): the memory bound ([The harness](#the-harness));
   - `fuzz/seeds/<target>/`: small, hand-made, committed;
-  - `fuzz/regressions/<target>/<name>`: minimized crash inputs, committed. Names are lowercase with hyphens and no spaces, and tools list them with `git ls-files`.
-- **Seeds from vectors.** Seeds are also generated at build time from every line of the target's `grammars/*.vectors`, so vectors and seeds can't drift.
-- **The growing corpus is never committed, and never in iCloud.** Locally it is `build/fuzz/corpus/<target>` (`build` is a `.nosync` symlink); in CI it is an Actions cache.
-- **Target metadata** is a Cargo table, `[package.metadata.aspis-fuzz.<target>]` in `fuzz/Cargo.toml`: the chunk, the ADR, `max_len`, the timeout, the RSS limit, the grammar and rule (for the differential), and the crates it covers. Cargo's format adds no new text format that would need ABNF.
-- **Commands:** `cargo xtask fuzz list | build | replay | run <target> [--time s] | smoke | coverage | tmin`.
-- **Dictionaries.** `cargo xtask fuzz-dict` writes a libFuzzer dictionary per grammar, `build/fuzz/dict/<grammar>.dict`, from its literals (`abnf::dict`), with big-endian "interesting" integers: 0, 1, and each width's largest value and signed boundaries. Little-endian formats (initfs, the boot information) keep little-endian values. It covers `grammars/` and every generated grammar, named by its path (`aspis.catalog.v1.1.dict`). Literals over libFuzzer's 64 octets are left out. Nothing is committed (C07; C06 deferred it).
+  - `fuzz/regressions/<target>/<name>`: minimized crash inputs, committed;
+  - `fuzz/differential/`: minimized disagreements between the two ABNF checkers, with RFC-correct tags. It exists once a finding needs it.
+  - Names are lowercase letters, digits, hyphens and dots, with no spaces, and tools list them with `git ls-files`.
+- **Seeds from vectors.** Seeds are also generated from every line of the target's `grammars/*.vectors`, so vectors and seeds can't drift. `fuzz-gate` embeds the vector files, makes the seeds in code, and `cargo xtask fuzz build` writes them to `build/fuzz/seeds/<target>/`.
+- **The growing corpus is never committed, and never in iCloud.** Locally it is `build/fuzz/corpus/<target>` (`build` is a `.nosync` symlink); in CI it is an Actions cache. Everything else that grows is under `build/fuzz/` too: the fuzz and coverage builds, the seeds and regressions libFuzzer reads, findings, dictionaries, logs, run records, coverage reports and the differential's cases. cargo-fuzz is used for `build` only: `cargo fuzz run`, `tmin` and `coverage` write under `fuzz/`, with no flag to move them, so `cargo xtask fuzz` runs the libFuzzer binaries itself.
+- **Target metadata** is Rust, the table `fuzz_gate::TARGETS`: the chunk, the ADR, the paths that select the target per change, `max_len`, the timeout, the memory bound, the RSS limit, the grammar and rule it must agree with, the entry function, the error kinds, the seed generator and the dictionary. The harness and the replay test both need it, and the compiler checks it. It adds no text format that would need ABNF, and the product workspace needs no TOML parser to read it.
+- **Commands:** `cargo xtask fuzz list | install | build | replay | measure | kinds | run <target> [--time s] [--jobs n] [--seed s] | smoke | tmin | differential | report | coverage | nightly`. Each forwards to the harness binary in `fuzz/gate` ([fuzz/README.md](../../fuzz/README.md)). There is no `kernel` command yet ([The kernel-call fuzzer](#the-kernel-call-fuzzer)).
+- **Dictionaries.** `cargo xtask fuzz-dict` writes a libFuzzer dictionary per grammar, `build/fuzz/dict/<grammar>.dict`, from its literals (`abnf::dict`), with big-endian "interesting" integers: 0, 1, and each width's largest value and signed boundaries. Little-endian formats (initfs, the boot information) keep little-endian values. It covers `grammars/` and every generated grammar, named by its path (`aspis.catalog.v1.1.dict`). Literals over libFuzzer's 64 octets are left out. Nothing is committed (C07; C06 deferred it). C71's targets also get dictionaries of their own, from `fuzz_gate`'s tables; switching their literal half to `abnf::dict` is C71's C07 follow-up.
+
+### The harness
+
+C71 built the harness (2026-11-26). This section records its mechanism where the sections around it leave one open. [fuzz/README.md](../../fuzz/README.md) is the runbook.
+
+- **Three packages in `fuzz/`.**
+  - `aspis-fuzz` (`fuzz/Cargo.toml`) holds the target binaries, each a line or two. They are listed as `[[bin]]`s, not discovered, so an iCloud conflict copy is never built.
+  - `fuzz-gate` (`fuzz/gate`) holds everything else: the entry functions, the oracles, `TARGETS`, the seed generators, the dictionaries, the grammar generator, and the harness binary that `cargo xtask fuzz` forwards to. It is `std`, host-only and `#![forbid(unsafe_code)]`, and depends only on `crates/abnf` and `crates/kargs`, by path. It embeds the repository's grammars and vectors, `crates/abnf/tests/data/vocabulary.*` among them, so nothing reads files at fuzz time; a test checks the list against `git ls-files`. It doesn't depend on libfuzzer-sys, so `cargo xtask test` builds and runs its tests without libFuzzer's C++: that is [0068](../decisions/0068-the-fuzzing-and-differential-testing-gate.md), rule 7's replay.
+  - `fuzz-alloc` (`fuzz/alloc`) is the memory bound (below).
+  - The product workspace gains nothing: `xtask` forwards with `cargo run --manifest-path fuzz/Cargo.toml`, and the product `Cargo.lock` doesn't change. `cargo xtask lint` runs rustfmt and clippy on the fuzz workspace too.
+- **The oracle doesn't depend on cargo-fuzz's defaults.** The fuzz workspace's release profile sets `debug-assertions` and `overflow-checks`, and `build` never passes `-O`. A probe binary, `oracle-probe`, isn't a target: every `build` runs it, and it must crash on an overflow, on a failed `debug_assert!` and on an allocation over its bound.
+- **The memory bound.** libFuzzer's `-malloc_limit_mb` needs malloc hooks that only a sanitizer runtime installs, so under `-s none` it does nothing. `-rss_limit_mb` only polls peak RSS once a second, and blames whichever input is running. So each target declares `fuzz_alloc::Bounded` as its `#[global_allocator]`, with its limit. A single request over the limit, or live bytes over it, writes one line to stderr and aborts, and libFuzzer saves the input that allocated as a crash. `-rss_limit_mb` stays as a backstop. `fuzz-alloc` is harness code, not a parser, so its `unsafe impl GlobalAlloc`, which only forwards to the system allocator, keeps [0068](../decisions/0068-the-fuzzing-and-differential-testing-gate.md), rule 2. `cargo xtask fuzz measure` reads each input's peak from it.
+- **Every run passes `-max_len`.** Without it, libFuzzer caps inputs at 1 MiB, and would replay a longer seed truncated. `build` fails on a seed or regression longer than its target's `max_len`.
+- **libFuzzer reads only `build/fuzz/`.** `build` copies the committed seeds and regressions that `git ls-files` lists into `build/fuzz/seeds/<target>/` and `build/fuzz/regressions/<target>/`, beside the generated seeds. So libFuzzer never reads an iCloud conflict copy.
+
+The targets:
+
+| Target | Parser (chunk) | Input | Properties beyond no panic, determinism and every accessor | `max_len` | Timeout | Memory | Kinds |
+|---|---|---|---|---|---|---|---|
+| `abnf-grammar` | The ABNF text parser and loader (C06) | Grammar text, loaded as Auto twice, as Strict, and as Core when it is at most 64 KiB, with a resolver offering the repository's grammars and a synthetic `; uses:` chain | Strict loads imply Auto loads, with equal literals; where Auto loads, Strict fails only on prose, and where both fail, Strict fails as Auto does or on prose; the accessors of the first 16 rules agree between loads; matches of the first 4 rules against up to 4 literals and the empty string, where a constrained match implies a context-free one | 1 MiB + 1 KiB | 2 s | 128 MiB, RSS 2048 MB | 26 |
+| `abnf-match` | The matcher (C06) | `<grammar>/<rule>`, a caps octet, then the octets, against the repository's grammars, the vocabulary's and five budget fixtures | A constrained match implies a context-free one; over-long input is refused both ways; repeated calls agree, on inputs up to 1 KiB | 64 KiB + 1 KiB + 64 | 2 s | 64 MiB | 6 |
+| `abnf-vectors` | The vector-file reader and checker (C06) | A vector file, checked against the first grammar that defines its `# rule:` | The report's counts add up, its results match its counts, and at most one `Exhausted` comes last | 1 MiB | 2 s | 64 MiB | 12 |
+| `abnf-constraint` | The constraint vocabulary's reader (C06) | One line | Agreement with `constraint` and `constraint-comment` in `grammars/constraint.abnf`, on every line up to 65 KiB; the text form round-trips both ways | 1 MiB | 1 s | 64 MiB | 22 |
+| `abnf-generated` | The loader and matcher, on valid grammars (C06) | Bytes that drive the grammar generator | The grammar loads; every derived input matches; no input is refused as too long; with no constraints, constrained and context-free matches agree where both answer; every literal is in `literals()` | 16 KiB | 1 s | 64 MiB | 2 |
+| `kargs-parse` | `kargs::parse`, `unescape` and `lookup` (C04, C05) | A command line, and hand-built `Value`s from it | Agreement with `kernel-args` in `grammars/kernel-args.abnf`; arguments are the line's own subslices, in order; an error comes once and last; a canonical rendering re-parses to the same arguments and is a fixed point; `lookup` finds exactly the equal keys, for each key, its prefixes at a `.`, the key one character longer, and the keys the kernel and stub look up | 4096 + 1 KiB | 1 s | 64 MiB | 13 |
+| `kargs-grub` | The stub's conversion of GRUB's line (C05) | GRUB's command line | With the stub's buffers and filter, no `TooLong`; GRUB 2.14's `grub_create_loader_cmdline` encoding, then the stub's conversion, gives back the same arguments | 1 MiB | 1 s | 64 MiB | 4 |
+
+- **Overrides of the gate's defaults**, each measured in C71:
+  - the 2 s timeouts: the slowest seeds of `abnf-grammar`, `abnf-match` and `abnf-vectors` took 307, 464 and 279 ms with the first budgets. Every slowest seed is under a quarter of its timeout.
+  - `abnf-match`'s speed. In the first campaigns it ran at about 32 executions a second and added 18 inputs in 40 minutes: a seed of 64 KiB + 1 octet, to reach the input limit, held libFuzzer's length control at its maximum from the start, and every input was matched four times at up to 250,000 steps each. Its fixtures now have small budgets of their own, so no seed is longer than the longest vector line (about 6.4 KiB, a whole interface file in C07's `grammars/idl.vectors`), and it re-matches only inputs up to 1 KiB to show determinism.
+  - `abnf-grammar`'s memory: Auto and Strict loads are held at once to compare them, 51 MiB at the loader's node limit. Its RSS backstop: libFuzzer keeps its corpus of inputs up to 1 MiB in memory, and peak RSS passed 512 MB within a minute. The counted 128 MiB is the bound that matters.
+  - `abnf-grammar`'s checks are bounded, so a timeout is the parser's: 16 rules, 40 matches at most, and 100,000 steps a match.
+- **Match budgets.** The targets match with `fuzz_gate::FUZZ_LIMITS`: the default load limits, with 1 M steps a match, 8 M a vector file and 16 MiB of match memory. The longest repository vectors, whole interface files in C07's `grammars/idl.vectors`, take about 450,000 steps a match and 3 M for the file. A test checks that every repository vector is still judged, and agrees, within them. The repository's grammars are linear, so only an input that needs the steps takes them. Grammars that aren't the repository's keep 250,000 steps a match and 1 M a file (`fuzz_gate::SYNTHETIC_LIMITS`): `abnf-match`'s budget fixtures, whose steps are the costliest, about 117 ns each in the instrumented build, and the generated grammars of `abnf-generated` and the differential, where a match can be exponential. The defaults' own budgets stay covered by `crates/abnf/tests/budgets.rs`.
+- **The agreement oracles' budgets.** The reference matcher judges agreement with `fuzz_gate::ORACLE_LIMITS`: inputs up to `AGREEMENT_MAX`, 65 KiB (the matcher's default input limit, which every vector is held to, plus 1 KiB), and a step budget linear in the input with no cap (100,000 steps and 1,000 an octet). Both grammars it judges are linear, so running out of a budget there is a finding, never a skipped input. Only `abnf-constraint` takes longer inputs (1 MiB); judging one takes the reference matcher about 2 s and 320 MiB, over the target's bounds, so `tests/linear.rs` judges 1 MiB lines, accepted and rejected, outside the fuzzer, and checks that 65 KiB lines stay within half the targets' timeout and memory bound.
+- **Limits of the oracles:**
+  - with constraints on, the matcher runs its states in groups and takes more steps, so it can run out of budget where the context-free match answers. `abnf-generated` and `abnf-match` compare the two only where both answer;
+  - a valid generated grammar can make a match exponential (`R0 = "" / 2*2( HTAB R0 )` takes more than 256 M steps on 36 octets), and repetitions of mutually recursive rules can nest past the depth limit, so `abnf-generated` allows running out of steps, memory or depth, but never a refusal as too long. The differential bounds the rate: it fails when 1 % of its inputs run out (34 of 458,548 inputs and shortest derivations did, over 40,000 cases of seeds 0 and 71);
+  - the stub reads `'` as itself, so the GRUB round trip can't see a missing `'` escape. Its test hands the check a missing `\` escape and an unquoted space instead.
+- **Error kinds.** `kinds_of` names the kinds an input reaches, matching each parser's error enums without a wildcard. A `kinds!` macro makes each naming function and its target's kinds table from one list, so a new variant doesn't compile until it has a name, the name is then in the table, and the kinds test asks for a seed that reaches it. `kargs-parse` builds `Value::Bare` and `Value::Quoted` by hand, so `unescape`'s `BadEscape` and `BadChar` are reached too. `abnf-generated`'s kinds are its two verdicts.
+- **Not targets, and why:**
+  - the ABNF text parser has no ASPIS grammar to agree with: RFC 5234's own grammar demands CRLF and differs on purpose, so the two-checker differential is its agreement check;
+  - the vector-file format has no grammar either ([Vector files](#vector-files));
+  - `kernel/src/settings.rs` reads values inside the kernel crate; it becomes a target if that code moves into `kargs`;
+  - `crates/initfs` joins with C19, its owner.
+- **Seeds.** Every vector line is a seed, framed for its target, and so are inputs exactly at and one past each loader limit: 16,384 and 16,385 rules, the node limit, nesting 64 and 65, `; uses:` depth 8 and 9, and 1 MiB and 1 MiB + 1 octet. Committed seeds cover the error kinds those miss. `abnf-match`'s budget fixtures reach their budgets on inputs of at most 257 octets: the input limit 256, the depth limit 64, 10,000 steps and 4 KiB of match state. `abnf-vectors` takes every vector line on its own, with the file's directives in force at the line, and whole files only up to 10,000 octets, since libFuzzer spends its time mutating a long one.
+- **Dictionaries.** `build` writes `build/fuzz/dict/targets/<target>.dict`, beside C07's per-grammar files in `build/fuzz/dict/`, so the names can't collide. Entries are the literals of the target's grammars, from `Grammar::literals()`, and the target's own words: ABNF tokens, directives and core rule names for `abnf-grammar`; frame headers and big-endian interesting integers for `abnf-match`; directives and tags for `abnf-vectors`; and `BOOT_IMAGE=` and the escapes for `kargs-grub`. libFuzzer's limit of 64 octets an entry holds. C07 has since put `abnf::dict` on main; switching the literal half to it is a C71 follow-up, with C07's targets.
+- **The grammar generator** (`fuzz_gate::generate`) is deterministic, seeded by a 64-bit seed or driven by libFuzzer's bytes. It writes 1 to 6 rules with every ABNF construct: alternation, concatenation, groups, options, every repeat form, every kind of char-val and num-val, and the core rules. No grammar is left-recursive, by construction: a reference back to an earlier rule comes only after an element that must consume at least one octet. Every rule derives a string, and the sampler falls back to each rule's shortest derivation at its depth bound. Each case has up to 16 inputs of at most 64 octets: derivations, which must match, single-octet mutations of them, and random strings. Nesting stays at most 4 deep.
+- **The ABNF differential** (`cargo xtask fuzz differential`). Case `i` of seed `S` is generated, loaded by `crates/abnf`, and its inputs judged context-free. The case is written as `case-<i>.abnf` and `case-<i>.vectors` with Rust's verdicts as tags. Then `tools/ci/check-grammars.py`, unchanged, judges batches of 50 cases with a timeout each. A FAIL line is a disagreement. A traceback, a timeout or another exit status is a Python-limit event: the batch is bisected to its case, with 30 s for each case alone, and the case is recorded apart. Inputs where Rust's budget ran out are dropped and counted, and a derivation Rust doesn't match fails the run, since both checkers could share that bug. `--budget s` stops starting batches after s seconds, so a nightly reports what it has before its job's limit. `--self-test`, run per change, writes a case with one tag flipped, which must give a disagreement, and judges it with no time, which must give a Python-limit event.
+  - Python's `abnf` 2.9.1 is a complete recognizer for what the generator writes. Nested repetitions that can match nothing cost it polynomial time, and at 192 nested references a matching input fails to match (its recursion limit, swallowed). Inputs of at most 64 octets and nesting of at most 4 stay well clear of both.
+  - The first runs (C71): 8,000 cases with 64,161 inputs, with no disagreement and no Python-limit event; then 20,000 more cases with 159,668 inputs (seed 71). There was no disagreement. There was one Python-limit event, case 5461 of seed 71, on which Python gave no answer within 300 s, while Rust answered within its budget: a right-recursive rule whose body repeats overlapping alternatives (`2*( %s" aZ" / %s"z" / CHAR )`), where Python's backtracking tries every split. A Python-limit event isn't a disagreement ([Triage and disclosure](#triage-and-disclosure)): one case in 20,000 is under the 1 % the harness allows, so the generator isn't steered around it yet.
+- **Time boxes count fuzzing, not the corpus load.** libFuzzer's `-max_total_time` counts from the process's start, and libFuzzer first runs every seed, regression and corpus input, which grows every night. So `run` gives libFuzzer a generous `-max_total_time` as a backstop (twice the time asked, and 10 minutes more), and stops it with SIGINT `--time` seconds after its `INITED` line (in fork mode, its "starting to fuzz" line). `/usr/bin/time` ignores SIGINT and still reports, and libFuzzer's exit status 72 on SIGINT counts as clean. A run that got less fuzzing than asked prints a warning; `smoke` fails when a target got under half its time box.
+- **Run records.** Each `run` is timed by `/usr/bin/time -p`, whose user and sys seconds include the fork-mode children libFuzzer waits for. That measured CPU time, corpus load included, not workers times wall time, is what the gate's CPU-hour counts. `build/fuzz/runs/<target>.tsv` gets a line a run: the time; the build, the first 16 hex digits of the target binary's SHA-256, so the record names what ran, uncommitted changes and all; the commit and whether the tree was dirty; rustc and cargo-fuzz; the seed, workers, wall seconds, seconds of fuzzing after the load, and CPU seconds; executions, in all and after the load; coverage, features, corpus size, the counts of crashes, timeouts, OOMs and new artifacts; and whether libFuzzer ended cleanly, by exiting 0 or stopping when `run` interrupted it at the end of its time. An unclean end is a finding even with no new artifact, since libFuzzer reuses an artifact's name for the same input, and an in-process run prints no crash count. In fork mode, `run` passes `-ignore_timeouts=0 -ignore_ooms=0 -ignore_crashes=0`, and any new artifact fails it. `report` sums, per target, only the records of the binary built now, with the measured CPU-hours since the last finding as the gate's number, and counts the other builds' runs apart. A change to a target's code or the toolchain makes a new build, whose evidence starts from zero.
+- **Coverage** (`cargo xtask fuzz coverage`). It builds every target with `RUSTFLAGS=-Cinstrument-coverage` into `build/fuzz/target-coverage/`, replays each target's seeds, regressions and corpus once, merges the profiles with the pinned `llvm-tools`, and reports lines, regions and functions on the `src/` of the target's crates, then on each crate over all the targets that cover it. It writes `build/fuzz/coverage/summary.md`, each target's `report.txt`, `summary.json` and HTML. Branch coverage needs an unstable `-Z` option, so it isn't counted.
+- **Seams for later:**
+  - **`--budget s`** on `nightly` caps all the targets' fuzzing together: each gets `--time` or its share of the budget, whichever is less, so a new target shortens the others' runs instead of pushing the job past its limit.
+  - **`--shard i/n`** on `list` and `nightly` deals the targets out in turn. When the nightly's share per target falls well under 10 minutes, the job becomes a matrix over shards, each saving its own targets' corpora.
+  - **`--redact`**, for the first release ([Triage and disclosure](#triage-and-disclosure)), isn't built yet.
+  - **C07's targets.** C07 merged while C71 was built. Wrapping its entry functions (`idl::fuzz::*`, `idl_rt::fuzz::names` and each generated module's `fuzz::decode`) as `TARGETS` rows and `fuzz/fuzz_targets/` files, with seeds from its vectors, and recording each parser's gate pass, are a C71 follow-up. Until then, C07's gate passes are open.
+  - **The kernel-call fuzzer** will be a nightly job of its own, `kernel-calls`, run by `cargo xtask fuzz kernel`. Neither is built yet ([The kernel-call fuzzer](#the-kernel-call-fuzzer)).
 
 ### Trust-boundary parsers
 
@@ -1864,9 +1931,9 @@ Each parser at a trust boundary, and the chunk that owns it:
 
 | Parser | Chunk | Notes |
 |---|---|---|
-| Kernel arguments (`crates/kargs`) | C04, C05 | Already a named target ([0041](../decisions/0041-boot-abi.md), rule 5). `max_len` 4096 + 1024. |
+| Kernel arguments (`crates/kargs`) | C04, C05 | Already a named target ([0041](../decisions/0041-boot-abi.md), rule 5). `max_len` 4096 + 1024. Targets: `kargs-parse`, `kargs-grub` (C71). |
 | The initial image (`crates/initfs`) | C19 | Already a named target ([0037](../decisions/0037-initial-image-format-and-contents.md), rule 2). Little-endian. |
-| The ABNF parser, matcher, constraint checker and vector-file reader (`crates/abnf`) | C06 | Run by the catalog on publishers' grammars, so also bounded in time and memory |
+| The ABNF parser, matcher, constraint checker and vector-file reader (`crates/abnf`) | C06 | Run by the catalog on publishers' grammars, so also bounded in time and memory. Targets: `abnf-grammar`, `abnf-match`, `abnf-vectors`, `abnf-constraint`, `abnf-generated` (C71). |
 | The parsers of `interface-ref`, `action-ref` and `error-ref` (`crates/idl-rt`) | C06, C07 | Used by the PDP, the token library and the catalog. Entry: `idl_rt::fuzz::names` |
 | The IDL front end, projection and compatibility checker (`crates/idl`) | C07 | Run by the catalog on publishers' IDL. Entry: `idl::fuzz::front_end` |
 | Every IDL-generated decoder | C07 | One target per kernel interface. For other interfaces, one target for the generic decoding runtime, plus a sample of generated interfaces. Applications' generated decoders get the same targets from their compiler run (parity, [0027](../decisions/0027-applications-extend-the-system.md), rule 3). Entries: each module's `fuzz::decode`, and `idl::conformance::differential` |
@@ -1886,7 +1953,7 @@ Each parser at a trust boundary, and the chunk that owns it:
 | Every later parser that meets the definition | its chunk | |
 
 - **Trusted inputs.** Boot-information records and the device tree are trusted on the boot path. They are optional targets.
-- **C07's parsers** have fuzz-ready entry functions and replay tests ([Fuzz entry points](#fuzz-entry-points)). Their gate pass, with its CPU-hour and coverage review ([The gate for each target](#the-gate-for-each-target), item 5), is recorded with C71's harness, as for C06's parsers.
+- **C07's parsers** have fuzz-ready entry functions and replay tests ([Fuzz entry points](#fuzz-entry-points)). Their gate pass, with its CPU-hour and coverage review ([The gate for each target](#the-gate-for-each-target), item 5), is still open: C07 merged while C71 was built, and wrapping its entry functions as targets and recording each pass is a C71 follow-up ([The harness](#the-harness)).
 - **Third-party parsers.** For a parser taken from a third-party crate, the chunk fuzzes ASPIS's wrapper at the boundary, and records whether the crate is fuzzed upstream (by OSS-Fuzz or its own CI). If it isn't, ASPIS fuzzes the crate directly ([L39](#l39-third-party-parsers)).
 
 ### Fuzz entry points
@@ -1905,11 +1972,11 @@ The replay tests feed them every line of `grammars/idl.vectors`, `grammars/names
 
 ### The gate for each target
 
-1. **No panic or abort.** Each input finishes within the timeout (default `-timeout=1`), and memory stays bounded (defaults `-rss_limit_mb=512 -malloc_limit_mb=64`). `-max_len` is the format's limit plus 1 KiB, so rejection of over-limit input is exercised: 4096 + 1024 for kernel arguments, 960 + 1024 for one IPC message, 2^24 + 1024 for an RPC frame, and 1 MiB for formats without a limit. Every accessor of a successful parse is exercised, as `crates/initfs/tests/robustness.rs`'s `exercise` does.
+1. **No panic or abort.** Each input finishes within the timeout (default `-timeout=1`), and memory stays bounded (default 64 MiB, with `-rss_limit_mb=512` as a backstop). Without a sanitizer, libFuzzer's `-malloc_limit_mb` does nothing, so a counting allocator enforces the bound ([The harness](#the-harness)). `-max_len` is the format's limit plus 1 KiB, so rejection of over-limit input is exercised: 4096 + 1024 for kernel arguments, 960 + 1024 for one IPC message, 2^24 + 1024 for an RPC frame, and 1 MiB for formats without a limit. Every accessor of a successful parse is exercised, as `crates/initfs/tests/robustness.rs`'s `exercise` does.
 2. **Round trips**, where an encoder exists: `decode(encode(x)) == x`, and `encode(decode(b)) == b` for every accepted `b`. The second holds because ASPIS encodings are canonical ([Strict requests, tolerant reads](#strict-requests-tolerant-reads)).
 3. **Agreement with the grammar**, where one exists: the decoder accepts `b` exactly when C06's matcher, with its constraints, accepts `b`. This generalizes `crates/kargs/tests/reference.rs`.
 4. **Seeds include every vector line**, and a test shows that each of the parser's error kinds is reached by some corpus input.
-5. **At least 1 CPU-hour of cumulative fuzzing**, from nightlies or `cargo xtask fuzz run --time 3600`, with no open finding. It is recorded in the chunk's pull request, with a coverage report from `cargo fuzz coverage` (llvm-tools, already pinned) reviewed there. There is no numeric coverage threshold yet; thresholds come after the first campaigns ([L36](#l36-coverage-thresholds)).
+5. **At least 1 CPU-hour of cumulative fuzzing**, measured, from nightlies or `cargo xtask fuzz run`, with no open finding. It is recorded in the chunk's pull request from `cargo xtask fuzz report`, with a coverage report from `cargo xtask fuzz coverage` (llvm-tools, already pinned) reviewed there. There is no numeric coverage threshold yet; thresholds come after the first campaigns ([L36](#l36-coverage-thresholds)).
 6. **Determinism and linear work.** Every parse is deterministic, and takes work linear in its input, with an explicit depth limit on any recursion: the IDL's 32, the error envelope's 3.
 
 ### Differential tests
@@ -1917,7 +1984,7 @@ The replay tests feed them every line of `grammars/idl.vectors`, `grammars/names
 | Pair | What must agree | When |
 |---|---|---|
 | A generated decoder, and C06's matcher with constraints | accept or reject, on every input | per target ([The gate for each target](#the-gate-for-each-target), item 3) |
-| C06's Rust checker, and the Python `abnf` 2.9.1 package (MIT) | the context-free match, on generated grammars and inputs | nightly |
+| C06's Rust checker, and the Python `abnf` 2.9.1 package (MIT) | the context-free match, on generated grammars and inputs ([The harness](#the-harness)) | per change (300 cases), and nightly (20,000) |
 | The IDL parser, and `grammars/idl.abnf` | accept or reject | per target |
 | Generated type names and action strings, and Cedar's parser and RFC 6749's `scope-token` | every valid name parses as a Cedar `Path`; every `action-ref` is a `scope-token` | per change |
 | IPC to RPC to IPC translation through both network servers' code (a host build), in both directions | The method, request ID, extensions and body survive unchanged. So do the flags, except the spilled bit, which tracks whether each IPC side spilled. The header-words octet is restored ([What network servers translate](#what-network-servers-translate)). | per target (C29) |
@@ -1927,11 +1994,14 @@ The replay tests feed them every line of `grammars/idl.vectors`, `grammars/names
 
 ### Per change
 
-`ci.yml` gains a `fuzz` job, on `ubuntu-24.04-arm`:
+`ci.yml` has a `fuzz` job, "Fuzz targets", on `ubuntu-24.04-arm`, with a 45-minute limit. It:
 
-- builds every target with `cargo fuzz build -s none`;
-- replays seeds, regressions and the cached corpus, once each (`-runs=0`);
-- fuzzes, for 60 s, each target whose covered crates changed since the merge base, with at most 10 minutes in total;
+- installs the pinned cargo-fuzz and cargo-deny, cached by their pins (`cargo xtask fuzz install`);
+- builds every target with `cargo fuzz build -s none`, after checking the tools, that the product lock holds no fuzz engine, and `cargo deny` on the fuzz lock; then runs the oracle probe, and writes the seeds (`cargo xtask fuzz build`);
+- replays seeds, regressions and the nightly's newest cached corpus, once each (`-runs=0`; `cargo xtask fuzz replay`). It never saves the corpus;
+- fuzzes, for 60 s each after its corpus load, each target whose paths changed since the merge base, with at most 10 minutes of fuzzing in total (the loads come on top), and the run number as libFuzzer's seed (`cargo xtask fuzz smoke`). A target is selected by its own paths, by `crates/abnf` if it has a grammar (the reference matcher), and by the fuzz workspace, `rust-toolchain.toml` or `xtask/src/fuzz.rs`, which select every target. A target that got under half its time box fails the job;
+- runs the ABNF differential's self-test, then 300 of its cases, with seed 0;
+- on failure, uploads the findings, logs and differential cases for 7 days;
 - from C32, runs 10,000 fixed-seed PDP differential cases;
 - when a TLA+ spec changes, runs TLC with CI-sized constants, for at most 10 minutes;
 - from C40, runs a two-node smoke test with one scripted partition, asserting that new binds fail closed.
@@ -1942,11 +2012,11 @@ The replay tests feed them every line of `grammars/idl.vectors`, `grammars/names
 
 `nightly.yml` runs these, sharded beside the QEMU matrix, with each job under 2 hours:
 
-- every target for 10 minutes (`-max_total_time=600`). The corpus is restored from the cache, merged (`-merge=1`) and saved, and a coverage summary is uploaded;
-- the ABNF differential ([Differential tests](#differential-tests));
+- every target for 10 minutes of fuzzing after its corpus load, with 70 minutes of fuzzing in all (`--time 600 --budget 4200`), in the `fuzz` job, through `cargo xtask fuzz nightly`. The corpus is restored from the cache, merged after each target's run (`-merge=1`) and saved under a new key. The coverage summary and the run records are uploaded for 14 days, and findings for 7. The run number is libFuzzer's seed. The fuzzing step has a 100-minute timeout of its own, inside the job's 2 hours: a step timeout fails the step rather than canceling the job, so the corpus, the coverage and the findings are still saved;
+- the ABNF differential on 20,000 cases, with the run number as its seed, in the `abnf-differential` job ([Differential tests](#differential-tests)), with a 40-minute budget for starting batches and a 50-minute step timeout, so its cases are uploaded even when it runs long;
 - the PDP differential for 30 minutes, structure-aware through `arbitrary`;
 - TLC with nightly constants, for at most 60 minutes;
-- from C13 to C17, the in-QEMU kernel-call fuzzer ([The kernel-call fuzzer](#the-kernel-call-fuzzer));
+- once the kernel interfaces' IDL and the interface library exist (C07 and C17), the in-QEMU kernel-call fuzzer, in a job of its own, `kernel-calls` ([The kernel-call fuzzer](#the-kernel-call-fuzzer));
 - from C40, a partition campaign: 3 nodes, and 20 seeded fault schedules of 5 minutes each ([Partition injection](#partition-injection)).
 
 ### The PDP against Cedar
@@ -1981,7 +2051,7 @@ C32 builds this test.
 
 ### The kernel-call fuzzer
 
-This runs nightly, from C13 to C17.
+This runs nightly, as the job `kernel-calls` beside `fuzz` in `nightly.yml`, run by `cargo xtask fuzz kernel`. It starts once the kernel interfaces' IDL and the kernel interface library exist (C07 and C17): it generates its calls from that IDL and makes them through that library. C71 builds it as a follow-up once C17 lands. Until then neither the job nor the command exists, `nightly.yml` names the seam in a comment, and M2's "the kernel-call fuzzer runs nightly" is open ([build plan](build-plan.md#m2-kernel-objects)).
 
 - **Where.** In a test build (`cfg(aspis_test_build)`, [0036](../decisions/0036-qemu-configuration-and-test-builds.md)), on QEMU `max` with GICv3 and 4 cores: 4 seeds × 10 minutes, each seed logged so a run replays.
 - **What.** It generates random call sequences from the kernel interfaces' IDL ([0059](../decisions/0059-the-kernel-interface-library.md), rule 1), and calls through the interface library, since the kernel accepts calls from nowhere else (rule 4).
@@ -2004,13 +2074,16 @@ C40 builds this.
 
 ### Triage and disclosure
 
-- **A failing job** uploads the minimized input (`cargo fuzz tmin`) and the backtrace. The fix commit adds the input to `fuzz/regressions/<target>/`, and, where it helps, a named unit test in the crate. Regressions replay on every change from then on.
-- **Flaky findings are bugs.** A finding that doesn't reproduce in 10 reruns is itself a bug, since parsers must be deterministic.
+- **A failing job** uploads the input and the log with the backtrace, kept for 7 days. The job's own log, which also holds the panic message and backtrace, stays for the repository's log retention, 90 days. The triager minimizes it with `cargo xtask fuzz tmin`. The fix commit adds the input to `fuzz/regressions/<target>/`, and, where it helps, a named unit test in the crate. Regressions replay on every change from then on. The runbook is [fuzz/README.md](../../fuzz/README.md).
+- **Flaky findings are bugs.** A finding that doesn't reproduce in 10 reruns (`cargo xtask fuzz replay <target> <file> --repeat 10`) is itself a bug, since parsers must be deterministic.
+- **A wrong oracle** is fixed in `fuzz/gate`, with a case in its `tests/oracles.rs` that hands the check a broken subject. The parser is never weakened to pass, and the oracle is never weakened unless it is wrong.
+- **A disagreement in the ABNF differential** is a Rust bug, fixed in `crates/abnf` with the minimized case under `fuzz/differential/`, or a divergence of the Python library from RFC 5234, recorded in [The harness](#the-harness) with its case, after which the generator steers around the construct. Neither is waved through. A Python-limit event (no answer in time, or a traceback) isn't a disagreement, since the checkers weren't compared: below 1 % of a run's cases they are logged with their cases, and above it the run fails and the generator is steered around the construct.
 - **Until ASPIS's first release,** fuzzing runs in public CI, and findings are fixed in the open.
 - **From the first release,** nightly crash artifacts have short retention, a finding goes into a private GitHub security advisory under [SECURITY.md](../../SECURITY.md), and long campaigns (beyond the nightly 10 minutes per target) run on a private fork or a private runner. On a public repository, any signed-in GitHub user can download a workflow's artifacts while they are retained, and job logs stay public. So, from then on:
-  - the public nightly's log names only the target and the number of crashes: no backtrace, no input, no panic message;
+  - the public nightly's log names only the target and the number of crashes: no backtrace, no input, no panic message. `--redact` covers the job log itself, not just the uploads, since job logs stay public for 90 days;
   - the minimized input and the backtrace are encrypted to the triagers' public keys with `age` (BSD-3-Clause, CI-only) before upload, and uploaded with a retention of 1 day;
   - the triager decrypts them, opens the private advisory, and fixes the bug there;
+  - the harness gains a `--redact` flag on `run`, `smoke` and `nightly` for this, built before the first release;
   - per-change replay of committed regressions stays public, since a committed regression is already fixed.
 
   What stays public is that a crash exists, and which target crashed, for the hours before a fix.
@@ -2291,16 +2364,28 @@ What are the time unit and sign of wall-clock times in messages?
 
 Do `cargo fuzz build -s none` and `cargo fuzz run` work on Rust 1.100.0, on aarch64 Linux and macOS?
 
-- **Owner:** C71's first task.
-- **Meanwhile:** afl.rs is the fallback.
+- **Settled with C71:** yes. With cargo-fuzz 0.13.2 and libfuzzer-sys 0.4.13, every target was built, replayed and fuzzed on aarch64 macOS, in-process and in fork mode, with coverage feedback and the overflow oracle. On aarch64 Ubuntu 24.04, a probe target was built and fuzzed with coverage feedback for 15 s, and the real workspace's targets were built, checked by the oracle probe and replayed; fork mode wasn't run there. CI's first `fuzz` job on `ubuntu-24.04-arm` completes the Linux proof. afl.rs isn't used. See [Engine and tools](#engine-and-tools).
 - **From:** [Engine and tools](#engine-and-tools).
 
 ### L36. Coverage thresholds
 
 What coverage threshold should each fuzz target meet?
 
-- **Owner:** C71, after the first campaigns.
+- **Owner:** C71 (a follow-up), after a month of nightlies.
 - **Meanwhile:** none.
+- **The first campaigns** (C71, 2026-11-26) give the starting numbers, and only that. They ran on an earlier build of the targets, before C71's review changed the oracles, the seeds and the harness, and their run records name no build. So they aren't the gate's evidence for any target ([The gate for each target](#the-gate-for-each-target), item 5): that comes from one campaign on C71's final tree, recorded in its pull request from `cargo xtask fuzz report` and `cargo xtask fuzz coverage`, and C71's gate passes are open until then. Each target ran for at least 1.3 measured CPU-hours on an 18-core aarch64 Mac, with no finding, through `cargo xtask fuzz run`: the fast targets with 2 fork-mode workers, and the slow ones as two in-process runs on a shared corpus. Coverage is from `cargo xtask fuzz coverage` over the seeds, regressions and merged corpus.
+
+  | Target | Measured CPU-h | Executions | Kinds | Lines | Regions | Functions |
+  |---|---|---|---|---|---|---|
+  | `abnf-grammar` | 1.40 | 0.96 M | 26/26 | 83.8 % | 79.9 % | 79.1 % |
+  | `abnf-match` | 1.44 | 0.18 M | 6/6 | 77.3 % | 72.9 % | 74.9 % |
+  | `abnf-vectors` | 1.44 | 1.09 M | 12/12 | 85.2 % | 81.0 % | 82.6 % |
+  | `abnf-constraint` | 1.41 | 28.8 M | 22/22 | 63.5 % | 58.3 % | 55.7 % |
+  | `abnf-generated` | 1.42 | 0.75 M | 2/2 | 52.9 % | 48.1 % | 42.6 % |
+  | `kargs-parse` | 1.44 | 3.4 M | 13/13 | 73.5 % | 65.9 % | 67.6 % |
+  | `kargs-grub` | 1.40 | 166 M | 4/4 | 86.5 % | 83.8 % | 85.3 % |
+
+  A target's percentages count its whole crate, so a target aimed at one part reads low. Over all their targets, `crates/abnf` reached 96.8 % of lines, 95.1 % of regions and 94.0 % of functions, and `crates/kargs` 98.9 %, 96.6 % and 97.1 %. What no input reached is code that the targets' resolver can't trigger (a `; uses:` cycle, a missing core grammar, a resolved grammar that fails to load), `Display` and `Default` impls, and defensive branches behind the grammar's own checks. Two findings came before the campaigns, both fixed: a constraint parser bug and a wrong oracle ([fuzz/regressions](../../fuzz/regressions)). A threshold per crate over all its targets, rather than per target, looks like the better measure; a month of nightlies should show how stable these numbers are.
 - **From:** [The gate for each target](#the-gate-for-each-target).
 
 ### L37. The TLA+ specs

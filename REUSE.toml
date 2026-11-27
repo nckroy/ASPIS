@@ -11,6 +11,14 @@ path = "Cargo.lock"
 SPDX-FileCopyrightText = "2026 Nicole Roy"
 SPDX-License-Identifier = "MPL-2.0"
 
+# The fuzz workspace's lock file, for the same reason; and the committed
+# fuzz seeds and regressions, which are raw inputs and can't carry a
+# comment (ADR 0068, rule 3).
+[[annotations]]
+path = ["fuzz/Cargo.lock", "fuzz/seeds/**", "fuzz/regressions/**"]
+SPDX-FileCopyrightText = "2026 Nicole Roy"
+SPDX-License-Identifier = "MPL-2.0"
+
 # Noto Sans Mono and its license file, vendored unmodified from the Noto
 # project's release (ADR 0034, rules 1 and 2; assets/fonts/fonts.lock).
 [[annotations]]

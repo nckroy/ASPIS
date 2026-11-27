@@ -1,0 +1,2 @@
+; uses: core
+a = u8 *u16 ; constraint: exactly u8 u8 elements

@@ -11,6 +11,14 @@ docs/research/*.pdf
 /target
 /build
 
+# Where cargo-fuzz writes when run directly (`cargo fuzz run`, `tmin` or
+# `coverage`). `cargo xtask fuzz` keeps all of it under build/fuzz/
+# instead, which iCloud doesn't sync (fuzz/README.md).
+/fuzz/target/
+/fuzz/corpus/
+/fuzz/artifacts/
+/fuzz/coverage/
+
 # This working copy lives in iCloud-synced ~/Documents. iCloud's conflict
 # copies are named "file 2.ext", "file 3" and so on: never track them.
 * [0-9]

@@ -133,6 +133,23 @@ fn the_vocabulary_parser_agrees_with_its_grammar() {
     assert!(checked >= 60);
 }
 
+/// `OutOfRange` means the grammar allows the text, so a syntax error
+/// anywhere in it comes first: a regression from C71's `abnf-constraint`
+/// fuzz target (`fuzz/regressions/abnf-constraint/`), where an
+/// out-of-range first integer hid a malformed second one.
+#[test]
+fn out_of_range_only_for_well_formed_text() {
+    use constraint::ConstraintError::{OutOfRange, Syntax};
+    let p = |t: &str| constraint::parse(t);
+    assert_eq!(p("in 92233720368570248578.."), Err(Syntax));
+    assert_eq!(p("in 92233720368570248578..x"), Err(Syntax));
+    assert_eq!(p("in 92233720368570248578..1"), Err(OutOfRange));
+    assert_eq!(p("not one of 99999999999999999999, x"), Err(Syntax));
+    assert_eq!(p("not one of 99999999999999999999, 1"), Err(OutOfRange));
+    assert_eq!(p("length at most -99999999999999999999"), Err(Syntax));
+    assert_eq!(p("length at most 99999999999999999999"), Err(OutOfRange));
+}
+
 /// The parser's readings of each form, beyond what the vectors show.
 #[test]
 fn the_vocabulary_readings() {
