@@ -371,44 +371,66 @@ fn check(o: &Options, path: &Path, build_only: bool) -> bool {
                 ),
             );
         }
-        // A minor's `use` lines are the minor before's unless its
-        // projection changes there.
+        // Each published minor's hash, and the compatibility check of each
+        // step that changes the projection, lowest first, projecting each
+        // minor once. A minor's `use` lines are the minor before's unless
+        // its projection changes there.
         let changes = idl::project::changes(c.file(), major);
-        for (m, want) in lock.hashes.iter().enumerate() {
-            let m = m as u16;
-            if m > v {
-                break;
+        // The minor last projected, and its canonical form's member lines
+        // when it was hashed, which the next hash reuses.
+        let mut last: Option<(u16, idl::ast::File, Vec<String>)> = None;
+        for m in 0..=v {
+            let want = lock.hashes.get(usize::from(m));
+            let step = m >= 1 && changes.contains(&m);
+            if want.is_none() && !step && !changes.contains(&(m + 1)) {
+                continue;
             }
-            let got = generate::minor_hash(&c, m);
-            if &got != want {
-                ok &= fail(
-                    path,
-                    format!(
-                        "minor {major}.{m} is published with hash {}, but its canonical form now hashes to {}: a published minor changed",
-                        lock::hex(want),
-                        lock::hex(&got)
-                    ),
-                );
-            }
-            if m == 0 || changes.contains(&m) {
-                ok &= imports_published(o, path, &c, m);
-            }
-        }
-        // The compatibility check, each step that changes the projection.
-        for m in changes.into_iter().filter(|&m| m >= 1 && m <= v) {
-            let prev = idl::project::project(c.file(), m - 1);
             let next = idl::project::project(c.file(), m);
-            for viol in idl::compat::step(&prev, &next) {
-                ok &= fail(
-                    path,
-                    format!(
-                        "{major}.{} to {major}.{m}: {}: {}",
-                        m - 1,
-                        viol.kind,
-                        viol.message
-                    ),
-                );
+            let mut lines = Vec::new();
+            if let Some(want) = want {
+                let reuse = last
+                    .as_ref()
+                    .filter(|(_, _, l)| !l.is_empty())
+                    .map(|(_, f, l)| (f, l.as_slice()));
+                let (text, l) = idl::canon::canonical_reusing(&next, reuse);
+                lines = l;
+                let got = idl::hash::sha3_256(text.as_bytes());
+                if &got != want {
+                    ok &= fail(
+                        path,
+                        format!(
+                            "minor {major}.{m} is published with hash {}, but its canonical form now hashes to {}: a published minor changed",
+                            lock::hex(want),
+                            lock::hex(&got)
+                        ),
+                    );
+                }
+                if m == 0 || changes.contains(&m) {
+                    ok &= imports_published(o, path, &next, major, m);
+                }
             }
+            if step {
+                let before;
+                let prev = match &last {
+                    Some((k, p, _)) if k + 1 == m => p,
+                    _ => {
+                        before = idl::project::project(c.file(), m - 1);
+                        &before
+                    }
+                };
+                for viol in idl::compat::step(prev, &next) {
+                    ok &= fail(
+                        path,
+                        format!(
+                            "{major}.{} to {major}.{m}: {}: {}",
+                            m - 1,
+                            viol.kind,
+                            viol.message
+                        ),
+                    );
+                }
+            }
+            last = Some((m, next, lines));
         }
     }
 
@@ -471,10 +493,17 @@ fn check(o: &Options, path: &Path, build_only: bool) -> bool {
 }
 
 /// A published minor's `use` lines name published minors (a published
-/// importer can't change under it).
-fn imports_published(o: &Options, path: &Path, c: &Checked, m: u16) -> bool {
+/// importer can't change under it). `projected` is the file projected to
+/// minor `m` of major `major`.
+fn imports_published(
+    o: &Options,
+    path: &Path,
+    projected: &idl::ast::File,
+    major: u16,
+    m: u16,
+) -> bool {
     let mut ok = true;
-    for u in &idl::project::project(c.file(), m).uses {
+    for u in &projected.uses {
         let (n, maj, min) = (&u.iface.name, u.iface.major, u.iface.minor_or_zero());
         let Some(p) = path_of(&o.roots, n, maj) else {
             continue;
@@ -485,8 +514,7 @@ fn imports_published(o: &Options, path: &Path, c: &Checked, m: u16) -> bool {
                 ok &= fail(
                     path,
                     format!(
-                        "published minor {}.{m} uses {n}/{maj}.{min}, which isn't published in {}",
-                        c.unit().major(),
+                        "published minor {major}.{m} uses {n}/{maj}.{min}, which isn't published in {}",
                         lock_path(&p).display()
                     ),
                 )
@@ -648,7 +676,7 @@ fn publish(o: &Options, path: &Path) -> bool {
         println!("ok   {}: {major}.{v} is already published", path.display());
         return true;
     }
-    if !imports_published(o, path, &c, v) {
+    if !imports_published(o, path, &idl::project::project(c.file(), v), major, v) {
         return false;
     }
     lock.hashes.push(generate::minor_hash(&c, v));

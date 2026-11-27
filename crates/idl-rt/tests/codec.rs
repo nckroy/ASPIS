@@ -11,7 +11,7 @@ use idl_rt::{
     view::{Array, Elem, Seq, Str, Unknown},
     wire::{
         DecodeCx, DecodeError, EncodeCx, EncodeError, Mode, NAN32, NAN64, Reader, Tail, Writer,
-        decode_all, exact, known,
+        decode_all, exact, is_noncharacter, is_text, known, nonzero, nonzero_enc,
     },
 };
 
@@ -76,6 +76,67 @@ fn only_the_canonical_nan() {
     w.f64(-0.0).unwrap();
     assert_eq!(&buf[..4], &NAN32.to_be_bytes());
     assert_eq!(&buf[4..12], &(-0.0f64).to_bits().to_be_bytes());
+}
+
+/// Wire text holds none of the 66 noncharacters, and both sides of the
+/// string codec refuse them, at every boundary of every excluded range
+/// (ADR 0062, rule 4).
+#[test]
+fn strings_refuse_noncharacters() {
+    let mut nonchars: Vec<u32> = (0xFDD0..=0xFDEF).collect();
+    for plane in 0..=16u32 {
+        nonchars.extend([plane << 16 | 0xFFFE, plane << 16 | 0xFFFF]);
+    }
+    assert_eq!(nonchars.len(), 66);
+    let wire = |c: char| {
+        let mut v = (c.len_utf8() as u32).to_be_bytes().to_vec();
+        v.extend(c.to_string().as_bytes());
+        v
+    };
+    for c in nonchars.iter().filter_map(|&c| char::from_u32(c)) {
+        assert!(is_noncharacter(c) && !is_text(&c.to_string()), "{c:?}");
+        assert_eq!(
+            Reader::new(&wire(c)).str(8),
+            Err(DecodeError::Malformed),
+            "{c:?}"
+        );
+        let mut buf = [0u8; 16];
+        assert_eq!(
+            Writer::new(&mut buf).str(&format!("a{c}"), 8),
+            Err(EncodeError::Bounds),
+            "{c:?}"
+        );
+    }
+    // Just outside each range.
+    let mut near: Vec<u32> = vec![0xFDCF, 0xFDF0];
+    for plane in 0..=16u32 {
+        near.push(plane << 16 | 0xFFFD);
+        if plane < 16 {
+            near.push((plane + 1) << 16);
+        }
+    }
+    for c in near.iter().filter_map(|&c| char::from_u32(c)) {
+        assert!(!is_noncharacter(c), "{c:?}");
+        assert_eq!(
+            &*Reader::new(&wire(c)).str(8).unwrap(),
+            c.to_string(),
+            "{c:?}"
+        );
+        let mut buf = [0u8; 16];
+        Writer::new(&mut buf).str(&c.to_string(), 8).unwrap();
+    }
+}
+
+/// A `[nonzero]` field's integer: 0 is malformed when read, and refused
+/// when written.
+#[test]
+fn nonzero_integers() {
+    assert_eq!(nonzero(5u16), Ok(5));
+    assert_eq!(nonzero(-1i32), Ok(-1));
+    assert_eq!(nonzero(0u64), Err(DecodeError::Malformed));
+    assert_eq!(nonzero(0i8), Err(DecodeError::Malformed));
+    assert_eq!(nonzero_enc(u32::MAX), Ok(u32::MAX));
+    assert_eq!(nonzero_enc(0u16), Err(EncodeError::Bounds));
 }
 
 #[test]

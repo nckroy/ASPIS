@@ -488,8 +488,63 @@ impl Gen<'_, '_> {
         } else {
             self.dec(ctx, u, t)
         };
+        self.exact_with(u, t, &inner)
+    }
+
+    fn exact_with(&self, u: usize, t: &Type, inner: &str) -> String {
         let cx = if self.needs_cx(u, t) { "cx" } else { "_" };
         format!("rt::wire::exact(v, cx, |r, {cx}| ::core::result::Result::Ok({inner}))?")
+    }
+
+    /// A field's integer when it is `[nonzero]`: its width.
+    fn nonzero(f: &Fld<'_>) -> Option<IntType> {
+        match f.field.ty.base {
+            BaseType::Int(w) if f.nonzero() => Some(w),
+            _ => None,
+        }
+    }
+
+    /// Decodes a field standing alone, or (`tail`) a tail field's bare
+    /// value. A `[nonzero]` integer refuses 0 as malformed.
+    fn dec_field(&self, ctx: &Ctx, u: usize, f: &Fld<'_>, tail: bool) -> String {
+        let t = &f.field.ty;
+        let Some(w) = Self::nonzero(f) else {
+            return if tail {
+                self.dec_base(ctx, u, t)
+            } else {
+                self.dec(ctx, u, t)
+            };
+        };
+        let b = format!("rt::wire::nonzero(r.{}()?)?", w.word());
+        if t.optional && !tail {
+            format!(
+                "if r.presence()? {{ ::core::option::Option::Some({b}) }} else {{ ::core::option::Option::None }}"
+            )
+        } else {
+            b
+        }
+    }
+
+    /// Encodes a field standing alone, or (`tail`) a tail field's bare
+    /// value. A `[nonzero]` integer refuses 0 rather than write it.
+    fn enc_field(&self, u: usize, f: &Fld<'_>, v: &str, tail: bool) -> String {
+        let t = &f.field.ty;
+        let Some(w) = Self::nonzero(f) else {
+            return if tail {
+                self.enc_base(u, t, v, 1)
+            } else {
+                self.enc(u, t, v, 1)
+            };
+        };
+        let put = |v: &str| format!("w.{}(rt::wire::nonzero_enc(*{v})?)?;", w.word());
+        if t.optional && !tail {
+            format!(
+                "match {v} {{ ::core::option::Option::None => w.u8(0)?, ::core::option::Option::Some(x1) => {{ w.u8(1)?; {} }} }}",
+                put("x1")
+            )
+        } else {
+            put(v)
+        }
     }
 
     /// Statements that encode `v` (a reference) standing alone.
@@ -912,13 +967,13 @@ impl Gen<'_, '_> {
         if b.closed {
             self.open("::core::result::Result::Ok(Self {");
             for f in &fields {
-                let d = self.dec(ctx, u, &f.f.field.ty);
+                let d = self.dec_field(ctx, u, &f.f, false);
                 self.l(format!("{}: {d},", snake(&f.f.field.name.name)));
             }
             self.close("})");
         } else {
             for f in fields.iter().filter(|f| !f.f.optional()) {
-                let d = self.dec(ctx, u, &f.f.field.ty);
+                let d = self.dec_field(ctx, u, &f.f, false);
                 self.l(format!("let f_{} = {d};", f.f.field.name.name));
             }
             let sinces: Vec<String> = fields.iter().map(|f| f.since.to_string()).collect();
@@ -939,7 +994,7 @@ impl Gen<'_, '_> {
                 self.open("while let ::core::option::Option::Some((tag, v)) = tail.next(r, cx)? {");
                 self.open("match tag {");
                 for f in &opts {
-                    let e = self.exact(ctx, u, &f.f.field.ty, true);
+                    let e = self.exact_with(u, &f.f.field.ty, &self.dec_field(ctx, u, &f.f, true));
                     self.l(format!(
                         "{} => f_{} = ::core::option::Option::Some({e}),",
                         f.f.pos, f.f.field.name.name
@@ -1020,7 +1075,7 @@ impl Gen<'_, '_> {
         self.l("let _ = &cx;");
         if b.closed {
             for f in &fields {
-                let e = self.enc(u, &f.f.field.ty, "x", 1);
+                let e = self.enc_field(u, &f.f, "x", false);
                 self.l(format!(
                     "{{ let x = &self.{}; {e} }}",
                     snake(&f.f.field.name.name)
@@ -1028,7 +1083,7 @@ impl Gen<'_, '_> {
             }
         } else {
             for f in fields.iter().filter(|f| !f.f.optional()) {
-                let e = self.enc(u, &f.f.field.ty, "x", 1);
+                let e = self.enc_field(u, &f.f, "x", false);
                 self.l(format!(
                     "{{ let x = &self.{}; {e} }}",
                     snake(&f.f.field.name.name)
@@ -1041,7 +1096,7 @@ impl Gen<'_, '_> {
                 } else {
                     String::new()
                 };
-                let e = self.enc_base(u, &f.f.field.ty, "x", 1);
+                let e = self.enc_field(u, &f.f, "x", true);
                 self.l(format!(
                     "if let ::core::option::Option::Some(x) = &self.{} {{ {check}let at = tail.begin(w, {})?; {e} tail.end(w, at)?; }}",
                     snake(&f.f.field.name.name),

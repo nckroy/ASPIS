@@ -38,20 +38,20 @@ ok@e-no-such-interface	{}
 ok@e-no-such-interface	{"@1":"AQI"}
 err@e-no-such-interface	{ }
 err@e-no-such-interface	{ "@1":"AQI"}
-ok@e-no-such-method	{"method":0,"session_minor":0}
+ok@e-no-such-method	{"method":1,"session_minor":0}
 ok@e-no-such-method	{"method":1,"session_minor":1,"since_minor":1}
 ok@e-no-such-method	{"method":65535,"session_minor":0}
-ok@e-no-such-method	{"method":1,"session_minor":0}
-ok@e-no-such-method	{"method":0,"session_minor":65535}
-ok@e-no-such-method	{"method":0,"session_minor":1}
-ok@e-no-such-method	{"method":0,"session_minor":0,"since_minor":0}
-ok@e-no-such-method	{"method":0,"session_minor":0,"since_minor":65535}
-ok@e-no-such-method	{"method":0,"session_minor":0,"since_minor":1}
-ok@e-no-such-method	{"method":0,"session_minor":0,"@4":"AQI"}
+ok@e-no-such-method	{"method":1,"session_minor":65535}
+ok@e-no-such-method	{"method":1,"session_minor":1}
+ok@e-no-such-method	{"method":1,"session_minor":0,"since_minor":0}
+ok@e-no-such-method	{"method":1,"session_minor":0,"since_minor":65535}
+ok@e-no-such-method	{"method":1,"session_minor":0,"since_minor":1}
+ok@e-no-such-method	{"method":1,"session_minor":0,"@4":"AQI"}
 ok@e-no-such-method	{"method":1,"session_minor":1,"since_minor":1,"@4":"AQI"}
-err@e-no-such-method	{ "method":0,"session_minor":0}
+errc@e-no-such-method	{"method":0,"session_minor":0}
+err@e-no-such-method	{ "method":1,"session_minor":0}
 errc@e-no-such-method	{"method":99999999999999999999,"session_minor":0}
-err@e-no-such-method	{"session_minor":0,"method":0}
+err@e-no-such-method	{"session_minor":0,"method":1}
 err@e-no-such-method	{ "method":1,"session_minor":1,"since_minor":1}
 errc@e-no-such-method	{"method":99999999999999999999,"session_minor":1,"since_minor":1}
 err@e-no-such-method	{"session_minor":1,"method":1,"since_minor":1}
@@ -228,17 +228,17 @@ err@t-version-range	{"highest_minor":0,"major":0}
 err@t-version-range	{ "major":1,"highest_minor":1}
 errc@t-version-range	{"major":99999999999999999999,"highest_minor":1}
 err@t-version-range	{"highest_minor":1,"major":1}
-ok@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":0,"code":0}
-ok@t-error-key	{"interface":"0112233445566778899aabbccddeef00112233445566778899aabbccddeeff10","major":1,"code":1}
-ok@t-error-key	{"interface":"0112233445566778899aabbccddeef00112233445566778899aabbccddeeff10","major":0,"code":0}
-ok@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":65535,"code":0}
-ok@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":1,"code":0}
-ok@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":0,"code":65535}
 ok@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":0,"code":1}
-err@t-error-key	{ "interface":"0000000000000000000000000000000000000000000000000000000000000000","major":0,"code":0}
-err@t-error-key	{"interface":0000000000000000000000000000000000000000000000000000000000000000,"major":0,"code":0}
-errc@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":99999999999999999999,"code":0}
-err@t-error-key	{"major":0,"interface":"0000000000000000000000000000000000000000000000000000000000000000","code":0}
+ok@t-error-key	{"interface":"0112233445566778899aabbccddeef00112233445566778899aabbccddeeff10","major":1,"code":1}
+ok@t-error-key	{"interface":"0112233445566778899aabbccddeef00112233445566778899aabbccddeeff10","major":0,"code":1}
+ok@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":65535,"code":1}
+ok@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":1,"code":1}
+ok@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":0,"code":65535}
+errc@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":0,"code":0}
+err@t-error-key	{ "interface":"0000000000000000000000000000000000000000000000000000000000000000","major":0,"code":1}
+err@t-error-key	{"interface":0000000000000000000000000000000000000000000000000000000000000000,"major":0,"code":1}
+errc@t-error-key	{"interface":"0000000000000000000000000000000000000000000000000000000000000000","major":99999999999999999999,"code":1}
+err@t-error-key	{"major":0,"interface":"0000000000000000000000000000000000000000000000000000000000000000","code":1}
 err@t-error-key	{ "interface":"0112233445566778899aabbccddeef00112233445566778899aabbccddeeff10","major":1,"code":1}
 errc@t-error-key	{"interface":"0112233445566778899aabbccddeef00112233445566778899aabbccddeeff10","major":99999999999999999999,"code":1}
 err@t-error-key	{"major":1,"interface":"0112233445566778899aabbccddeef00112233445566778899aabbccddeeff10","code":1}

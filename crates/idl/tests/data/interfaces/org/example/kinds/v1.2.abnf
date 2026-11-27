@@ -146,6 +146,24 @@ m-newest--rep---tail = tail-count *m-newest--rep---opt
     ; constraint: exactly tail-count m-newest--rep---opt elements
 m-newest--rep---opt = m-newest--rep---unknown
 
+; method 10 "count": the request, strict
+m-count--req = t-counts m-count--req--n %x00.00.00.00
+m-count--req--n = u16
+    ; constraint: not 0
+
+; method 10 "count": the reply
+m-count--rep = t-ids m-count--rep---tail
+m-count--rep--total = %x00.02 %x00.00.00.04 m-count--rep--total---value
+m-count--rep--total---value = u32
+    ; constraint: not 0
+m-count--rep---unknown = m-count--rep---unknown-tag octets
+m-count--rep---unknown-tag = %x00 %x03-FF / %x01-FF OCTET
+    ; constraint: at least 3
+m-count--rep---tail = tail-count *m-count--rep---opt
+    ; constraint: ascending tags
+    ; constraint: exactly tail-count m-count--rep---opt elements
+m-count--rep---opt = m-count--rep--total / m-count--rep---unknown
+
 ; error "not_found": its detail
 e-not-found = u64 e-not-found---tail
 e-not-found---unknown = e-not-found---unknown-tag octets
@@ -201,6 +219,18 @@ e-error---tail = tail-count *e-error---opt
     ; constraint: ascending tags
     ; constraint: exactly tail-count e-error---opt elements
 e-error---opt = e-error--unknown / e-error---unknown
+
+; error "zero": its detail
+e-zero = e-zero--n e-zero---tail
+e-zero--n = i32
+    ; constraint: not 0
+e-zero---unknown = e-zero---unknown-tag octets
+e-zero---unknown-tag = %x00 %x02-FF / %x01-FF OCTET
+    ; constraint: at least 2
+e-zero---tail = tail-count *e-zero---opt
+    ; constraint: ascending tags
+    ; constraint: exactly tail-count e-zero---opt elements
+e-zero---opt = e-zero---unknown
 
 ; name
 t-name = t-name---len *63text-char
@@ -455,6 +485,41 @@ t-some = u16
 
 ; ok
 t-ok = u8
+
+; counts
+t-counts = t-counts--a t-counts--b
+t-counts--a = u32
+    ; constraint: not 0
+t-counts--b = %x00 / %x01 t-counts--b---value
+t-counts--b---value = i16
+    ; constraint: not 0
+
+; ids
+t-ids = t-ids--first t-ids---tail
+t-ids--first = u64
+    ; constraint: not 0
+t-ids--more = %x00.02 %x00.00.00.01 t-ids--more---value
+t-ids--more---value = u8
+    ; constraint: not 0
+t-ids---unknown = t-ids---unknown-tag octets
+t-ids---unknown-tag = %x00 %x03-FF / %x01-FF OCTET
+    ; constraint: at least 3
+t-ids---tail = tail-count *t-ids---opt
+    ; constraint: ascending tags
+    ; constraint: exactly tail-count t-ids---opt elements
+t-ids---opt = t-ids--more / t-ids---unknown
+
+; ids, strict
+r-ids = r-ids--first r-ids---tail
+r-ids--first = u64
+    ; constraint: not 0
+r-ids--more = %x00.02 %x00.00.00.01 r-ids--more---value
+r-ids--more---value = u8
+    ; constraint: not 0
+r-ids---tail = tail-count *1r-ids---opt
+    ; constraint: ascending tags
+    ; constraint: exactly tail-count r-ids---opt elements
+r-ids---opt = r-ids--more
 
 ; types the use lines import, read at the minor each names
 u1--r-point = i32 i32 %x00.00.00.00

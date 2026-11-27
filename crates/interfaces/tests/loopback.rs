@@ -763,6 +763,25 @@ impl kinds::Server for Kinds {
             kinds::errors::detail::Busy { unknown_: u() },
         )))
     }
+
+    /// Answers `total` 0, which no encoder writes, when asked for n = 1.
+    fn count<'a>(
+        &'a mut self,
+        _: &Ctx<'a, Cap>,
+        req: kinds::methods::count::Request<'a>,
+    ) -> Result<kinds::methods::count::Reply<'a>, KFail<'a>> {
+        self.calls += 1;
+        let n = u32::from(req.n);
+        Ok(kinds::methods::count::Reply {
+            ids: kinds::types::Ids {
+                first: u64::from(req.c.a),
+                more: None,
+                unknown_: u(),
+            },
+            total: Some(if n == 1 { 0 } else { n }),
+            unknown_: u(),
+        })
+    }
 }
 
 fn give_req<'a>(
@@ -1063,6 +1082,58 @@ fn an_application_error_and_its_disposition() {
     assert_eq!(e.outcome, Outcome::Refused);
     assert_eq!(e.disposition, Disposition::LATER);
     assert!(matches!(e.app(), Some(kinds::errors::Error::Busy(_))));
+}
+
+/// A `[nonzero]` field is never 0 on the wire: the stub refuses to send
+/// it, the dispatcher refuses a request that holds it, and a reply that
+/// would hold it becomes `internal` (docs/design/call-language.md,
+/// "Attributes").
+#[test]
+fn nonzero_fields_are_never_0() {
+    let mut c = kinds::Client {
+        channel: Loop::new(Kinds::default(), 2),
+    };
+    let req = |a: u32, b: Option<i16>, n: u16| kinds::methods::count::Request {
+        c: kinds::types::Counts { a, b },
+        n,
+        unknown_: u(),
+    };
+    let r = c.count(&OPTS, req(7, Some(-1), 3)).unwrap();
+    assert_eq!((r.ids.first, r.total), (7, Some(3)));
+    // 0 in a parameter, in a closed struct's field and in its optional
+    // field: refused without sending.
+    for bad in [req(7, None, 0), req(0, None, 3), req(7, Some(0), 3)] {
+        let e = c.count(&OPTS, bad).unwrap_err();
+        assert_eq!(e.outcome, Outcome::Refused);
+        assert!(e.raw.is_none());
+        assert!(
+            matches!(e.kind, ErrorKind::Rpc(RpcError::Malformed(_))),
+            "{:?}",
+            e.kind
+        );
+    }
+    assert_eq!(c.channel.server.calls, 1);
+    // A reply that would hold 0: the method ran, and failed.
+    let e = c.count(&OPTS, req(7, None, 1)).unwrap_err();
+    assert_eq!(e.outcome, Outcome::Failed);
+    assert!(
+        matches!(e.kind, ErrorKind::Rpc(RpcError::Internal(_))),
+        "{:?}",
+        e.kind
+    );
+    assert_eq!(c.channel.server.calls, 2);
+    // A request that holds 0, as no stub sends it: counts { a: 1, b: None
+    // }, then n = 0, then an empty tail.
+    let mut l = Loop::new(Kinds::default(), 2);
+    let body = [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0];
+    assert!(matches!(
+        l.refusal(10, &body, vec![]),
+        RpcError::Malformed(_)
+    ));
+    let body = [0, 0, 0, 1, 0, 0, 3, 0, 0, 0, 0];
+    l.deliver(10, &body, vec![]);
+    assert_eq!(l.answer, Some(Answer::Reply));
+    assert_eq!(l.server.calls, 1);
 }
 
 // ---- An interface the kernel calls -------------------------------------------------

@@ -5,10 +5,9 @@
 #[doc = " them, and no method lists them. The protocol methods, 0xFF01 to 0xFF08,"]
 #[doc = " are defined with the call header, not here: only their text forms use"]
 #[doc = " the `aspis.rpc` prefix (docs/design/call-language.md, \"The system"]
-#[doc = " errors\"). 1.0 is unpublished: its lock is empty until the IDL can say"]
-#[doc = " that `error_key`'s code is not 0, and C18 publishes it then. L23's"]
-#[doc = " tuning of the envelope's bounds, which aren't in this file, comes as a"]
-#[doc = " later minor."]
+#[doc = " errors\"). 1.0 is published, so its codes, detail fields and enum"]
+#[doc = " values are fixed. L23's tuning of the envelope's bounds, which aren't"]
+#[doc = " in this file, comes as a later minor."]
 #[allow(clippy::large_enum_variant, clippy::match_single_binding, clippy::needless_question_mark, clippy::result_large_err, deprecated, unused_variables)]
 pub mod v1 {
     #![forbid(unsafe_code)]
@@ -95,8 +94,8 @@ pub mod v1 {
 
         #[doc = " An error's key alone: the interface, its major and the code (36"]
         #[doc = " octets). The kernel interfaces use it for a pager's Fail and the"]
-        #[doc = " page-unavailable fault (ADR 0057, rule 7). The code is never 0, a"]
-        #[doc = " constraint this IDL can't state yet."]
+        #[doc = " page-unavailable fault (ADR 0057, rule 7). The code is never 0, as"]
+        #[doc = " in the envelope's `error-key`."]
         #[derive(Debug, Clone, PartialEq)]
         pub struct ErrorKey {
             pub interface: rt::wire::Id,
@@ -110,7 +109,7 @@ pub mod v1 {
                 ::core::result::Result::Ok(Self {
                     interface: r.id()?,
                     major: r.u16()?,
-                    code: r.u16()?,
+                    code: rt::wire::nonzero(r.u16()?)?,
                 })
             }
 
@@ -135,7 +134,7 @@ pub mod v1 {
                 let _ = &cx;
                 { let x = &self.interface; w.put(x)?; }
                 { let x = &self.major; w.u16(*x)?; }
-                { let x = &self.code; w.u16(*x)?; }
+                { let x = &self.code; w.u16(rt::wire::nonzero_enc(*x)?)?; }
                 ::core::result::Result::Ok(())
             }
         }
@@ -735,6 +734,7 @@ pub mod v1 {
             }
 
             #[doc = " An unknown method number, or one newer than the session's minor."]
+            #[doc = " The method is the request header's, which is never 0."]
             #[derive(Debug, Clone, PartialEq)]
             pub struct NoSuchMethod<'a> {
                 pub method: u16,
@@ -747,7 +747,7 @@ pub mod v1 {
             impl<'a> NoSuchMethod<'a> {
                 /// Decodes the value at the context's minor.
                 pub fn decode(r: &mut rt::wire::Reader<'a>, cx: &mut rt::wire::DecodeCx) -> ::core::result::Result<Self, rt::wire::DecodeError> {
-                    let f_method = r.u16()?;
+                    let f_method = rt::wire::nonzero(r.u16()?)?;
                     let f_session_minor = r.u16()?;
                     let mut f_since_minor = ::core::option::Option::None;
                     let mut tail = rt::wire::Tail::read(r, rt::wire::known(&[0, 0, 0], cx.minor))?;
@@ -787,7 +787,7 @@ pub mod v1 {
                 /// Encodes the value. A client stub's context refuses what is newer than the session's minor.
                 pub fn encode(&self, w: &mut rt::wire::Writer<'_>, cx: &rt::wire::EncodeCx) -> ::core::result::Result<(), rt::wire::EncodeError> {
                     let _ = &cx;
-                    { let x = &self.method; w.u16(*x)?; }
+                    { let x = &self.method; w.u16(rt::wire::nonzero_enc(*x)?)?; }
                     { let x = &self.session_minor; w.u16(*x)?; }
                     let mut tail = w.tail()?;
                     if let ::core::option::Option::Some(x) = &self.since_minor { let at = tail.begin(w, 3)?; w.u16(*x)?; tail.end(w, at)?; }
@@ -2040,6 +2040,7 @@ pub mod v1 {
             #[doc = " The object doesn't implement the interface."]
             NoSuchInterface(detail::NoSuchInterface<'a>),
             #[doc = " An unknown method number, or one newer than the session's minor."]
+            #[doc = " The method is the request header's, which is never 0."]
             NoSuchMethod(detail::NoSuchMethod<'a>),
             #[doc = " A request field newer than the session's minor."]
             FieldTooNew(detail::FieldTooNew<'a>),

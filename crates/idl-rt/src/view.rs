@@ -17,8 +17,9 @@ use core::{fmt, ops::Deref};
 use crate::json::JsonWriter;
 use crate::wire::{DecodeCx, DecodeError, Mode, Reader};
 
-/// A `string<N>`: UTF-8 without U+0000, its bound checked where it is
-/// decoded and encoded. Borrowed and owned strings compare by content.
+/// A `string<N>`: UTF-8 without U+0000 or a noncharacter (ADR 0062, rule
+/// 4), its bound checked where it is decoded and encoded. Borrowed and
+/// owned strings compare by content.
 #[derive(Clone)]
 pub enum Str<'a> {
     Borrowed(&'a str),

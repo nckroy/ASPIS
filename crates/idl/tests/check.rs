@@ -710,3 +710,65 @@ fn every_declared_type_fits_a_message() {
     }
     refused(&iface(&doubling), Code::Size);
 }
+
+/// `[nonzero]` stands on a field, parameter, named result or error-detail
+/// field whose type is written as an integer, optional or not, and
+/// nowhere else: not on an object attribute, which has no wire or text
+/// grammar (docs/design/call-language.md, "Attributes").
+#[test]
+fn nonzero_stands_on_integer_fields() {
+    accepted(&iface(
+        "struct s { [nonzero] a: u8, [nonzero] b: i64?, [sensitive, nonzero] c: u32? }
+         [closed] struct k { [nonzero] a: u16, [nonzero] b: i8? }
+         [type(org.example.o)] object o { n: u64 }
+         error e = 1 { [nonzero] n: u32 };
+         @1 m([nonzero] a: u16, b: k) -> ([nonzero] r: u32, [nonzero] s: u8?) error(e);",
+    ));
+    for body in [
+        "struct s { [nonzero] a: string<4> }",
+        "struct s { [nonzero] a: bool }",
+        "struct s { [nonzero] a: f32 }",
+        "struct s { [nonzero] a: id }",
+        "struct s { [nonzero] a: seq<u8, 4> }",
+        // An alias, an enum or flags: only an integer written in the field.
+        "alias n = u8;\nstruct s { [nonzero] a: n }",
+        "enum e: u8 { a = 1 }\nstruct s { [nonzero] a: e }",
+        // Not on an arm, a type, a value or a method; no arguments.
+        "union u { [nonzero] @1 a: u8 }",
+        "[nonzero] struct s { a: u8 }",
+        "enum e: u8 { [nonzero] a = 1 }",
+        "[nonzero] @1 m(a: u8);",
+        "struct s { [nonzero(1)] a: u8 }",
+        "struct s { [nonzero, nonzero] a: u8 }",
+        // Not on an object attribute, optional or not.
+        "[type(org.example.o)] object o { [nonzero] n: u64 }",
+        "[type(org.example.o)] object o { a: u8, [nonzero] n: u32? }",
+    ] {
+        refused(&iface(body), Code::Attribute);
+    }
+}
+
+/// A major has at most 1,024 minors: `version(M.m)` names m up to 1,023
+/// (`idl::Limits::minor`), checked with `Code::Limit`.
+#[test]
+fn a_major_has_at_most_1024_minors() {
+    let header = |v: &str| format!("id(org.example.t), object_id(reserved(1)), version({v})");
+    accepted(&iface_with(&header("1.1023"), ""));
+    accepted(&iface_with(&header("0.1023"), ""));
+    assert_eq!(idl::MAX_MINOR, 1023);
+    assert_eq!(idl::Limits::default().minor, idl::MAX_MINOR);
+    for v in ["1.1024", "1.65535", "2.4000"] {
+        assert_eq!(codes(&iface_with(&header(v), "")), [Code::Limit], "{v}");
+    }
+    // A catalog may run with a lower limit.
+    let low = idl::Limits {
+        minor: 3,
+        ..idl::Limits::default()
+    };
+    let mut none = |_: &idl_rt::names::InterfaceRef<'_>| None;
+    let src = iface_with(&header("1.4"), "");
+    let d = idl::check(src.as_bytes(), &mut none, &low).unwrap_err();
+    assert_eq!(d[0].code, Code::Limit);
+    let src = iface_with(&header("1.3"), "");
+    assert!(idl::check(src.as_bytes(), &mut none, &low).is_ok());
+}

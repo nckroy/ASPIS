@@ -14,6 +14,8 @@ IDs are big-endian octet strings that compare bytewise ([0001](0001-object-ident
 
 On 2026-11-25 the project owner decided that messages are big-endian and signed integers are two's complement. The owner also accepted two defaults that Claude proposed with these records: u32 lengths and counts, and an in-place edit of ADR 0013, rule 4. The pull request that proposes this record makes that edit: rule 4's first bullet now lists the core rules defined here, and its third bullet states the byte order (rule 2) instead of calling it open. The same pull request corrects [0037](0037-initial-image-format-and-contents.md), rule 1, which cited the open item.
 
+On 2026-11-26 the project owner decided that text also excludes the Unicode noncharacters (rule 4), so that the JSON mapping's output is I-JSON without exception.
+
 This record states decisions and invariants. The grammar, tables and vector format are in the call-language specification's [Core rules](../design/call-language.md#core-rules). Claude drafted this record from the owner's decisions.
 
 ## Decision
@@ -33,7 +35,7 @@ This record states decisions and invariants. The grammar, tables and vector form
    - the shapes of struct tails, union arm tags and capability references, whose meaning [0065](0065-typed-errors-and-minor-versions-on-the-wire.md), rules 9 and 10 and [0066](0066-capability-parameters-and-server-streams.md), rule 2 give.
 
    **Each value has exactly one encoding.** A decoder rejects every other octet string as malformed, so an accepted message re-encodes to the same octets. Core rule names are reserved in every letter case. Core rules may be added; an existing one never changes its meaning.
-4. **Text.** Text is UTF-8 as RFC 3629 defines it, without U+0000, so a C binding can end a string with NUL. No Unicode normalization is applied or checked: strings compare octet by octet. A length counts octets, not characters. The UTF-8 rules are ASPIS's own ABNF, written from RFC 3629's definition, not copied from it.
+4. **Text.** Text is UTF-8 as RFC 3629 defines it, without U+0000, so a C binding can end a string with NUL, and without the 66 Unicode noncharacters (U+FDD0 to U+FDEF, and U+xFFFE and U+xFFFF in each of the 17 planes), which I-JSON forbids (RFC 7493, section 2.1), so the JSON mapping's output is I-JSON ([0067](0067-the-aspis-idl.md), rule 8). Every decoder of text refuses them, and every encoder. No Unicode normalization is applied or checked: strings compare octet by octet. A length counts octets, not characters. The UTF-8 rules are ASPIS's own ABNF, written from RFC 3629's definition, not copied from it.
 5. **Floats.** `f32` and `f64` are IEEE 754-2019 binary32 and binary64, most significant octet first. Every NaN is encoded as the canonical quiet NaN, and a decoder rejects any other NaN ([What the core rules define](../design/call-language.md#what-the-core-rules-define)). Positive and negative zero are distinct, valid values. **Departure:** the D11 research had decoders accept any bit pattern, which gives one value several encodings (rule 3).
 6. **Lengths, counts and optional values.**
    - Every length and count in a value encoding is a u32: a byte string's or text's octet length, a sequence's element count, a struct tail's field count. So are a stream batch's entry count and a pull's `max_items`.
@@ -66,6 +68,7 @@ This record states decisions and invariants. The grammar, tables and vector form
 
 - [RFC 5234, ABNF](https://www.rfc-editor.org/rfc/rfc5234) (STD 68), and [RFC 7405, Case-Sensitive String Support in ABNF](https://www.rfc-editor.org/rfc/rfc7405), which updates it
 - [RFC 3629, UTF-8](https://www.rfc-editor.org/rfc/rfc3629) (STD 63)
+- [RFC 7493, The I-JSON Message Format](https://www.rfc-editor.org/rfc/rfc7493), section 2.1, which forbids the noncharacters the Unicode Standard defines
 - [IEEE 754-2019, Floating-Point Arithmetic](https://standards.ieee.org/ieee/754/6210/); ISO/IEC 60559:2020 is technically identical
 - [RFC 4506, XDR](https://www.rfc-editor.org/rfc/rfc4506) (STD 67)
 - [RFC 9000, QUIC](https://www.rfc-editor.org/rfc/rfc9000), section 16

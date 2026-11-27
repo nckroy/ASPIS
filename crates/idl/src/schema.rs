@@ -108,6 +108,12 @@ impl Fld<'_> {
         ast::has_attr(&self.field.attrs, "sensitive")
     }
 
+    /// `[nonzero]`: an integer whose value 0 is invalid. A decoder
+    /// refuses 0 as malformed, and an encoder refuses to write it.
+    pub fn nonzero(&self) -> bool {
+        ast::has_attr(&self.field.attrs, "nonzero")
+    }
+
     /// `[format(json)]`: the string holds JSON text.
     pub fn json(&self) -> bool {
         ast::has_attr(&self.field.attrs, "format")

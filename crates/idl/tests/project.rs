@@ -198,3 +198,68 @@ fn locks_are_read_strictly() {
     let l = idl::lock::parse(ok.as_bytes(), 1).unwrap();
     assert!(l.allows(1) && l.allows(2) && !l.allows(0) && !l.allows(3));
 }
+
+/// `[nonzero]` takes its place in the attribute table's order, after
+/// `sensitive`, in the canonical form, and parses back.
+#[test]
+fn nonzero_in_the_canonical_form() {
+    let src = "edition 2026;\n[id(org.example.t), object_id(reserved(1)), version(1.1)]\ninterface t {\n\
+               struct s { [nonzero, sensitive, since(1.1)] a: u32? }\n}\n";
+    let f = parse(src.as_bytes(), &Limits::default()).unwrap();
+    let c = canonical(&f);
+    assert!(
+        c.contains("struct s {[since(1.1), sensitive, nonzero] @1 a: u32?}"),
+        "{c}"
+    );
+    let back = parse(c.as_bytes(), &Limits::default()).unwrap();
+    assert_eq!(canonical(&back), c);
+}
+
+/// The lock reader refuses more than 1,024 entries: a major has at most
+/// 1,024 minors, 0 to 1,023 (`idl::MAX_MINOR`).
+#[test]
+fn a_lock_has_at_most_1024_entries() {
+    let h = "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a";
+    let lock = |n: u32| {
+        let mut s = String::from("# x\n");
+        for m in 0..n {
+            s += &format!("1.{m} sha3-256 {h}\n");
+        }
+        s
+    };
+    let l = idl::lock::parse(lock(1024).as_bytes(), 1).unwrap();
+    assert_eq!(l.published(), Some(1023));
+    let e = idl::lock::parse(lock(1025).as_bytes(), 1).unwrap_err();
+    assert_eq!(e.0, 1026, "{e:?}");
+    assert!(e.1.contains("1024"), "{e:?}");
+}
+
+/// A canonical form that reuses the minor before's member lines is the
+/// canonical form, at every minor of every file, and of a file whose
+/// members change from one minor to the next.
+#[test]
+fn reused_lines_give_the_canonical_form() {
+    let mut sources: Vec<Vec<u8>> = common::idl_files()
+        .iter()
+        .map(|p| std::fs::read(p).unwrap())
+        .collect();
+    sources.push(
+        b"edition 2026;\n[id(org.example.t), object_id(reserved(1)), version(1.3)]\ninterface t {\n\
+          enum e: u8 { a = 1, [since(1.1)] b = 2, [since(1.3)] c = 3 }\n\
+          [since(1.2)] struct s { a: u8, [since(1.3)] b: u8? }\n\
+          struct u { a: u8, [deprecated(1.2)] b: u8? }\n\
+          @1 m(a: u8);\n}\n"
+            .to_vec(),
+    );
+    for src in sources {
+        let c = common::check(&src).unwrap();
+        let mut last: Option<(idl::ast::File, Vec<String>)> = None;
+        for m in 0..=c.unit().version.minor {
+            let p = project(c.file(), m);
+            let (text, lines) =
+                idl::canon::canonical_reusing(&p, last.as_ref().map(|(f, l)| (f, l.as_slice())));
+            assert_eq!(text, canonical(&p), "minor {m}");
+            last = Some((p, lines));
+        }
+    }
+}

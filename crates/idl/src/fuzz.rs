@@ -95,7 +95,7 @@ pub const MINORS: usize = 8;
 /// projection changes, each with the minor before it for the step check.
 /// A projection changes only at a minor some `since` or `deprecated`
 /// names; between them, only the header's version moves. So a file that
-/// declares `version(1.65535)` costs a few passes, not 65,536.
+/// declares `version(1.1023)` costs a few passes, not 1,024.
 pub fn minors(c: &Checked) -> Vec<u16> {
     let v = c.unit().version.minor;
     let major = c.unit().major();
@@ -249,7 +249,7 @@ impl Gen<'_, '_, '_> {
             known.push(if f.optional() && !self.src.flag() {
                 None
             } else {
-                Some(self.bare(b.unit, &f.field.ty))
+                Some(crate::vectors::nonzero(&f, self.bare(b.unit, &f.field.ty)))
             });
         }
         // Unknown tail fields, in a tolerant rule's open body: tags past

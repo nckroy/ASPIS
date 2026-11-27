@@ -59,7 +59,9 @@ e-no-such-interface---tail = tail-count *e-no-such-interface---opt
 e-no-such-interface---opt = e-no-such-interface---unknown
 
 ; error "no_such_method": its detail
-e-no-such-method = u16 u16 e-no-such-method---tail
+e-no-such-method = e-no-such-method--method u16 e-no-such-method---tail
+e-no-such-method--method = u16
+    ; constraint: not 0
 e-no-such-method--since-minor = %x00.03 %x00.00.00.02 u16
 e-no-such-method---unknown = e-no-such-method---unknown-tag octets
 e-no-such-method---unknown-tag = %x00 %x04-FF / %x01-FF OCTET
@@ -308,7 +310,9 @@ e-value-too-new---opt = e-value-too-new---unknown
 t-version-range = u16 u16
 
 ; error_key
-t-error-key = object-id u16 u16
+t-error-key = object-id u16 t-error-key--code
+t-error-key--code = u16
+    ; constraint: not 0
 
 ; token_problem
 t-token-problem = u8

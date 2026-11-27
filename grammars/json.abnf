@@ -7,13 +7,16 @@
 ; whitespace. Written here from RFC 8259's and RFC 8785's definitions,
 ; not copied from them. Every rule is prefixed "json-".
 ;
-; json-object and json-value accept any compact RFC 8259 value, as an
-; embedded [format(json)] string may hold one. json-string is the form
+; json-object and json-value accept compact RFC 8259 values whose
+; unescaped characters are wire text, as an embedded [format(json)]
+; string may hold one: json-any-string takes json-unescaped, so no raw
+; noncharacter. An escaped one, such as \uffff, matches, though the
+; writer's embedded check refuses it. json-string is the form
 ; the IDL's JSON mapping itself writes: RFC 8785's escaping, section
 ; 3.2.2.2. Each method's generated text grammar gives its exact arguments
 ; and results (docs/design/call-language.md, "Generated grammars").
 
-; ---- Any compact RFC 8259 value ------------------------------------
+; ---- Compact RFC 8259 values, their unescaped characters wire text --
 json-value    = json-object / json-array / json-any-string / json-number
               / %s"true" / %s"false" / %s"null"
 ; An embedded [format(json)] string: any value but a bare null, which
@@ -32,9 +35,11 @@ json-any-escape = %x22 / %x5C / "/" / %s"b" / %s"f" / %s"n" / %s"r" / %s"t"
 
 ; ---- Strings as the mapping writes them (RFC 8785) ------------------
 ; Only '"', '\' and control characters are escaped: the five short
-; escapes, then \u00xx in lowercase hex. Text never holds U+0000.
+; escapes, then \u00xx in lowercase hex. Text never holds U+0000, and
+; no string holds a noncharacter, which I-JSON forbids (RFC 7493,
+; section 2.1): json-unescaped takes core.abnf's text-3 and text-4.
 json-string   = %x22 *( json-unescaped / %x5C json-escape ) %x22
-json-unescaped = %x20-21 / %x23-5B / %x5D-7F / utf8-2 / utf8-3 / utf8-4
+json-unescaped = %x20-21 / %x23-5B / %x5D-7F / utf8-2 / text-3 / text-4
 json-escape   = %x22 / %x5C / %s"b" / %s"f" / %s"n" / %s"r" / %s"t"
               / %s"u00" ( "0" ( %x31-37 / %s"b" / %s"e" / %s"f" ) / "1" json-hexl )
 json-hexl     = DIGIT / %x61-66                ; lowercase only

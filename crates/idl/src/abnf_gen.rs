@@ -44,7 +44,7 @@ use crate::{
     ast::{self, BaseType, IntType, Type},
     layout::Facts,
     model::TypeId,
-    schema::{Body, Def, Mode, Schema, Top, kebab},
+    schema::{Body, Def, Fld, Mode, Schema, Top, kebab},
 };
 
 /// The rules of one generated grammar, in the order they are defined.
@@ -255,7 +255,7 @@ impl Wire<'_, '_> {
         if b.closed {
             for f in &fields {
                 let fname = format!("{name}--{}", kebab(&f.field.name.name));
-                head.push(self.elem(b.unit, &f.field.ty, &fname, mode));
+                head.push(self.field(b.unit, f, &fname, mode));
             }
             let body = if head.is_empty() {
                 "0OCTET".to_string()
@@ -270,11 +270,12 @@ impl Wire<'_, '_> {
             let fname = format!("{name}--{}", kebab(&f.field.name.name));
             if f.optional() {
                 let at = self.r.mark();
-                let def = self.prefixed(&fname, f.pos, b.unit, &f.field.ty, true, mode);
+                let def =
+                    self.prefixed(&fname, f.pos, b.unit, &f.field.ty, true, f.nonzero(), mode);
                 self.r.def_at(at, &fname, &def, &[]);
                 opts.push(fname);
             } else {
-                head.push(self.base(b.unit, &f.field.ty, &fname, mode));
+                head.push(self.field(b.unit, f, &fname, mode));
             }
         }
         // The position after the last field known at the minor, so an
@@ -321,8 +322,31 @@ impl Wire<'_, '_> {
         self.r.def_at(at, name, &head.join(" "), &[]);
     }
 
+    /// A field outside a tail: in a closed struct, or a required field of
+    /// an open one. A `[nonzero]` integer is a rule of its own, `not 0`
+    /// (docs/design/call-language.md, "Attributes").
+    fn field(&mut self, u: usize, f: &Fld<'_>, x: &str, mode: Mode) -> String {
+        let t = &f.field.ty;
+        let BaseType::Int(w) = t.base else {
+            return self.elem(u, t, x, mode);
+        };
+        if !f.nonzero() {
+            return self.elem(u, t, x, mode);
+        }
+        if t.optional {
+            let v = format!("{x}---value");
+            self.r.def(x, &format!("%x00 / %x01 {v}"), &[]);
+            self.r.def(&v, w.word(), &["not 0".into()]);
+        } else {
+            self.r.def(x, w.word(), &["not 0".into()]);
+        }
+        x.to_string()
+    }
+
     /// A tagged value: `%x<tag>`, its length, then the value. `bare`: a
-    /// tail field, whose `?` the tail carries.
+    /// tail field, whose `?` the tail carries. `nonzero`: a `[nonzero]`
+    /// field's integer, whose value rule says `not 0`.
+    #[allow(clippy::too_many_arguments)]
     fn prefixed(
         &mut self,
         x: &str,
@@ -330,6 +354,7 @@ impl Wire<'_, '_> {
         u: usize,
         t: &Type,
         bare: bool,
+        nonzero: bool,
         mode: Mode,
     ) -> String {
         let facts = if bare {
@@ -338,10 +363,13 @@ impl Wire<'_, '_> {
             facts_of(self.s, u, t)
         };
         let value_name = format!("{x}---value");
-        let value = if bare {
-            self.base(u, t, &value_name, mode)
-        } else {
-            self.elem(u, t, &value_name, mode)
+        let value = match (&t.base, nonzero && bare) {
+            (BaseType::Int(w), true) => {
+                self.r.def(&value_name, w.word(), &["not 0".into()]);
+                value_name.clone()
+            }
+            _ if bare => self.base(u, t, &value_name, mode),
+            _ => self.elem(u, t, &value_name, mode),
         };
         let tag = lit(&tag.to_be_bytes());
         if !facts.open && facts.min == facts.max && facts.max <= u64::from(u32::MAX) {
@@ -375,7 +403,7 @@ impl Wire<'_, '_> {
                 let v = self.elem(id.unit, a.ty, &format!("{aname}---value"), mode);
                 format!("{} {v}", lit(&a.tag.to_be_bytes()))
             } else {
-                self.prefixed(&aname, a.tag, id.unit, a.ty, false, mode)
+                self.prefixed(&aname, a.tag, id.unit, a.ty, false, false, mode)
             };
             self.r.def_at(at, &aname, &def, &[]);
             alts.push(aname);
@@ -805,17 +833,22 @@ impl Text<'_, '_> {
         for f in s.known_fields(b) {
             let fname = format!("{name}--{}", kebab(&f.field.name.name));
             let at = self.r.mark();
-            let value = if f.redacted() {
-                "json-null".to_string()
-            } else {
+            let value = match (&f.field.ty.base, f.nonzero()) {
+                _ if f.redacted() => "json-null".to_string(),
+                // A `[nonzero]` integer's number is `not 0`.
+                (BaseType::Int(w), true) => {
+                    let x = format!("{fname}---value");
+                    self.int(&x, *w, true);
+                    x
+                }
                 // A struct field's `?` means the key may be absent.
-                self.base(
+                _ => self.base(
                     b.unit,
                     &f.field.ty,
                     f.json(),
                     &format!("{fname}---value"),
                     mode,
-                )
+                ),
             };
             self.r.def_at(
                 at,
@@ -1005,7 +1038,7 @@ impl Text<'_, '_> {
             // wire grammar holds its bound.
             BaseType::String(_) => "json-string".into(),
             BaseType::Int(w) => {
-                self.int(x, *w);
+                self.int(x, *w, false);
                 x.into()
             }
             BaseType::Bytes(b) => {
@@ -1041,26 +1074,29 @@ impl Text<'_, '_> {
 
     /// An integer, bounded on rules that read as the decimal number they
     /// spell ("How constraints bind"). `u64` and `i64` are strings.
-    fn int(&mut self, x: &str, w: IntType) {
+    /// `nonzero`: a `[nonzero]` field's, whose digits are `not 0`.
+    fn int(&mut self, x: &str, w: IntType, nonzero: bool) {
         let (min, max) = w.range();
         let digits = format!("{x}---digits");
         let neg = format!("{x}---neg");
         let at = self.r.mark();
+        let mut bound = vec![format!("at most {max}")];
+        if nonzero {
+            bound.push("not 0".into());
+        }
         let number = if w.signed() {
             self.r.def(
                 &neg,
                 "json-uint-nz",
                 &[format!("at most {}", min.unsigned_abs())],
             );
-            self.r
-                .def(&digits, "json-uint", &[format!("at most {max}")]);
+            self.r.def(&digits, "json-uint", &bound);
             format!("\"-\" {neg} / {digits}")
         } else if w == IntType::U64 {
-            self.r
-                .def(&digits, "json-uint", &[format!("at most {max}")]);
+            self.r.def(&digits, "json-uint", &bound);
             digits.clone()
         } else {
-            self.r.def(x, "json-uint", &[format!("at most {max}")]);
+            self.r.def(x, "json-uint", &bound);
             return;
         };
         let def = match w {

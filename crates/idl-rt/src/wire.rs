@@ -32,6 +32,21 @@ pub const NAN64: u64 = 0x7FF8_0000_0000_0000;
 /// never one.
 pub const MAX_TAIL: u32 = 65_535;
 
+/// Whether `c` is one of the 66 Unicode noncharacters: U+FDD0 to U+FDEF,
+/// and the last two code points of each plane, U+FFFE and U+FFFF to
+/// U+10FFFE and U+10FFFF. Wire text never holds one (ADR 0062, rule 4),
+/// so the JSON mapping's output is I-JSON (RFC 7493, section 2.1).
+pub fn is_noncharacter(c: char) -> bool {
+    let c = u32::from(c);
+    (0xFDD0..=0xFDEF).contains(&c) || c & 0xFFFE == 0xFFFE
+}
+
+/// Whether `s` is wire text, core.abnf's `*text-char`: UTF-8 (which a
+/// `str` is) without U+0000 or a noncharacter (ADR 0062, rule 4).
+pub fn is_text(s: &str) -> bool {
+    !s.chars().any(|c| c == '\0' || is_noncharacter(c))
+}
+
 /// Why a message doesn't decode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
@@ -195,6 +210,26 @@ pub fn exact<'a, T>(
     }
 }
 
+/// A `[nonzero]` field's integer, as read: 0 is malformed
+/// (docs/design/call-language.md, "Attributes").
+pub fn nonzero<T: Default + PartialEq>(v: T) -> Result<T, DecodeError> {
+    if v == T::default() {
+        Err(DecodeError::Malformed)
+    } else {
+        Ok(v)
+    }
+}
+
+/// A `[nonzero]` field's integer, to be written: 0 is refused, since no
+/// decoder would accept it.
+pub fn nonzero_enc<T: Default + PartialEq>(v: T) -> Result<T, EncodeError> {
+    if v == T::default() {
+        Err(EncodeError::Bounds)
+    } else {
+        Ok(v)
+    }
+}
+
 /// How many of a body's fields are known at `minor`: each entry is a
 /// field's effective `since` minor, by position. Fields are only appended
 /// and `since` never decreases, so the known ones are a prefix.
@@ -325,15 +360,15 @@ impl<'a> Reader<'a> {
         self.take(n as usize)
     }
 
-    /// `string<N>`: at most `max` octets of UTF-8, without U+0000 (ADR
-    /// 0062).
+    /// `string<N>`: at most `max` octets of UTF-8, without U+0000 or a
+    /// noncharacter ([`is_text`]; ADR 0062, rule 4).
     pub fn str(&mut self, max: u32) -> R<Str<'a>> {
         let n = self.u32()?;
         if n > max {
             return Err(DecodeError::Malformed);
         }
         let s = core::str::from_utf8(self.take(n as usize)?).map_err(|_| DecodeError::Malformed)?;
-        if s.contains('\0') {
+        if !is_text(s) {
             return Err(DecodeError::Malformed);
         }
         Ok(Str::Borrowed(s))
@@ -445,7 +480,8 @@ impl Tail {
 pub enum EncodeError {
     /// The buffer is too small.
     Overflow,
-    /// A value is outside its declared bound, or a string holds U+0000.
+    /// A value is outside its declared bound: a string over its length,
+    /// or holding U+0000 or a noncharacter, or 0 in a `[nonzero]` field.
     Bounds,
     /// A field newer than the session's minor is set: its tag, as a
     /// one-element slice, so a stub can report it with no storage.
@@ -615,9 +651,10 @@ impl<'b> Writer<'b> {
         self.put(b)
     }
 
-    /// `string<N>`.
+    /// `string<N>`: refused when over its bound, or when it holds U+0000
+    /// or a noncharacter ([`is_text`]), which no decoder accepts.
     pub fn str(&mut self, s: &str, max: u32) -> W {
-        if s.len() > max as usize || s.contains('\0') {
+        if s.len() > max as usize || !is_text(s) {
             return Err(EncodeError::Bounds);
         }
         self.octets(s.as_bytes())

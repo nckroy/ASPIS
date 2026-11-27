@@ -225,4 +225,27 @@ interface kinds {
     /// New in 1.2, and already deprecated.
     [since(1.2), deprecated(1.2), group(read)]
     @9 newest(m: mode, f: perms, w: wide) -> array<cell, max_items>;
+
+    /// New in 1.2: integers that are never 0, in a closed struct.
+    [since(1.2), closed]
+    struct counts {
+        [nonzero] a: u32,
+        [nonzero] b: i16?,
+    }
+
+    /// New in 1.2: integers that are never 0, in an open struct's head
+    /// and tail.
+    [since(1.2)]
+    struct ids {
+        [nonzero] first: u64,
+        [sensitive, nonzero] more: u8?,
+    }
+
+    /// New in 1.2: a detail field that is never 0.
+    [since(1.2)]
+    error zero = 6 { [nonzero] n: i32 };
+
+    /// New in 1.2: parameters and results that are never 0.
+    [since(1.2), group(read)]
+    @10 count(c: counts, [nonzero] n: u16) -> (ids: ids, [nonzero] total: u32?) error(zero);
 }

@@ -161,6 +161,13 @@ fn embedded_json_is_checked() {
         (r#"{"a":1,"\u0061":2}"#, r#""{\"a\":1,\"\\u0061\":2}""#),
         // An unpaired surrogate: a string.
         (r#""\ud800""#, r#""\"\\ud800\"""#),
+        // A noncharacter, escaped or as a pair of surrogate escapes: a
+        // string, since I-JSON forbids it (RFC 7493, §2.1).
+        (r#""\ufdd0""#, r#""\"\\ufdd0\"""#),
+        (r#"{"a":"\uFFFF"}"#, r#""{\"a\":\"\\uFFFF\"}""#),
+        (r#"["\udbff\udfff"]"#, r#""[\"\\udbff\\udfff\"]""#),
+        // U+FFFD and U+10FFFD, beside them, embed.
+        (r#""\ufffd\udbff\udffd""#, r#""\ufffd\udbff\udffd""#),
         // Not JSON at all.
         ("{a:1}", r#""{a:1}""#),
         ("[1,]", r#""[1,]""#),
@@ -185,6 +192,32 @@ fn embedded_json_is_checked() {
     let deep = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
     assert_eq!(write(|w| w.embedded(&deep(32))), deep(32));
     assert!(write(|w| w.embedded(&deep(33))).starts_with('"'));
+}
+
+/// The writer's output is I-JSON: a noncharacter, which no wire string
+/// holds, is written as U+FFFD (RFC 7493, §2.1).
+#[test]
+fn strings_never_hold_a_noncharacter() {
+    let g = grammar();
+    for c in [
+        '\u{FDD0}',
+        '\u{FDEF}',
+        '\u{FFFE}',
+        '\u{FFFF}',
+        '\u{1FFFE}',
+        '\u{10FFFF}',
+    ] {
+        let got = write(|w| w.string(&format!("a{c}b")));
+        assert_eq!(got, "\"a\u{FFFD}b\"", "{c:?}");
+        assert!(matches(&g, "json-string", &got));
+        assert!(!matches(&g, "json-string", &format!("\"a{c}b\"")), "{c:?}");
+        // As embedded text, it is a string too.
+        let got = write(|w| w.embedded(&format!("\"{c}\"")));
+        assert_eq!(got, "\"\\\"\u{FFFD}\\\"\"", "{c:?}");
+    }
+    let got = write(|w| w.string("\u{FDCF}\u{FFFD}\u{10FFFD}"));
+    assert_eq!(got, "\"\u{FDCF}\u{FFFD}\u{10FFFD}\"");
+    assert!(matches(&g, "json-string", &got));
 }
 
 #[test]

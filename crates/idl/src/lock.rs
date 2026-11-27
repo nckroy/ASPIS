@@ -7,7 +7,8 @@
 //! `grammars/idl-lock.abnf` is its grammar.
 //!
 //! - The entries are the minors 0 to p, in order, one each. A lock with no
-//!   entries means nothing is published.
+//!   entries means nothing is published. A lock has at most 1,024 entries,
+//!   since a major has at most that many minors ([`crate::MAX_MINOR`]).
 //! - The file's version v is p (every minor published) or p + 1 (one minor
 //!   in development). Anything else fails.
 //! - Publishing a minor appends its hash; an entry is never rewritten.
@@ -75,10 +76,15 @@ pub fn parse(text: &[u8], major: u16) -> Result<Lock, (usize, String)> {
                 "expected 'M.m sha3-256 <64 lowercase hex digits>'".into(),
             ));
         };
-        if lock.hashes.len() > usize::from(u16::MAX) {
+        if lock.hashes.len() > usize::from(crate::MAX_MINOR) {
             return Err((
                 n,
-                "more than 65536 entries: a minor is at most 65535".into(),
+                format!(
+                    "more than {} entries: a major has at most {} minors, 0 to {}",
+                    usize::from(crate::MAX_MINOR) + 1,
+                    usize::from(crate::MAX_MINOR) + 1,
+                    crate::MAX_MINOR
+                ),
             ));
         }
         let expected = format!("{major}.{}", lock.hashes.len());
