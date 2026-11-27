@@ -163,19 +163,25 @@ jobs:
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The runner image's preinstalled Java 21 (Temurin), not an action.
-      # xtask checks the version again (11 or later).
+      # The runner's Java 21, with no setup action: the Temurin 21 the image
+      # preinstalls (on ubuntu-24.04-arm its variable is mislabeled
+      # JAVA_HOME_21_X64), else Ubuntu's own OpenJDK 21 package. xtask
+      # checks the version again.
       - name: Use the runner's Java 21
         run: |
-          for h in "${JAVA_HOME_21_arm64:-}" "${JAVA_HOME_21_ARM64:-}"; do
-            if [ -n "$h" ] && [ -x "$h/bin/java" ]; then
+          env | grep '^JAVA_HOME' || true
+          for h in $(env | sed -n 's/^JAVA_HOME_21_[A-Za-z0-9]*=//p') "${JAVA_HOME:-}"; do
+            if [ -x "$h/bin/java" ] && "$h/bin/java" -version 2>&1 | grep -q '"21\.'; then
               echo "JAVA_HOME=$h" >> "$GITHUB_ENV"
               "$h/bin/java" -version
               exit 0
             fi
           done
-          echo "::error::the runner image has no Java 21 (JAVA_HOME_21_arm64 is unset)"
-          exit 1
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends openjdk-21-jre-headless
+          h=$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")
+          echo "JAVA_HOME=$h" >> "$GITHUB_ENV"
+          "$h/bin/java" -version
       - uses: ./.github/actions/setup
         with:
           qemu: "false"

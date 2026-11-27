@@ -46,6 +46,7 @@ for f in aspis.efi initfs.img; do
 done
 if [ "$status" -ne 0 ]; then
     # Report the difference with diffoscope (ADR 0038, rule 1).
+    sudo apt-get update -qq
     sudo apt-get install -y -qq diffoscope-minimal >/dev/null
     for f in aspis.efi initfs.img kernel.elf; do
         sudo diffoscope --max-report-size 200000 "$root/build/production/$f" "$other/build/production/$f" || true
