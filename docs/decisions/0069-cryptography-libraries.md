@@ -3,8 +3,8 @@
 
 # 0069. The cryptography libraries: RustCrypto and dalek
 
-- **Status:** Proposed
-- **Date:** 2026-11-26
+- **Status:** Accepted
+- **Date:** 2026-11-26, updated 2026-11-27
 
 ## Context
 
@@ -74,7 +74,7 @@ Claude drafted this record from the project owner's choice of 2026-11-26.
 
 ## Consequences
 
-- **D33 is settled for the primitives.** Which crates supply DER, JOSE, JSON, TLS, QUIC and TOML stays with the chunks that use them ([call-language L39](../design/call-language.md#l39-third-party-parsers)). The TLS and QUIC stack stays with D65.
+- **D33 is settled.** Which crates supply DER, JOSE, JSON, TLS, QUIC and TOML stay with the chunks that use them ([call-language L39](../design/call-language.md#l39-third-party-parsers)). The TLS and QUIC stack stays with D65.
 - **The ML crates are young.** `ml-kem` is at 0.3 and `ml-dsa` at 0.1, so their interfaces may change. `aspis-crypto` keeps any change in one place, and every bump reruns the vectors and the differential tests.
 - **Nothing in the product is formally verified.** Two things limit the risk: the hybrid holds while either half does ([0003](0003-hybrid-post-quantum-cryptography.md)), and libcrux's verified ML-KEM checks RustCrypto's on every fuzz run.
 - **Later chunks call `aspis-crypto`, not the traits.** RustCrypto's DER, X.509 and PKCS crates take the same `digest` and `signature` traits as its primitives, but `aspis-crypto` exposes none of them: its types are its own, with their own methods. C28 and C37 may use the format crates to parse and encode, and call `aspis-crypto` for every cryptographic operation. If one of them needs a trait, such as `signature::Verifier`, `aspis-crypto` implements it on its own types; no other crate depends on the primitive crates (rule 2). A rustls provider, if D65 picks rustls, implements rustls's own traits on `aspis-crypto`, so it needs no second implementation.
