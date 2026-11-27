@@ -3,7 +3,7 @@
 
 # aspis-crypto's known-answer vectors
 
-*2026-11-26. The vectors of [ADR 0069](../../../../docs/decisions/0069-cryptography-libraries.md), rule 7, and where each comes from.*
+*2026-11-26, updated 2026-11-27. The vectors of [ADR 0069](../../../../docs/decisions/0069-cryptography-libraries.md), rule 7, and where each comes from.*
 
 Each file here holds test vectors copied from a standard. The values are unchanged. They are written as lowercase hex, without the spaces and line breaks of the source. RFC 10073's Appendix E is the exception: it is JSON with base64 values, kept as published without its line breaks. Each file keeps its source's notice ([0033](../../../../docs/decisions/0033-contributions-docs-license-and-notice-years.md), rule 3), recorded in `REUSE.toml`, and its source's legends are repeated below.
 
@@ -16,6 +16,7 @@ Some vectors aren't kept here:
 - The FIPS 180-4 and FIPS 202 examples are constants in `../hash.rs`. They are works of the US government, with no notice.
 - The GCM specification's test cases are constants in `../aead.rs`. The specification states no license or notice.
 - FIPS 197's AES example vectors are constants in `../quic.rs`. They are a work of the US government, with no notice.
+- RFC 10024 (`X25519MLKEM768`) publishes no test vectors. `../hybrid.rs` tests the hybrid by composition, from the ML-KEM-768 and X25519 vectors here.
 
 ## `rfc4231.json`: HMAC-SHA-256, -384 and -512
 

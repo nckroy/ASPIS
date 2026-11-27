@@ -5,7 +5,8 @@
 //! 9001, Appendix A, from `tests/data/rfc9001.json`. They exercise
 //! AES-128-GCM and ChaCha20-Poly1305 with keys derived through
 //! aspis-crypto's HKDF, and the header-protection masks of
-//! `aspis_crypto::quic` (RFC 9001, section 5.4).
+//! `aspis_crypto::quic` (RFC 9001, section 5.4). Both need the crate's
+//! `quic` feature, which isn't a default one.
 //!
 //! HKDF-Expand-Label (RFC 9846, section 7.1) is the record layer's (C29).
 //! The tests build it here from `Prk256::expand`, as C29 will, and check

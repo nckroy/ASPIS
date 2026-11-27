@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: 2026 Nicole Roy
 // SPDX-License-Identifier: MPL-2.0
 
-//! QUIC's header protection (RFC 9001, section 5.4; feature `aead`).
+//! QUIC's header protection (RFC 9001, section 5.4; feature `quic`).
+//!
+//! The module exists only with the `quic` feature, which isn't a default
+//! one, as does AES-128-GCM in [`crate::aead`]. All three keys serve QUIC
+//! alone, and the AES-128 key is one ADR 0003, rule 4 admits only for
+//! QUIC v1's Initial packets. A crate that doesn't name the feature can't
+//! reach them when built on its own, and `cargo xtask lint` keeps `quic`
+//! to the QUIC code it lists (ADR 0069, rule 2).
 //!
 //! QUIC hides each packet's number, and some bits of its first octet,
 //! under a 5-octet mask. The mask comes from a 16-octet sample of the

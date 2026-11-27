@@ -57,7 +57,8 @@ impl fmt::Debug for SharedSecret {
 }
 
 /// `N` secret octets, for the crate's own key types: HKDF's pseudorandom
-/// keys, and the seeds the key types keep, such as ML-KEM-768's d ‖ z.
+/// keys, the seeds the key types keep, such as ML-KEM-768's d ‖ z, and
+/// the 64-octet secret of the hybrid key exchange.
 ///
 /// It has the same guarantees as [`SharedSecret`]. The types that hold one
 /// give it their own name in `Debug`.
@@ -105,7 +106,7 @@ impl<const N: usize> ConstantTimeEq for Secret<N> {
 /// Implements the secret-type traits for a newtype over [`Secret`]:
 /// `ZeroizeOnDrop` (the field clears itself), `ConstantTimeEq`, `PartialEq`
 /// and `Eq` through it, and a `Debug` that prints only the type's name.
-#[cfg(feature = "sha2")]
+#[cfg(any(feature = "sha2", feature = "hybrid"))]
 macro_rules! secret_newtype {
     ($name:ident) => {
         impl zeroize::ZeroizeOnDrop for $name {}
@@ -132,5 +133,5 @@ macro_rules! secret_newtype {
     };
 }
 
-#[cfg(feature = "sha2")]
+#[cfg(any(feature = "sha2", feature = "hybrid"))]
 pub(crate) use secret_newtype;

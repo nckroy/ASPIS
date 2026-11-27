@@ -18,10 +18,13 @@
 //! - [`public_key`], [`ciphertext`] and [`signature`] decode keys,
 //!   ciphertexts and signatures of any length. An accepted input
 //!   re-encodes to itself, and every refusal is one the decoder documents.
+//! - [`key_share`] decodes X25519MLKEM768's client and server shares (RFC
+//!   10024), of any length, and uses each in the exchange.
 //! - [`verify`] decodes a key and a signature and verifies them, with a
 //!   context up to 300 octets, so the 255-octet limit is crossed.
-//! - [`aead_open`] opens a ciphertext under a fixed key, with any of the
-//!   three AEADs.
+//! - [`aead_open`] opens a ciphertext under a fixed key, with
+//!   ChaCha20-Poly1305 or AES-256-GCM, and with the `quic` feature also
+//!   AES-128-GCM.
 //! - [`algorithm`] decodes an OID, a TLS codepoint or a JOSE name.
 //! - [`differential`] compares `aspis-crypto` with an [`Oracle`], which C71
 //!   implements with libcrux (rule 8).
@@ -29,6 +32,12 @@
 //! Each decoding entry returns the refusal its input met, or `Ok` if the
 //! input was accepted or held nothing to decode. Fuzz targets ignore it;
 //! the replay tests use it to show that the corpus reaches every refusal.
+//!
+//! Selectors keep their numbers whatever the features, so a corpus means
+//! the same in every build. A selector whose family isn't built does
+//! nothing: [`aead_open`] returns `Ok` for AES-128-GCM without `quic`, as
+//! for input with nothing to decode, and [`differential`] skips the
+//! primitive.
 //! [`Error::OutputLength`] and [`Error::SigningFailed`] are never
 //! returned: the entries size their own buffers, and signing fails only if
 //! a library breaks its contract.
@@ -36,7 +45,8 @@
 //! Each target's `max_len` is its format's limit plus 1 KiB (call-language
 //! "The gate for each target", item 1): for [`public_key`], 1 + 1,984 + 1
 //! KiB; for [`ciphertext`], 1,088 + 1 KiB; for [`signature`], 1 + 3,373 + 1
-//! KiB; for [`verify`], 1 + 1,984 + 3,373 + 2 + 300 + 1 KiB of message;
+//! KiB; for [`key_share`], 1 + 1,216 + 1 KiB; for [`verify`], 1 + 1,984 +
+//! 3,373 + 2 + 300 + 1 KiB of message;
 //! for [`aead_open`], 1 + 12 + 1 + 255 + [`MAX_CIPHERTEXT`] + 1 KiB; for
 //! [`algorithm`], 1 + 64 + 1 KiB; for [`differential`], 1 + 1,952 + 3,309
 //! + 2 + 300 + 1 KiB.
@@ -48,12 +58,18 @@ pub const X25519_SEED: [u8; 32] = [0x58; 32];
 /// The seed d ‖ z of the fixed ML-KEM-768 key [`ciphertext`] decapsulates
 /// with.
 pub const ML_KEM_SEED: [u8; 64] = [0x4b; 64];
+/// The random octets m with which [`key_share`] encapsulates to a client
+/// share. The server's ephemeral X25519 key there is [`X25519_SEED`]'s,
+/// and the fixed client key is that of [`ML_KEM_SEED`] and
+/// [`X25519_SEED`].
+pub const KEY_SHARE_M: [u8; 32] = [0x6d; 32];
 /// The fixed key [`aead_open`] opens with, for ChaCha20-Poly1305 and
-/// AES-256-GCM. AES-128-GCM takes its first 16 octets,
-/// [`AEAD_128_KEY`]. The replay tests seal their seeds with them.
+/// AES-256-GCM. AES-128-GCM, with the `quic` feature, takes its first 16
+/// octets, `AEAD_128_KEY`. The replay tests seal their seeds with them.
 pub const AEAD_KEY: [u8; 32] = [0xae; 32];
 /// The fixed AES-128-GCM key of [`aead_open`]: [`AEAD_KEY`]'s first 16
-/// octets.
+/// octets (feature `quic`).
+#[cfg(feature = "quic")]
 pub const AEAD_128_KEY: [u8; 16] = [0xae; 16];
 /// The longest AEAD plaintext the entries take: TLS 1.3's record limit,
 /// 2^14 octets (RFC 9846, section 5.1). Longer input is cut to it.
@@ -202,6 +218,80 @@ pub fn ciphertext(data: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
+/// X25519MLKEM768 key-share decoding (RFC 10024, sections 4.1 and 4.2).
+/// Octet 0 picks the share, mod 2: a client share (0) or a server share
+/// (1). The rest is the share, of any length.
+///
+/// Properties: an accepted share re-encodes to itself.
+///
+/// - A client share's refusals are `Length` and `Modulus`. An accepted one
+///   is encapsulated to with [`KEY_SHARE_M`] and [`X25519_SEED`]'s key,
+///   twice: both give the same server share, which decodes back to
+///   itself, and the same secret, or both give `NonContributory`.
+/// - A server share's only refusal at decoding is `Length`. An accepted
+///   one is decapsulated twice with the fixed client key, of
+///   [`ML_KEM_SEED`] and [`X25519_SEED`]: both give the same secret, or
+///   both `NonContributory`.
+///
+/// Neither half of a secret is all zeros, so neither was left unfilled.
+#[cfg(feature = "hybrid")]
+pub fn key_share(data: &[u8]) -> Result<(), Error> {
+    use crate::hybrid::{
+        X25519MlKem768ClientShare, X25519MlKem768DecapsulationKey, X25519MlKem768ServerShare,
+        X25519MlKem768SharedSecret,
+    };
+    use Error::{Length, Modulus, NonContributory};
+
+    /// Both halves of a secret are other than all zeros.
+    fn contributory(s: &X25519MlKem768SharedSecret) -> bool {
+        let (ml_kem, x25519) = s.as_bytes().split_at(32);
+        ml_kem != [0; 32] && x25519 != [0; 32]
+    }
+
+    let Some((&which, share)) = data.split_first() else {
+        return Ok(());
+    };
+    if which % 2 == 0 {
+        let client = X25519MlKem768ClientShare::from_bytes(share)
+            .map_err(|e| refused(e, &[Length, Modulus]))?;
+        assert!(client.to_bytes() == share, "client share doesn't re-encode");
+        let first = client.encapsulate(&KEY_SHARE_M, &X25519_SEED);
+        let again = client.encapsulate(&KEY_SHARE_M, &X25519_SEED);
+        match (first, again) {
+            (Ok((server, s)), Ok((server2, s2))) => {
+                assert!(
+                    server == server2 && s == s2,
+                    "encapsulation isn't deterministic"
+                );
+                let bytes = server.to_bytes();
+                assert!(
+                    X25519MlKem768ServerShare::from_bytes(&bytes) == Ok(server),
+                    "server share doesn't decode back"
+                );
+                assert!(contributory(&s), "an all-zero half in the secret");
+            }
+            (Err(e), Err(e2)) => {
+                assert!(e == e2, "encapsulation isn't deterministic");
+                return Err(refused(e, &[NonContributory]));
+            }
+            _ => panic!("encapsulation isn't deterministic"),
+        }
+    } else {
+        let server =
+            X25519MlKem768ServerShare::from_bytes(share).map_err(|e| refused(e, &[Length]))?;
+        assert!(server.to_bytes() == share, "server share doesn't re-encode");
+        let client = X25519MlKem768DecapsulationKey::from_seed(&ML_KEM_SEED, &X25519_SEED);
+        let first = client.decapsulate(&server);
+        assert!(
+            first == client.decapsulate(&server),
+            "decapsulation isn't deterministic"
+        );
+        let s = first.map_err(|e| refused(e, &[NonContributory]))?;
+        assert!(contributory(&s), "an all-zero half in the secret");
+    }
+    Ok(())
+}
+
 /// Signature decoding. Octet 0 picks the scheme, mod 3: Ed25519,
 /// ML-DSA-65 or the composite. The rest is the signature, of any length.
 ///
@@ -316,19 +406,22 @@ pub fn verify(data: &[u8]) -> Result<(), Error> {
     result.map_err(|e| refused(e, &[ContextTooLong, Verification]))
 }
 
-/// AEAD opening. Octet 0 picks the AEAD, mod 3: ChaCha20-Poly1305 or
-/// AES-256-GCM under [`AEAD_KEY`], or AES-128-GCM under [`AEAD_128_KEY`].
-/// Then come the 12-octet nonce, a one-octet aad length and the aad, and
-/// the rest is ciphertext ‖ tag, cut to [`MAX_CIPHERTEXT`]. QUIC's
-/// packets and Retry tags (RFC 9001) reach the same decoder as TLS
-/// records.
+/// AEAD opening. Octet 0 picks the AEAD, mod 3: ChaCha20-Poly1305 (0)
+/// or AES-256-GCM (1) under [`AEAD_KEY`], or AES-128-GCM (2) under
+/// `AEAD_128_KEY`, the last with the `quic` feature only. Then come the
+/// 12-octet nonce, a one-octet aad length and the aad, and the rest is
+/// ciphertext ‖ tag, cut to [`MAX_CIPHERTEXT`]. QUIC's packets and Retry
+/// tags (RFC 9001) reach the same decoder as TLS records.
 ///
 /// Properties: input shorter than a tag gives `Length`, and one that
 /// doesn't open gives `Verification` with the output zeroed. Input that
-/// opens seals back to itself.
+/// opens seals back to itself. Without `quic`, selector 2 returns `Ok`
+/// and opens nothing, so the selectors keep their numbers.
 #[cfg(feature = "aead")]
 pub fn aead_open(data: &[u8]) -> Result<(), Error> {
-    use crate::aead::{Aes128GcmKey, Aes256GcmKey, ChaCha20Poly1305Key, NONCE_LEN, TAG_LEN};
+    #[cfg(feature = "quic")]
+    use crate::aead::Aes128GcmKey;
+    use crate::aead::{Aes256GcmKey, ChaCha20Poly1305Key, NONCE_LEN, TAG_LEN};
 
     /// Opens into a buffer that starts non-zero, then checks the result.
     macro_rules! check {
@@ -373,7 +466,10 @@ pub fn aead_open(data: &[u8]) -> Result<(), Error> {
             rest
         ),
         1 => check!(Aes256GcmKey::from_bytes(&AEAD_KEY), &nonce, aad, rest),
+        #[cfg(feature = "quic")]
         _ => check!(Aes128GcmKey::from_bytes(&AEAD_128_KEY), &nonce, aad, rest),
+        #[cfg(not(feature = "quic"))]
+        _ => Ok(()),
     }
 }
 
@@ -443,6 +539,12 @@ pub fn algorithm(data: &[u8]) -> Result<(), Error> {
 /// ChaCha20 method: libcrux-chacha20poly1305 keeps its raw ChaCha20
 /// private, so the ChaCha20 mask is checked by the crate's tests against
 /// RFC 8439's block function instead.
+///
+/// [`differential`] calls [`Self::aes128gcm_seal`], [`Self::aes128_ecb`]
+/// and [`Self::aes256_ecb`] only when `aspis-crypto` is built with its
+/// `quic` feature. The trait has them in every build, so an oracle is
+/// written once, whatever features it is built against. They are the
+/// oracle's AES, not this crate's, so they reach no AES-128 here.
 #[allow(unused_variables, reason = "the defaults ignore their inputs")]
 pub trait Oracle {
     /// SHA-256 of `m`.
@@ -617,8 +719,8 @@ pub trait Oracle {
 /// | 18 | ML-DSA-65 key and signing | ξ, rnd, a one-octet context length, the context, the message |
 /// | 19 | ML-DSA-65 verification | verifying key, signature, a `u16` context length mod 301, the context, the message |
 /// | 20 | The composite's key and signing | the 64-octet private key, rnd, a one-octet context length, the context, the message |
-/// | 21 | AES-128-GCM sealing | a 16-octet key, nonce, a one-octet aad length, the aad, the plaintext (cut to [`MAX_PLAINTEXT`]) |
-/// | 22, 23 | QUIC's AES-128 and AES-256 header-protection masks | a 16- or 32-octet key, the 16-octet sample |
+/// | 21 | AES-128-GCM sealing (feature `quic`) | a 16-octet key, nonce, a one-octet aad length, the aad, the plaintext (cut to [`MAX_PLAINTEXT`]) |
+/// | 22, 23 | QUIC's AES-128 and AES-256 header-protection masks (feature `quic`) | a 16- or 32-octet key, the 16-octet sample |
 ///
 /// Properties, wherever the oracle returns `Some`:
 ///
@@ -645,7 +747,10 @@ pub trait Oracle {
 ///   except over a message that starts with the composite's prefix, and
 ///   its AEADs open what they sealed.
 ///
-/// A primitive whose family isn't built is skipped. Nothing secret is
+/// A primitive whose family isn't built is skipped: the entry returns
+/// without comparing anything. Primitives 21 to 23 are built only with the
+/// `quic` feature, and the selectors keep their numbers without it, so
+/// [`DIFFERENTIAL_PRIMITIVES`] is 24 in every build. Nothing secret is
 /// printed when a property breaks.
 pub fn differential(oracle: &dyn Oracle, data: &[u8]) {
     let Some(&which) = data.first() else {
@@ -665,7 +770,9 @@ pub fn differential(oracle: &dyn Oracle, data: &[u8]) {
         #[cfg(feature = "sha2")]
         8 | 9 => diff::hkdf(oracle, primitive == 8, input),
         #[cfg(feature = "aead")]
-        10 | 11 | 21 => diff::aead(oracle, primitive, input),
+        10 | 11 => diff::aead(oracle, primitive, input),
+        #[cfg(feature = "quic")]
+        21 => diff::aead(oracle, primitive, input),
         #[cfg(feature = "x25519")]
         12 => diff::x25519(oracle, input),
         #[cfg(feature = "ed25519")]
@@ -684,7 +791,7 @@ pub fn differential(oracle: &dyn Oracle, data: &[u8]) {
         19 => diff::ml_dsa_verify(oracle, input),
         #[cfg(feature = "composite")]
         20 => diff::composite(oracle, input),
-        #[cfg(feature = "aead")]
+        #[cfg(feature = "quic")]
         22 | 23 => diff::header_protection(oracle, primitive == 22, input),
         _ => {}
     }
@@ -786,11 +893,13 @@ mod diff {
         }
     }
 
-    /// Sealing with ChaCha20-Poly1305 (10), AES-256-GCM (11) or
-    /// AES-128-GCM (21).
+    /// Sealing with ChaCha20-Poly1305 (10), AES-256-GCM (11) or, with the
+    /// `quic` feature, AES-128-GCM (21).
     #[cfg(feature = "aead")]
     pub(super) fn aead(oracle: &dyn Oracle, which: u8, mut input: Input<'_>) {
-        use crate::aead::{Aes128GcmKey, Aes256GcmKey, ChaCha20Poly1305Key};
+        #[cfg(feature = "quic")]
+        use crate::aead::Aes128GcmKey;
+        use crate::aead::{Aes256GcmKey, ChaCha20Poly1305Key};
         /// Seals `pt` in `ours` under `$key`, opens it again into `back`,
         /// and returns the tag.
         macro_rules! seal_and_open {
@@ -810,6 +919,7 @@ mod diff {
         } else {
             input.array()
         };
+        #[cfg(feature = "quic")]
         let key_128: &[u8; 16] = key[..16].try_into().expect("16 of 32 octets");
         let nonce: [u8; 12] = input.array();
         let aad = input.short();
@@ -826,13 +936,14 @@ mod diff {
                 seal_and_open!(ChaCha20Poly1305Key::from_bytes(&key), &nonce, aad, o, b),
                 oracle.chacha20poly1305_seal(&key, &nonce, aad, pt, t),
             ),
-            11 => (
-                seal_and_open!(Aes256GcmKey::from_bytes(&key), &nonce, aad, o, b),
-                oracle.aes256gcm_seal(&key, &nonce, aad, pt, t),
-            ),
-            _ => (
+            #[cfg(feature = "quic")]
+            21 => (
                 seal_and_open!(Aes128GcmKey::from_bytes(key_128), &nonce, aad, o, b),
                 oracle.aes128gcm_seal(key_128, &nonce, aad, pt, t),
+            ),
+            _ => (
+                seal_and_open!(Aes256GcmKey::from_bytes(&key), &nonce, aad, o, b),
+                oracle.aes256gcm_seal(&key, &nonce, aad, pt, t),
             ),
         };
         assert!(back[..n] == *pt, "AEAD doesn't open what it sealed");
@@ -845,7 +956,7 @@ mod diff {
     }
 
     /// QUIC's AES-128 (`aes128`) or AES-256 header-protection mask.
-    #[cfg(feature = "aead")]
+    #[cfg(feature = "quic")]
     pub(super) fn header_protection(oracle: &dyn Oracle, aes128: bool, mut input: Input<'_>) {
         use crate::quic::{Aes128HeaderProtectionKey, Aes256HeaderProtectionKey, MASK_LEN};
         let (ours, theirs) = if aes128 {
