@@ -509,3 +509,42 @@ fn every_file_steps() {
         }
     }
 }
+
+/// Adding or removing `[nonzero]` on an existing field changes which
+/// values are valid, so a later minor may do neither. A new field may
+/// carry it.
+#[test]
+fn nonzero_never_changes_on_an_existing_field() {
+    for (prev, next) in [
+        ("struct s { a: u8 }", "struct s { [nonzero] a: u8 }"),
+        ("struct s { [nonzero] a: u8 }", "struct s { a: u8 }"),
+        (
+            "struct s { a: u8, b: u32? }",
+            "struct s { a: u8, [nonzero] b: u32? }",
+        ),
+        (
+            "[closed] struct s { a: i16 }",
+            "[closed] struct s { [nonzero] a: i16 }",
+        ),
+        (
+            "error e = 1 { n: u32 };",
+            "error e = 1 { [nonzero] n: u32 };",
+        ),
+        ("@1 m(a: u16);", "@1 m([nonzero] a: u16);"),
+        ("@1 m() -> (r: u64);", "@1 m() -> ([nonzero] r: u64);"),
+        (
+            "@1 m([nonzero] a: u16) -> ([nonzero] r: u64);",
+            "@1 m(a: u16) -> (r: u64);",
+        ),
+    ] {
+        refused(prev, next, "changed");
+    }
+    assert_eq!(
+        within(
+            "struct s { [nonzero] a: u8, [since(1.1), nonzero] b: u16? }\n\
+             [group(a)] @1 m([nonzero] a: u8, [since(1.1), nonzero] b: u32?);\n\
+             [group(b)] @2 n();"
+        ),
+        Vec::new()
+    );
+}

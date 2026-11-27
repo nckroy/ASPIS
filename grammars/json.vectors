@@ -44,7 +44,7 @@ err@json-object	{"a" :1}
 err@json-object	{a:1}
 err@json-object	[]
 
-# ---- Any RFC 8259 string, as embedded JSON may hold ---------------------
+# ---- Strings in embedded JSON: RFC 8259's, unescaped characters wire text
 ok@json-any-string	""
 ok@json-any-string	"\\/"
 ok@json-any-string	"\\u00E9"
@@ -54,6 +54,16 @@ err@json-any-string	"\\x"
 err@json-any-string	"\\u12"
 err@json-any-string	"\x0a"
 err@json-any-string	"\x80"
+# A raw noncharacter isn't wire text, so no value holds one.
+err@json-any-string	"\xef\xbf\xbf"
+err@json-any-string	"\xef\xb7\x90"
+err@json-value	"\xef\xbf\xbf"
+err@json-value	{"a":["\xf4\x8f\xbf\xbe"]}
+# Escaped, a noncharacter matches: the grammar is looser here on purpose.
+# The writer's embedded check refuses it, and writes such text as a JSON
+# string instead.
+ok@json-any-string	"\\uffff"
+ok@json-value	"\\uffff"
 
 # ---- Strings as the mapping writes them (RFC 8785) ----------------------
 ok@json-string	""
@@ -76,6 +86,11 @@ err@json-string	"\x09"
 err@json-string	"\x1f"
 err@json-string	"\xc0\x80"
 err@json-string	"\xed\xa0\x80"
+# Noncharacters, which I-JSON forbids, and U+FFFD beside them.
+ok@json-string	"\xef\xbf\xbd"
+err@json-string	"\xef\xb7\x90"
+err@json-string	"\xef\xbf\xbf"
+err@json-string	"\xf4\x8f\xbf\xbe"
 err@json-string	"
 err@json-string	"\\"
 

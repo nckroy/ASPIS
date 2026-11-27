@@ -16,7 +16,13 @@
 //! `deprecated(...)`, which a minor may add. Both files must have passed
 //! the checker.
 
-use alloc::{collections::BTreeSet, format, string::String, vec::Vec};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    format,
+    string::String,
+    vec,
+    vec::Vec,
+};
 
 use crate::{
     ast::{self, Arm, Attr, Field, File, Member, MemberKind, Value, Version},
@@ -196,10 +202,16 @@ impl Step<'_> {
     fn members(&mut self, prev: &File, next: &File) {
         let nkeys: Vec<String> = next.interface.members.iter().map(key).collect();
         let pkeys: BTreeSet<String> = prev.interface.members.iter().map(key).collect();
+        let at: BTreeMap<&str, usize> = nkeys
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(j, k)| (k.as_str(), j))
+            .collect();
         let mut last = None;
         for p in &prev.interface.members {
             let k = key(p);
-            let Some(j) = nkeys.iter().position(|n| *n == k) else {
+            let Some(&j) = at.get(k.as_str()) else {
                 self.violation("removed", format!("{k} was removed or renamed"));
                 continue;
             };
@@ -226,6 +238,11 @@ impl Step<'_> {
     }
 
     fn member(&mut self, p: &Member, n: &Member, k: &str) {
+        // Two projections of one source keep an unchanged member as it is
+        // written, spans included: nothing about it can differ.
+        if p == n {
+            return;
+        }
         let since = since_of(&p.attrs, self.base);
         if since != since_of(&n.attrs, self.base) {
             self.violation("changed", format!("{k}'s since changed"));
@@ -357,6 +374,7 @@ impl Step<'_> {
     fn fields(&mut self, k: &str, prev: &[Field], next: &[Field], since: Version, closed: bool) {
         for (i, p) in prev.iter().enumerate() {
             match next.get(i) {
+                Some(n) if p == n => {}
                 Some(n) if field_text(p, i + 1, since) == field_text(n, i + 1, since) => {}
                 Some(n) if p.name.name == n.name.name => {
                     self.violation("changed", format!("{k}: field '{}' changed", p.name.name))
@@ -409,8 +427,14 @@ impl Step<'_> {
         let ord = |a: &Arm| match a {
             Arm::Arm { ordinal, .. } | Arm::Reserved { ordinal, .. } => *ordinal,
         };
-        let ntexts: Vec<String> = next.iter().map(text).collect();
-        for p in prev {
+        let (pm, nm) = matched(prev, next);
+        // Sets, so a type of thousands of arms or values costs n log n.
+        let ntexts: BTreeSet<String> = if pm.iter().all(|&m| m) {
+            BTreeSet::new()
+        } else {
+            next.iter().map(text).collect()
+        };
+        for (p, _) in prev.iter().zip(&pm).filter(|(_, m)| !**m) {
             if !ntexts.contains(&text(p)) {
                 self.violation(
                     "changed",
@@ -418,8 +442,12 @@ impl Step<'_> {
                 );
             }
         }
-        let ptexts: Vec<String> = prev.iter().map(text).collect();
-        for n in next {
+        let ptexts: BTreeSet<String> = if nm.iter().all(|&m| m) {
+            BTreeSet::new()
+        } else {
+            prev.iter().map(text).collect()
+        };
+        for (n, _) in next.iter().zip(&nm).filter(|(_, m)| !**m) {
             if ptexts.contains(&text(n)) || matches!(n, Arm::Reserved { .. }) {
                 continue;
             }
@@ -458,8 +486,14 @@ impl Step<'_> {
             }
             Value::Reserved { value, .. } => format!("reserved {:?}", value.value),
         };
-        let ntexts: Vec<String> = next.iter().map(text).collect();
-        for p in prev {
+        let (pm, nm) = matched(prev, next);
+        // Sets, so a type of thousands of arms or values costs n log n.
+        let ntexts: BTreeSet<String> = if pm.iter().all(|&m| m) {
+            BTreeSet::new()
+        } else {
+            next.iter().map(text).collect()
+        };
+        for (p, _) in prev.iter().zip(&pm).filter(|(_, m)| !**m) {
             if !ntexts.contains(&text(p)) {
                 self.violation(
                     "changed",
@@ -467,8 +501,12 @@ impl Step<'_> {
                 );
             }
         }
-        let ptexts: Vec<String> = prev.iter().map(text).collect();
-        for n in next {
+        let ptexts: BTreeSet<String> = if nm.iter().all(|&m| m) {
+            BTreeSet::new()
+        } else {
+            prev.iter().map(text).collect()
+        };
+        for (n, _) in next.iter().zip(&nm).filter(|(_, m)| !**m) {
             if ptexts.contains(&text(n)) || matches!(n, Value::Reserved { .. }) {
                 continue;
             }
@@ -492,4 +530,24 @@ impl Step<'_> {
             }
         }
     }
+}
+
+/// Which entries of `prev` and of `next` equal their counterpart as
+/// written, found in one pass in order. Two projections of one source
+/// keep an unchanged arm or value as it is, spans included, and in the
+/// same order, so only what a minor added is left for the comparison by
+/// text, which the rest needs. Anything else (a stored canonical form
+/// beside a new source) is left unmatched, and compared by text.
+fn matched<T: PartialEq>(prev: &[T], next: &[T]) -> (Vec<bool>, Vec<bool>) {
+    let mut pm = vec![false; prev.len()];
+    let mut nm = vec![false; next.len()];
+    let mut i = 0;
+    for (j, n) in next.iter().enumerate() {
+        if prev.get(i) == Some(n) {
+            pm[i] = true;
+            nm[j] = true;
+            i += 1;
+        }
+    }
+    (pm, nm)
 }

@@ -537,3 +537,109 @@ fn strict_forms_are_found_in_linear_time() {
         "{a:?} {b:?}"
     );
 }
+
+/// The dynamic codec refuses a `[nonzero]` field's 0 wherever the field
+/// stands (a closed struct, an open struct's head and tail, a method's
+/// parameters and results, an error's detail), and the encoder marks a
+/// value that holds one as refused. The kinds fixture's 1.2 has each.
+#[test]
+fn nonzero_fields_refuse_0() {
+    let c = file(KINDS);
+    let s = Schema::new(&c, 2);
+    let t = tops(&s);
+    let check = |rule: &str, ok: &[u8], zero: &[u8]| {
+        let top = t[rule];
+        let d = value::decode(&s, top, ok, 0).unwrap_or_else(|e| panic!("{rule}: {e:?}"));
+        assert!(!value::encode(&s, top, &d.value, false).refused, "{rule}");
+        assert_eq!(
+            value::decode(&s, top, zero, 0),
+            Err(DecodeError::Malformed),
+            "{rule}"
+        );
+    };
+    // counts: a (u32), then b (i16?) with its presence octet.
+    check("t-counts", &[0, 0, 0, 1, 1, 0xFF, 0xFF], &[0, 0, 0, 0, 0]);
+    check("t-counts", &[0, 0, 0, 1, 0], &[0, 0, 0, 1, 1, 0, 0]);
+    // ids: first (u64), then a tail holding more (u8), tag 2.
+    let ids = |first: u8, more: Option<u8>| {
+        let mut v = vec![0, 0, 0, 0, 0, 0, 0, first];
+        match more {
+            Some(m) => v.extend(tail(&[(2, &[m])])),
+            None => v.extend(tail(&[])),
+        }
+        v
+    };
+    check("t-ids", &ids(1, Some(9)), &ids(0, None));
+    check("t-ids", &ids(1, None), &ids(1, Some(0)));
+    // count's request: counts, n (u16), an empty tail.
+    check(
+        "m-count--req",
+        &[0, 0, 0, 1, 0, 0, 3, 0, 0, 0, 0],
+        &[0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+    );
+    // count's reply: ids, then a tail holding total (u32), tag 2.
+    let mut ok = ids(1, None);
+    ok.extend(tail(&[(2, &[0, 0, 0, 5])]));
+    let mut zero = ids(1, None);
+    zero.extend(tail(&[(2, &[0, 0, 0, 0])]));
+    check("m-count--rep", &ok, &zero);
+    // zero's detail: n (i32), then an empty tail.
+    let mut ok = 0xFFFF_FFFFu32.to_be_bytes().to_vec();
+    ok.extend(tail(&[]));
+    let mut zero = vec![0, 0, 0, 0];
+    zero.extend(tail(&[]));
+    check("e-zero", &ok, &zero);
+    // The encoder marks a value holding 0, and one holding a
+    // noncharacter, as refused.
+    let top = t["t-counts"];
+    let mut v = value::decode(&s, top, &[0, 0, 0, 1, 0], 0).unwrap().value;
+    if let Value::Struct(Fields { known, .. }) = &mut v {
+        known[0] = Some(Value::Int(0));
+    }
+    assert!(value::encode(&s, top, &v, false).refused);
+}
+
+/// Wire text refuses U+0000 and the 66 noncharacters, and so the
+/// dynamic codec does: U+FDD0 to U+FDEF and U+xFFFE, U+xFFFF in every
+/// plane (ADR 0062, rule 4).
+#[test]
+fn strings_refuse_noncharacters() {
+    let c = file(KINDS);
+    let s = Schema::new(&c, 2);
+    let t = tops(&s);
+    // `name` is string<63>.
+    let top = t["t-name"];
+    let text = |c: char| {
+        let mut b = c.to_string().into_bytes();
+        let mut v = (b.len() as u32).to_be_bytes().to_vec();
+        v.append(&mut b);
+        v
+    };
+    for c in [
+        '\u{FDCF}',
+        '\u{FDF0}',
+        '\u{FFFD}',
+        '\u{10000}',
+        '\u{1FFFD}',
+        '\u{10FFFD}',
+    ] {
+        let d = value::decode(&s, top, &text(c), 0).unwrap_or_else(|e| panic!("{c:?}: {e:?}"));
+        assert!(!value::encode(&s, top, &d.value, false).refused);
+    }
+    let mut nonchars: Vec<char> = (0xFDD0..=0xFDEF).filter_map(char::from_u32).collect();
+    for plane in 0..=16u32 {
+        nonchars.push(char::from_u32(plane << 16 | 0xFFFE).unwrap());
+        nonchars.push(char::from_u32(plane << 16 | 0xFFFF).unwrap());
+    }
+    assert_eq!(nonchars.len(), 66);
+    for c in nonchars {
+        assert!(idl_rt::wire::is_noncharacter(c));
+        assert_eq!(
+            value::decode(&s, top, &text(c), 0),
+            Err(DecodeError::Malformed),
+            "{c:?}"
+        );
+        let v = Value::Text(c.to_string());
+        assert!(value::encode(&s, top, &v, false).refused, "{c:?}");
+    }
+}

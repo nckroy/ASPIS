@@ -27,13 +27,14 @@
 //! - Anything unknown in a closed type is malformed.
 
 use alloc::{boxed::Box, string::String, vec, vec::Vec};
+use core::cell::RefCell;
 
 use idl_rt::json::JsonWriter;
 
 use crate::{
     ast::{BaseType, IntType, Type},
     model::TypeId,
-    schema::{Body, Def, Mode, Schema, Top},
+    schema::{Body, Def, Fld, Mode, Schema, Top},
 };
 
 /// A value of any IDL type.
@@ -152,6 +153,10 @@ pub enum Fault {
     CapRepeat,
     /// The opening reply's stream ID 0.
     StreamIdZero,
+    /// A string holding a noncharacter, U+FFFF (ADR 0062, rule 4).
+    Noncharacter,
+    /// A `[nonzero]` field's integer as 0.
+    Zero,
 }
 
 /// The interpretive encoder.
@@ -166,6 +171,7 @@ pub struct Encoder<'s, 'm> {
     fault: Option<Fault>,
     fired: bool,
     first_cap: Option<u8>,
+    refused: bool,
 }
 
 /// An encoded message: its octets, and the capability count it names.
@@ -175,6 +181,10 @@ pub struct Encoded {
     pub caps: u8,
     /// Whether the requested fault applied.
     pub fired: bool,
+    /// Whether the value holds what no decoder accepts and the generated
+    /// encoders refuse: a string with U+0000 or a noncharacter, or 0 in a
+    /// `[nonzero]` field. The octets are then no valid message.
+    pub refused: bool,
 }
 
 /// Encodes a value as the body `top` describes. Capability indexes are
@@ -199,12 +209,26 @@ pub fn encode_with(
         fault,
         fired: false,
         first_cap: None,
+        refused: false,
     };
     e.top(top, v);
     Encoded {
         octets: e.out,
         caps: e.caps,
         fired: e.fired,
+        refused: e.refused,
+    }
+}
+
+/// A `[nonzero]` field's integer, bare or present: Some(n).
+fn field_int(v: &Value) -> Option<i128> {
+    match v {
+        Value::Int(n) => Some(*n),
+        Value::Opt(Some(b)) => match **b {
+            Value::Int(n) => Some(n),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -285,11 +309,11 @@ impl Encoder<'_, '_> {
                         None => self.put(&[0]),
                         Some(x) => {
                             self.put(&[1]);
-                            self.ty(b.unit, &f.field.ty, x);
+                            self.field(b.unit, f, x);
                         }
                     }
                 } else if let Some(x) = val {
-                    self.ty(b.unit, &f.field.ty, x);
+                    self.field(b.unit, f, x);
                 }
             }
             return;
@@ -299,7 +323,7 @@ impl Encoder<'_, '_> {
             if !f.optional()
                 && let Some(x) = val
             {
-                self.ty(b.unit, &f.field.ty, x);
+                self.field(b.unit, f, x);
             }
         }
         // The tail: present optional fields, then the unknown ones.
@@ -308,7 +332,7 @@ impl Encoder<'_, '_> {
             if f.optional()
                 && let Some(x) = val
             {
-                let octets = self.sub(|e| e.ty(b.unit, &f.field.ty, x));
+                let octets = self.sub(|e| e.field(b.unit, f, x));
                 tail.push((f.pos, octets));
             }
         }
@@ -340,6 +364,26 @@ impl Encoder<'_, '_> {
             self.len32(octets.len());
             self.put(&octets);
         }
+    }
+
+    /// A field's value: `[nonzero]` refuses 0, or writes it as a fault.
+    fn field(&mut self, u: usize, f: &Fld<'_>, x: &Value) {
+        let t = &f.field.ty;
+        if f.nonzero()
+            && let Some(n) = field_int(x)
+        {
+            if n == 0 {
+                self.refused = true;
+            } else if self.fire(Fault::Zero) {
+                let zero = match x {
+                    Value::Opt(_) => Value::Opt(Some(Box::new(Value::Int(0)))),
+                    _ => Value::Int(0),
+                };
+                self.ty(u, t, &zero);
+                return;
+            }
+        }
+        self.ty(u, t, x);
     }
 
     fn named(&mut self, id: TypeId, v: &Value) {
@@ -458,9 +502,15 @@ impl Encoder<'_, '_> {
             (BaseType::Uuid, Value::Uuid(id)) => self.put(id),
             (BaseType::String(b), Value::Text(x)) => {
                 let max = s.bound(u, b);
+                if !idl_rt::wire::is_text(x) {
+                    self.refused = true;
+                }
                 if self.fire(Fault::Utf8Bad) {
                     self.len32(2);
                     self.put(&[0xC0, 0x80]);
+                } else if max >= 3 && self.fire(Fault::Noncharacter) {
+                    self.len32(3);
+                    self.put("\u{ffff}".as_bytes());
                 } else if max <= 64 && self.fire(Fault::StringOver) {
                     self.len32(max as usize + 1);
                     self.put(&vec![b'x'; max as usize + 1]);
@@ -657,11 +707,11 @@ impl Decoder<'_, '_> {
                 known[k] = if f.optional() {
                     match r.u8()? {
                         0 => None,
-                        1 => Some(self.base(b.unit, &f.field.ty, r)?),
+                        1 => Some(nonzero(f, self.base(b.unit, &f.field.ty, r)?)?),
                         _ => return Err(DecodeError::Malformed),
                     }
                 } else {
-                    Some(self.ty(b.unit, &f.field.ty, false, r)?)
+                    Some(nonzero(f, self.ty(b.unit, &f.field.ty, false, r)?)?)
                 };
             }
             return Ok(Value::Struct(Fields {
@@ -671,7 +721,7 @@ impl Decoder<'_, '_> {
         }
         for (k, f) in fields.iter().enumerate() {
             if !f.optional() {
-                known[k] = Some(self.ty(b.unit, &f.field.ty, false, r)?);
+                known[k] = Some(nonzero(f, self.ty(b.unit, &f.field.ty, false, r)?)?);
             }
         }
         let count = r.uint(4)?;
@@ -692,7 +742,7 @@ impl Decoder<'_, '_> {
             match fields.get(usize::from(tag) - 1) {
                 Some(f) if f.optional() => {
                     let v = self.exact(octets, |d, sub| d.ty(b.unit, &f.field.ty, true, sub))?;
-                    known[usize::from(tag) - 1] = Some(v);
+                    known[usize::from(tag) - 1] = Some(nonzero(f, v)?);
                 }
                 // A required field's position: no alternative matches.
                 Some(_) => return Err(DecodeError::Malformed),
@@ -831,8 +881,8 @@ impl Decoder<'_, '_> {
                 }
                 let text = core::str::from_utf8(r.take(len as usize)?)
                     .map_err(|_| DecodeError::Malformed)?;
-                // UTF-8 without U+0000 (ADR 0062).
-                if text.contains('\0') {
+                // UTF-8 without U+0000 or a noncharacter (ADR 0062, rule 4).
+                if !idl_rt::wire::is_text(text) {
                     return Err(DecodeError::Malformed);
                 }
                 Value::Text(text.into())
@@ -881,6 +931,15 @@ impl Decoder<'_, '_> {
     }
 }
 
+/// A decoded field's value, refused when it is a `[nonzero]` field's 0.
+fn nonzero(f: &Fld<'_>, v: Value) -> R<Value> {
+    if f.nonzero() && field_int(&v) == Some(0) {
+        Err(DecodeError::Malformed)
+    } else {
+        Ok(v)
+    }
+}
+
 /// An integer of a width, read as its type reads it.
 fn int(w: IntType, raw: u64) -> i128 {
     if w.signed() {
@@ -899,32 +958,62 @@ fn int(w: IntType, raw: u64) -> i128 {
 /// `null` under their keys, absent optional fields omitted, and unknown
 /// members as `"@<tag>"` with their octets in base64url.
 pub fn to_json(s: &Schema<'_>, top: Top, v: &Value, w: &mut JsonWriter<'_>) {
-    let j = Json { s };
-    match top {
-        Top::Request(i) => j.body(&s.params(i), v, w),
-        Top::Reply(i) => j.body(&s.results(i), v, w),
-        Top::Open(i) => {
-            if let Value::List(l) = v
-                && let Some(rest) = l.get(2)
-            {
-                j.body(&s.results(i), rest, w);
-            }
-        }
-        Top::Item(i) => {
-            if let Some(id) = s.item(i) {
-                j.named(id, v, w);
-            }
-        }
-        Top::Error(i) => j.body(&s.detail(i), v, w),
-        Top::Type(id, _) => j.named(id, v, w),
-    }
+    to_json_zeroing(s, top, v, w, None);
+}
+
+/// [`to_json`], with the number of the `at`-th `[nonzero]` field it
+/// writes, counted in writing order from 0, written as 0: a text vector's
+/// corruption. Returns the `[nonzero]` fields whose numbers it wrote, in
+/// that order, each as its declaration's address, so a caller can tell
+/// one field from another. A redacted field writes `null`, so it isn't
+/// one of them.
+pub fn to_json_zeroing(
+    s: &Schema<'_>,
+    top: Top,
+    v: &Value,
+    w: &mut JsonWriter<'_>,
+    at: Option<usize>,
+) -> Vec<usize> {
+    let j = Json {
+        s,
+        at,
+        seen: RefCell::new(Vec::new()),
+    };
+    j.top(top, v, w);
+    j.seen.into_inner()
 }
 
 struct Json<'s, 'm> {
     s: &'s Schema<'m>,
+    /// The `[nonzero]` field, by its place in writing order, to write as 0.
+    at: Option<usize>,
+    /// The `[nonzero]` fields written so far.
+    seen: RefCell<Vec<usize>>,
 }
 
 impl Json<'_, '_> {
+    fn top(&self, top: Top, v: &Value, w: &mut JsonWriter<'_>) {
+        let (j, s) = (self, self.s);
+        match top {
+            Top::Request(i) => j.body(&s.params(i), v, w),
+            Top::Reply(i) => j.body(&s.results(i), v, w),
+            Top::Open(i) => {
+                if let Value::List(l) = v
+                    && let Some(rest) = l.get(2)
+                {
+                    j.body(&s.results(i), rest, w);
+                }
+            }
+            Top::Item(i) => {
+                if let Some(id) = s.item(i) {
+                    j.named(id, v, w);
+                }
+            }
+            Top::Error(i) => j.body(&s.detail(i), v, w),
+            Top::Type(id, _) => j.named(id, v, w),
+        }
+    }
+
     fn body(&self, b: &Body<'_>, v: &Value, w: &mut JsonWriter<'_>) {
         let Value::Struct(fv) = v else {
             w.null();
@@ -941,6 +1030,23 @@ impl Json<'_, '_> {
                 continue;
             };
             w.key(&f.field.name.name);
+            if f.nonzero()
+                && let Some(n) = field_int(x)
+                && n != 0
+            {
+                let mut seen = self.seen.borrow_mut();
+                let zero = self.at == Some(seen.len());
+                seen.push(core::ptr::from_ref(f.field) as usize);
+                drop(seen);
+                if zero {
+                    let zero = match x {
+                        Value::Opt(_) => Value::Opt(Some(Box::new(Value::Int(0)))),
+                        _ => Value::Int(0),
+                    };
+                    self.ty(b.unit, &f.field.ty, false, &zero, w);
+                    continue;
+                }
+            }
             self.ty(b.unit, &f.field.ty, f.json(), x, w);
         }
         for (tag, raw) in &fv.unknown {

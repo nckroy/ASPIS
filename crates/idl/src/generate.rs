@@ -163,7 +163,7 @@ struct Lines {
 /// Generates a file's minors, lowest first, with one [`vectors::Budget`]
 /// for all of them (docs/design/call-language.md, "Generated grammars").
 ///
-/// A file may declare `version(1.65535)`, and one minor's vectors may
+/// A file may declare `version(1.1023)`, and one minor's vectors may
 /// cost the whole budget, so the budget is the file's, never the
 /// minor's: a minor that begins with it spent gets no vectors. A
 /// projection changes only at a minor that some `since` or `deprecated`

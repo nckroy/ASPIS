@@ -138,24 +138,25 @@ fn the_front_end_visits_a_bounded_number_of_minors() {
             "edition 2026;\n[id(org.example.y), object_id(reserved(0x0301)), version({version})]\ninterface y {{\n{body}}}\n"
         )
     };
-    // The seed in grammars/idl.vectors: one method, version 1.65535.
-    let src = file("1.65535", "    @1 m() -> (a: u8);\n");
+    // The seed in grammars/idl.vectors: one method, version 1.1023, the
+    // highest minor a file may declare.
+    let src = file("1.1023", "    @1 m() -> (a: u8);\n");
     let c = common::check(src.as_bytes()).unwrap();
-    assert_eq!(fuzz::minors(&c), [0, 65534, 65535]);
+    assert_eq!(fuzz::minors(&c), [0, 1022, 1023]);
     let start = std::time::Instant::now();
     fuzz::front_end(src.as_bytes());
     assert!(start.elapsed().as_millis() < 2000, "{:?}", start.elapsed());
-    // 4000 minors that each add a field: the lowest and highest few, each
+    // 1023 minors that each add a field: the lowest and highest few, each
     // with the minor before it.
     let mut body = String::from("    struct s {\n        a: u8,\n");
-    for k in 1..=4000 {
+    for k in 1..=1023 {
         body += &format!("        [since(1.{k})] f{k}: u8?,\n");
     }
     body += "    }\n    @1 m(a: s);\n";
-    let src = file("1.4000", &body);
+    let src = file("1.1023", &body);
     let c = common::check(src.as_bytes()).unwrap();
     let m = fuzz::minors(&c);
-    assert_eq!(m, [0, 1, 2, 3, 4, 3996, 3997, 3998, 3999, 4000], "{m:?}");
+    assert_eq!(m, [0, 1, 2, 3, 4, 1019, 1020, 1021, 1022, 1023], "{m:?}");
     fuzz::front_end(src.as_bytes());
     // A file with few changes visits each, and the minor before it.
     let src = file(

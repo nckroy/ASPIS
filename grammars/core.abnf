@@ -74,10 +74,23 @@ arm-tag     = 2OCTET
 cap-ref     = %x00-02
               ; constraint: capability index
 
-; ---- Text: UTF-8 without U+0000 (ADR 0062) --------------------------
+; ---- Text: UTF-8 without U+0000 or noncharacters (ADR 0062) ---------
 ; UTF-8 as RFC 3629 defines it, written out here: no overlong forms,
-; no surrogates, nothing above U+10FFFF.
-text-char   = %x01-7F / utf8-2 / utf8-3 / utf8-4
+; no surrogates, nothing above U+10FFFF. text-char also excludes the 66
+; Unicode noncharacters, as I-JSON does (RFC 7493, section 2.1):
+; U+FDD0 to U+FDEF, and the last two code points of each of the 17
+; planes, U+FFFE and U+FFFF, U+1FFFE and U+1FFFF, and so on to U+10FFFE
+; and U+10FFFF. text-3 and text-4 are utf8-3 and utf8-4 without them.
+text-char   = %x01-7F / utf8-2 / text-3 / text-4
+text-3      = %xE0 %xA0-BF utf8-tail / %xE1-EC 2utf8-tail
+            / %xED %x80-9F utf8-tail / %xEE 2utf8-tail
+            / %xEF %x80-B6 utf8-tail / %xEF %xB7 ( %x80-8F / %xB0-BF )
+            / %xEF %xB8-BE utf8-tail / %xEF %xBF %x80-BD
+text-4      = %xF0 ( %x90-9E / %xA0-AE / %xB0-BE ) 2utf8-tail
+            / %xF1-F3 ( %x80-8E / %x90-9E / %xA0-AE / %xB0-BE ) 2utf8-tail
+            / %xF4 %x80-8E 2utf8-tail
+            / ( %xF0 ( %x9F / %xAF / %xBF ) / %xF1-F3 ( %x8F / %x9F / %xAF / %xBF )
+              / %xF4 %x8F ) ( %x80-BE utf8-tail / %xBF %x80-BD )
 utf8-2      = %xC2-DF utf8-tail
 utf8-3      = %xE0 %xA0-BF utf8-tail / %xE1-EC 2utf8-tail
             / %xED %x80-9F utf8-tail / %xEE-EF 2utf8-tail

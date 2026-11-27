@@ -7,9 +7,9 @@
 //!
 //! [`JsonWriter`] writes compact JSON, with no insignificant whitespace,
 //! into a caller's buffer, with no allocator. It produces I-JSON (RFC
-//! 7493), except that a string may hold the Unicode noncharacters the
-//! wire's `text-char` allows: strings escaped as RFC 8785 §3.2.2.2 does, `u64` and `i64` as
-//! strings of digits, floats laid out as ECMAScript's Number::toString
+//! 7493): strings escaped as RFC 8785 §3.2.2.2 does, and holding no
+//! noncharacter, which wire text never holds (ADR 0062, rule 4); `u64`
+//! and `i64` as strings of digits, floats laid out as ECMAScript's Number::toString
 //! does (RFC 8785 §3.2.2.3) with `-0` kept, and `[format(json)]` strings
 //! embedded only when they are I-JSON themselves ([`JsonWriter::embedded`]).
 //! `grammars/json.abnf` is the grammar of what it writes.
@@ -320,7 +320,11 @@ impl<'b> JsonWriter<'b> {
 
     /// A string, escaped as RFC 8785 §3.2.2.2 does: `"` and `\`, the five
     /// short escapes, and other control characters as `\u00xx` in
-    /// lowercase hex. Everything else is written as it is.
+    /// lowercase hex. Everything else is written as it is, except a
+    /// noncharacter, which I-JSON forbids (RFC 7493, §2.1): it is written
+    /// as U+FFFD. No decoded value holds one, since wire text can't, and
+    /// no encoder takes one ([`crate::wire::is_text`]), so only a caller's
+    /// own value, which could never be sent, is changed.
     pub fn string(&mut self, s: &str) {
         self.sep();
         self.quoted(s);
@@ -330,21 +334,23 @@ impl<'b> JsonWriter<'b> {
         self.push(b"\"");
         let bytes = s.as_bytes();
         let mut start = 0;
-        for (i, &b) in bytes.iter().enumerate() {
-            let esc: &[u8] = match b {
-                b'"' => b"\\\"",
-                b'\\' => b"\\\\",
-                0x08 => b"\\b",
-                0x09 => b"\\t",
-                0x0A => b"\\n",
-                0x0C => b"\\f",
-                0x0D => b"\\r",
-                0x00..=0x1F => b"",
+        for (i, c) in s.char_indices() {
+            let esc: &[u8] = match c {
+                '"' => b"\\\"",
+                '\\' => b"\\\\",
+                '\u{8}' => b"\\b",
+                '\t' => b"\\t",
+                '\n' => b"\\n",
+                '\u{c}' => b"\\f",
+                '\r' => b"\\r",
+                '\0'..='\u{1f}' => b"",
+                c if crate::wire::is_noncharacter(c) => "\u{fffd}".as_bytes(),
                 _ => continue,
             };
             self.push(&bytes[start..i]);
             if esc.is_empty() {
                 const HEX: &[u8; 16] = b"0123456789abcdef";
+                let b = c as u8;
                 self.push(&[
                     b'\\',
                     b'u',
@@ -356,7 +362,7 @@ impl<'b> JsonWriter<'b> {
             } else {
                 self.push(esc);
             }
-            start = i + 1;
+            start = i + c.len_utf8();
         }
         self.push(&bytes[start..]);
         self.push(b"\"");
@@ -426,7 +432,8 @@ impl<'b> JsonWriter<'b> {
 
     /// A `[format(json)]` string: embedded as JSON when it is an RFC 8259
     /// value that is also I-JSON (no duplicate member names, compared
-    /// after unescaping, and no unpaired surrogate escapes), nests at most
+    /// after unescaping, no unpaired surrogate escapes, and no
+    /// noncharacter, escaped or not), nests at most
     /// [`EMBED_DEPTH`] deep, has at most [`EMBED_MEMBERS`] members in any
     /// object, and isn't the bare literal `null`, which under a field's
     /// key means redacted. It is re-written without insignificant
@@ -600,7 +607,8 @@ fn number(t: &[u8], mut i: usize) -> Option<usize> {
 }
 
 /// The end of the string starting at `i` (its opening quote), or None if
-/// it is malformed or holds an unpaired surrogate escape (RFC 7493, §2.1).
+/// it is malformed, or holds an unpaired surrogate escape or a
+/// noncharacter, escaped or not (RFC 7493, §2.1).
 fn string_end(t: &[u8], i: usize) -> Option<usize> {
     let mut chars = Chars { t, i: i + 1 };
     loop {
@@ -659,6 +667,10 @@ impl Chars<'_> {
                     }
                     _ => return None,
                 };
+                // A noncharacter, escaped: not I-JSON.
+                if char::from_u32(c).is_some_and(crate::wire::is_noncharacter) {
+                    return None;
+                }
                 Some(Some(c))
             }
             0x00..=0x1F => None,
@@ -672,7 +684,8 @@ impl Chars<'_> {
                 };
                 let s = core::str::from_utf8(self.t.get(self.i..self.i + n)?).ok()?;
                 self.i += n;
-                s.chars().next().map(|c| Some(u32::from(c)))
+                let c = s.chars().next()?;
+                (!crate::wire::is_noncharacter(c)).then_some(Some(u32::from(c)))
             }
         }
     }

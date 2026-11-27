@@ -147,27 +147,66 @@ fn length_prefixed_bodies_are_one_reference() {
     }
 }
 
-/// `aspis.rpc` 1.0 stays unpublished while its `error_key` accepts code
-/// 0, which the envelope's `error-key` rule calls malformed ("The system
-/// errors"). Once the generated rule refuses code 0, C18 may publish it.
+/// `aspis.rpc` 1.0 is published, and its `error_key`'s code is
+/// `[nonzero]`, as the envelope's `error-key` rule says ("The system
+/// errors"): the published `t-error-key` carries `not 0`, and both
+/// judgments and the dynamic decoder refuse a key whose code is 0.
 #[test]
-fn rpc_stays_unpublished_while_error_key_accepts_code_0() {
+fn rpc_is_published_and_error_key_refuses_code_0() {
     let dir = common::repo().join("interfaces/aspis/rpc");
-    let text = fs::read_to_string(dir.join("v1.0.abnf")).unwrap();
-    let lines: Vec<&str> = text.lines().collect();
-    let at = lines
-        .iter()
-        .position(|l| l.starts_with("t-error-key = "))
-        .unwrap();
-    // The struct's rule and its own sub-rules, with their constraints.
-    let refuses_0 = lines[at..]
-        .iter()
-        .take_while(|l| l.starts_with("t-error-key") || l.starts_with(' '))
-        .any(|l| l.contains("constraint: not 0"));
     let lock = idl::lock::parse(&fs::read(dir.join("v1.idl.lock")).unwrap(), 1).unwrap();
+    assert_eq!(lock.published(), Some(0), "aspis.rpc 1.0 is published");
+    let text = fs::read_to_string(dir.join("v1.0.abnf")).unwrap();
+    for line in [
+        "t-error-key = object-id u16 t-error-key--code",
+        "t-error-key--code = u16",
+    ] {
+        assert!(text.lines().any(|l| l == line), "missing: {line}");
+    }
+    let at = text.find("t-error-key--code = u16\n").unwrap();
+    assert!(text[at..].lines().nth(1) == Some("    ; constraint: not 0"));
+    let g = strict("v1.0", text.as_bytes());
+    let rule = g.rule("t-error-key").unwrap();
+    let cx = Context::default();
+    let key = |code: u16| {
+        let mut k = vec![0u8; 32];
+        k.extend_from_slice(&1u16.to_be_bytes());
+        k.extend_from_slice(&code.to_be_bytes());
+        k
+    };
+    assert!(g.matches_constrained(rule, &key(1), &cx).unwrap());
+    assert!(g.matches_constrained(rule, &key(0xFFFF), &cx).unwrap());
+    assert!(g.matches(rule, &key(0)).unwrap(), "code 0 is errc");
+    assert!(!g.matches_constrained(rule, &key(0), &cx).unwrap());
+    // The dynamic decoder agrees, and the text grammar refuses "code":0.
+    let c = common::check_file(&dir.join("v1.idl"));
+    let s = Schema::new(&c, 0);
+    let top = s
+        .tops()
+        .into_iter()
+        .find(|&t| s.top_rule(t) == "t-error-key")
+        .unwrap();
+    assert!(value::decode(&s, top, &key(7), 0).is_ok());
+    assert_eq!(
+        value::decode(&s, top, &key(0), 0),
+        Err(value::DecodeError::Malformed)
+    );
+    let text = fs::read_to_string(dir.join("v1.0.text.abnf")).unwrap();
+    let t = strict("v1.0.text", text.as_bytes());
+    let rule = t.rule("t-error-key").unwrap();
+    let json = |code: u16| {
+        format!(
+            "{{\"interface\":\"{}\",\"major\":1,\"code\":{code}}}",
+            "0".repeat(64)
+        )
+    };
     assert!(
-        refuses_0 || lock.published().is_none(),
-        "aspis.rpc 1.0 is published, but its error_key accepts code 0"
+        t.matches_constrained(rule, json(5).as_bytes(), &cx)
+            .unwrap()
+    );
+    assert!(
+        !t.matches_constrained(rule, json(0).as_bytes(), &cx)
+            .unwrap()
     );
 }
 
@@ -284,19 +323,19 @@ fn vectors_in(text: &str) -> usize {
         .count()
 }
 
-/// The review's case: a 9 KB file at `version(1.65535)`, an enum of 128
-/// values and 500 aliases of it. Every minor's vectors cost about 0.5 s
-/// and 2 MB when each minor had a budget of its own, so all of them
-/// would take hours and over 100 GB. One budget for the file bounds them:
-/// the minors after it is spent reuse their grammars and have no vectors.
+/// The review's case, at the highest minor a file may declare: a 9 KB
+/// file at `version(1.1023)`, an enum of 128 values and 500 aliases of
+/// it. Every minor's vectors cost about 0.5 s and 2 MB when each minor had
+/// a budget of its own. One budget for the file bounds them: the minors
+/// after it is spent reuse their grammars and have no vectors.
 #[test]
 fn a_files_minors_share_one_budget() {
-    let c = interface("1.65535", &enum_aliases(128, 500));
+    let c = interface("1.1023", &enum_aliases(128, 500));
     let start = std::time::Instant::now();
     let mut g = generate::Generator::new(&c, "v1.idl", &[]);
     let (mut lines, mut bytes, mut made) = (0, 0, 0);
     let first = g.minor(0, &mut shared).unwrap();
-    for m in 0..=65_535u16 {
+    for m in 0..=idl::MAX_MINOR {
         let x = if m == 0 {
             first.clone()
         } else {
@@ -318,11 +357,11 @@ fn a_files_minors_share_one_budget() {
     let took = start.elapsed();
     // Minor 0 has vectors; the budget ran out in it, so the last has none.
     assert!(vectors_in(&first.wire.as_ref().unwrap().1) > 1000);
-    let last = g.minor(65_535, &mut shared).unwrap();
+    let last = g.minor(idl::MAX_MINOR, &mut shared).unwrap();
     assert_eq!(vectors_in(&last.wire.unwrap().1), 0);
     assert!(g.budget().is_spent());
     assert!(lines < 3 * idl::vectors::FILE_BUDGET, "{lines} lines");
-    eprintln!("65,536 minors: {took:?}, {lines} vector lines, {bytes} octets of vectors");
+    eprintln!("1,024 minors: {took:?}, {lines} vector lines, {bytes} octets of vectors");
     assert!(took.as_secs() < 60, "{took:?}");
 }
 

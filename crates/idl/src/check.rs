@@ -68,7 +68,7 @@ impl Item {
                 "deprecated",
             ],
             Item::Reserved => &[],
-            Item::Field => &["since", "deprecated", "sensitive", "format"],
+            Item::Field => &["since", "deprecated", "sensitive", "nonzero", "format"],
             Item::Arm => &["since", "deprecated", "format"],
             Item::Value => &["since", "deprecated"],
         };
@@ -116,6 +116,7 @@ pub fn run(model: &Model, u: usize, limits: &crate::Limits) -> Vec<Diagnostic> {
         u,
         unit,
         nesting: limits.nesting,
+        max_minor: limits.minor,
         base: Version {
             major: unit.major(),
             minor: 0,
@@ -139,6 +140,8 @@ struct Checker<'m> {
     unit: &'m Unit,
     /// How deep a value may nest ([`crate::Limits::nesting`]).
     nesting: usize,
+    /// The highest minor `version(M.m)` may name ([`crate::Limits::minor`]).
+    max_minor: u16,
     /// M.0.
     base: Version,
     diags: Vec<Diagnostic>,
@@ -186,12 +189,27 @@ impl<'m> Checker<'m> {
                 "the header needs id(...), the interface's full dotted name",
             ),
         }
-        if ast::version_attr(&iface.attrs, "version").is_none() {
-            self.err(
+        match ast::version_attr(&iface.attrs, "version") {
+            None => self.err(
                 span,
                 Code::Header,
                 "the header needs version(M.m), the newest minor described",
-            );
+            ),
+            Some(v) if v.minor > self.max_minor => {
+                let at = ast::attr(&iface.attrs, "version").map_or(span, |a| a.span);
+                self.err(
+                    at,
+                    Code::Limit,
+                    format!(
+                        "version({}.{}): a major has at most {} minors, 0 to {}; start a new major",
+                        v.major,
+                        v.minor,
+                        u32::from(self.max_minor) + 1,
+                        self.max_minor
+                    ),
+                );
+            }
+            Some(_) => {}
         }
         if ast::attr(&iface.attrs, "object_id").is_none() {
             self.err(
@@ -239,7 +257,7 @@ impl<'m> Checker<'m> {
         let args = a.args.as_deref();
         let ok = match name {
             "kernel" | "local" | "oneway" | "idempotent" | "readonly" | "lossy" | "coalescing" | "static"
-            | "sensitive" | "closed" | "refused" => args.is_none(),
+            | "sensitive" | "nonzero" | "closed" | "refused" => args.is_none(),
             "version" | "since" | "deprecated" => matches!(args, Some([AttrArg::Version(..)])),
             "id" | "type" => matches!(args, Some([AttrArg::Name(..)])),
             "object_id" => match args {
@@ -416,6 +434,18 @@ impl<'m> Checker<'m> {
                         ),
                     }
                     self.fields(fields, since, false);
+                    // An object's attributes have a Cedar mapping, and no
+                    // wire or text grammar, so `[nonzero]` would mean
+                    // nothing there.
+                    for f in fields {
+                        if let Some(a) = ast::attr(&f.attrs, "nonzero") {
+                            self.err(
+                                a.span,
+                                Code::Attribute,
+                                "[nonzero] stands on no object attribute: an object's attributes have no wire or text grammar",
+                            );
+                        }
+                    }
                 }
                 MemberKind::Union { name, arms } => {
                     self.attrs(&m.attrs, Item::Type);
@@ -612,6 +642,13 @@ impl<'m> Checker<'m> {
             }
             if ast::has_attr(&f.attrs, "format") {
                 self.format_json(&f.ty);
+            }
+            if ast::has_attr(&f.attrs, "nonzero") && !matches!(f.ty.base, BaseType::Int(_)) {
+                self.err(
+                    f.ty.span,
+                    Code::Attribute,
+                    "[nonzero] stands only on an integer type, u8 to u64 or i8 to i64, written in the field, optional or not",
+                );
             }
             self.ty(&f.ty, since, false);
         }

@@ -42,7 +42,7 @@ use crate::{
 
 /// The attribute table's order (docs/design/call-language.md,
 /// "Attributes").
-pub const ATTRIBUTE_ORDER: [&str; 23] = [
+pub const ATTRIBUTE_ORDER: [&str; 24] = [
     "id",
     "object_id",
     "type",
@@ -62,6 +62,7 @@ pub const ATTRIBUTE_ORDER: [&str; 23] = [
     "since",
     "deprecated",
     "sensitive",
+    "nonzero",
     "closed",
     "refused",
     "retry",
@@ -74,6 +75,52 @@ const SETS: [&str; 4] = ["groups", "group", "requires", "parents"];
 /// The canonical form of a file, which should already be projected to the
 /// minor its `version(...)` names.
 pub fn canonical(file: &File) -> String {
+    canonical_reusing(file, None).0
+}
+
+/// [`canonical`], and each member's line. A member that is the same as
+/// written in `prev`, another projection of the same source with the
+/// lines this gave it, takes its line from there. idlc hashes every
+/// published minor of a file, and from one minor to the next most members
+/// stay the same.
+pub fn canonical_reusing(file: &File, prev: Option<(&File, &[String])>) -> (String, Vec<String>) {
+    let major = ast::version_attr(&file.interface.attrs, "version").map_or(0, |v| v.major);
+    let base = Version { major, minor: 0 };
+    let mut out = header(file);
+    let mut lines = Vec::with_capacity(file.interface.members.len());
+    let (pm, pl): (&[Member], &[String]) = match prev {
+        Some((f, l)) if l.len() == f.interface.members.len() => (&f.interface.members, l),
+        _ => (&[], &[]),
+    };
+    let mut j = 0;
+    for m in &file.interface.members {
+        let line = match pm.get(j) {
+            Some(p) if p == m => {
+                j += 1;
+                pl[j - 1].clone()
+            }
+            Some(p) => {
+                // The same member, changed: step past it.
+                if p.name().map(|n| &n.name) == m.name().map(|n| &n.name)
+                    && core::mem::discriminant(&p.kind) == core::mem::discriminant(&m.kind)
+                {
+                    j += 1;
+                }
+                member(m, base)
+            }
+            None => member(m, base),
+        };
+        out.push_str(&line);
+        out.push('\n');
+        lines.push(line);
+    }
+    out.push_str("}\n");
+    (out, lines)
+}
+
+/// The canonical form's lines before the members: the edition, the `use`
+/// lines, and the header up to `{`.
+fn header(file: &File) -> String {
     let major = ast::version_attr(&file.interface.attrs, "version").map_or(0, |v| v.major);
     let base = Version { major, minor: 0 };
     let kernel = ast::has_attr(&file.interface.attrs, "kernel");
@@ -97,11 +144,6 @@ pub fn canonical(file: &File) -> String {
         .collect();
     out.push_str(&attrs(&header, base));
     out.push_str(&format!("interface {} {{\n", file.interface.name.name));
-    for m in &file.interface.members {
-        out.push_str(&member(m, base));
-        out.push('\n');
-    }
-    out.push_str("}\n");
     out
 }
 
@@ -132,13 +174,15 @@ pub fn member(m: &Member, base: Version) -> String {
             ..
         } => {
             let kw = if *flags { "flags" } else { "enum" };
-            let values: Vec<String> = values.iter().map(|v| value(v, since)).collect();
-            format!(
-                "{a}{kw} {}: {} {{{}}}",
-                name.name,
-                width.word(),
-                values.join(", ")
-            )
+            let mut s = format!("{a}{kw} {}: {} {{", name.name, width.word());
+            for (i, v) in values.iter().enumerate() {
+                if i > 0 {
+                    s.push_str(", ");
+                }
+                value(&mut s, v, since);
+            }
+            s.push('}');
+            s
         }
         MemberKind::Error { name, code, fields } => match fields.as_deref() {
             Some(fs) if !fs.is_empty() => {
@@ -231,21 +275,36 @@ fn arm(a: &Arm, since: Version) -> String {
     }
 }
 
-fn value(v: &Value, since: Version) -> String {
+/// One enum or flags value, appended to `out`: a type may hold thousands,
+/// and a file's every published minor is written out for its hash.
+fn value(out: &mut String, v: &Value, since: Version) {
     match v {
         Value::Value {
             attrs: at,
             name,
             value,
             ..
-        } => format!("{}{} = {}", attrs(at, since), name.name, int(value)),
-        Value::Reserved { value, .. } => format!("reserved {}", int(value)),
+        } => {
+            if !at.is_empty() {
+                out.push_str(&attrs(at, since));
+            }
+            out.push_str(&name.name);
+            out.push_str(" = ");
+            out.push_str(&int(value));
+        }
+        Value::Reserved { value, .. } => {
+            out.push_str("reserved ");
+            out.push_str(&int(value));
+        }
     }
 }
 
 /// Attributes in table order, with a trailing space, or "" when there are
 /// none. `since` is the container's effective `since`.
 pub fn attrs(list: &[Attr], since: Version) -> String {
+    if list.is_empty() {
+        return String::new();
+    }
     let mut v: Vec<(usize, String)> = Vec::new();
     for a in list {
         let name = a.name.name.as_str();

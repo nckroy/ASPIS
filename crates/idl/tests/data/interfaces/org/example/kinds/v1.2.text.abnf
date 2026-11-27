@@ -163,6 +163,31 @@ m-newest--results---a1 = *1( "," m-newest--results---unknowns )
     ; constraint: ascending m-newest--results---unknown-tag
 m-newest--reply = %s"ok" [ SP m-newest--results ] / outcome-word SP error-ref
 
+; method 10 "count": the request, strict
+m-count--args = "{" m-count--args--c "," m-count--args--n "}"
+m-count--args--c = %x22 %s"c" %x22 ":" t-counts
+m-count--args--n = %x22 %s"n" %x22 ":" m-count--args--n---value
+m-count--args--n---value = json-uint
+    ; constraint: at most 65535
+    ; constraint: not 0
+m-count--call = %s"org.example.kinds/1/count" SP id-text [ SP m-count--args ]
+
+; method 10 "count": the reply
+m-count--results = "{" m-count--results--ids m-count--results---a1 "}"
+m-count--results--ids = %x22 %s"ids" %x22 ":" t-ids
+m-count--results--total = %x22 %s"total" %x22 ":" m-count--results--total---value
+m-count--results--total---value = json-uint
+    ; constraint: at most 4294967295
+    ; constraint: not 0
+m-count--results---unknown = %x22 "@" m-count--results---unknown-tag %x22 ":" json-bytes
+m-count--results---unknown-tag = json-uint
+    ; constraint: in 3..65535
+m-count--results---unknowns = m-count--results---unknown *( "," m-count--results---unknown )
+m-count--results---a1 = [ "," m-count--results--total ] m-count--results---a2
+m-count--results---a2 = *1( "," m-count--results---unknowns )
+    ; constraint: ascending m-count--results---unknown-tag
+m-count--reply = %s"ok" [ SP m-count--results ] / outcome-word SP error-ref
+
 ; error "not_found": its detail
 e-not-found = "{" e-not-found--key e-not-found---a1 "}"
 e-not-found--key = %x22 %s"key" %x22 ":" e-not-found--key---value
@@ -221,6 +246,22 @@ e-error---unknowns = e-error---unknown *( "," e-error---unknown )
 e-error---b0 = e-error--unknown e-error---a1 / e-error---unknowns
 e-error---a1 = *1( "," e-error---unknowns )
     ; constraint: ascending e-error---unknown-tag
+
+; error "zero": its detail
+e-zero = "{" e-zero--n e-zero---a1 "}"
+e-zero--n = %x22 %s"n" %x22 ":" e-zero--n---value
+e-zero--n---value = "-" e-zero--n---value---neg / e-zero--n---value---digits
+e-zero--n---value---neg = json-uint-nz
+    ; constraint: at most 2147483648
+e-zero--n---value---digits = json-uint
+    ; constraint: at most 2147483647
+    ; constraint: not 0
+e-zero---unknown = %x22 "@" e-zero---unknown-tag %x22 ":" json-bytes
+e-zero---unknown-tag = json-uint
+    ; constraint: in 2..65535
+e-zero---unknowns = e-zero---unknown *( "," e-zero---unknown )
+e-zero---a1 = *1( "," e-zero---unknowns )
+    ; constraint: ascending e-zero---unknown-tag
 
 ; name
 t-name = json-string
@@ -528,6 +569,46 @@ t-ok---bits = json-uint
 t-ok---b0 = %x22 %s"a" %x22 t-ok---a1 / t-ok---bits
 t-ok---a1 = [ "," t-ok---bits ]
 t-ok = "[" [ t-ok---b0 ] "]"
+
+; counts
+t-counts = "{" t-counts--a t-counts---a1 "}"
+t-counts--a = %x22 %s"a" %x22 ":" t-counts--a---value
+t-counts--a---value = json-uint
+    ; constraint: at most 4294967295
+    ; constraint: not 0
+t-counts--b = %x22 %s"b" %x22 ":" t-counts--b---value
+t-counts--b---value = "-" t-counts--b---value---neg / t-counts--b---value---digits
+t-counts--b---value---neg = json-uint-nz
+    ; constraint: at most 32768
+t-counts--b---value---digits = json-uint
+    ; constraint: at most 32767
+    ; constraint: not 0
+t-counts---a1 = [ "," t-counts--b ]
+
+; ids
+t-ids = "{" t-ids--first t-ids---a1 "}"
+t-ids--first = %x22 %s"first" %x22 ":" t-ids--first---value
+t-ids--first---value = %x22 t-ids--first---value---digits %x22
+t-ids--first---value---digits = json-uint
+    ; constraint: at most 18446744073709551615
+    ; constraint: not 0
+t-ids--more = %x22 %s"more" %x22 ":" json-null
+t-ids---unknown = %x22 "@" t-ids---unknown-tag %x22 ":" json-bytes
+t-ids---unknown-tag = json-uint
+    ; constraint: in 3..65535
+t-ids---unknowns = t-ids---unknown *( "," t-ids---unknown )
+t-ids---a1 = "," t-ids--more t-ids---a2
+t-ids---a2 = *1( "," t-ids---unknowns )
+    ; constraint: ascending t-ids---unknown-tag
+
+; ids, strict
+r-ids = "{" r-ids--first "," r-ids--more "}"
+r-ids--first = %x22 %s"first" %x22 ":" r-ids--first---value
+r-ids--first---value = %x22 r-ids--first---value---digits %x22
+r-ids--first---value---digits = json-uint
+    ; constraint: at most 18446744073709551615
+    ; constraint: not 0
+r-ids--more = %x22 %s"more" %x22 ":" json-null
 
 ; types the use lines import, read at the minor each names
 u1--r-point = "{" u1--r-point--x "," u1--r-point--y "}"

@@ -6,10 +6,9 @@ edition 2026;
 //! them, and no method lists them. The protocol methods, 0xFF01 to 0xFF08,
 //! are defined with the call header, not here: only their text forms use
 //! the `aspis.rpc` prefix (docs/design/call-language.md, "The system
-//! errors"). 1.0 is unpublished: its lock is empty until the IDL can say
-//! that `error_key`'s code is not 0, and C18 publishes it then. L23's
-//! tuning of the envelope's bounds, which aren't in this file, comes as a
-//! later minor.
+//! errors"). 1.0 is published, so its codes, detail fields and enum
+//! values are fixed. L23's tuning of the envelope's bounds, which aren't
+//! in this file, comes as a later minor.
 
 [id(aspis.rpc), object_id(reserved(0x0001)), version(1.0)]
 interface rpc {
@@ -22,13 +21,13 @@ interface rpc {
 
     /// An error's key alone: the interface, its major and the code (36
     /// octets). The kernel interfaces use it for a pager's Fail and the
-    /// page-unavailable fault (ADR 0057, rule 7). The code is never 0, a
-    /// constraint this IDL can't state yet.
+    /// page-unavailable fault (ADR 0057, rule 7). The code is never 0, as
+    /// in the envelope's `error-key`.
     [closed]
     struct error_key {
         interface: id,
         major: u16,
-        code: u16,
+        [nonzero] code: u16,
     }
 
     /// Why a token was rejected. The values follow the token profile,
@@ -103,8 +102,9 @@ interface rpc {
     error no_such_interface = 5;
 
     /// An unknown method number, or one newer than the session's minor.
+    /// The method is the request header's, which is never 0.
     [refused]
-    error no_such_method = 6 { method: u16, session_minor: u16, since_minor: u16? };
+    error no_such_method = 6 { [nonzero] method: u16, session_minor: u16, since_minor: u16? };
 
     /// A request field newer than the session's minor.
     [refused]

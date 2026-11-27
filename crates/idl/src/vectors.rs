@@ -41,9 +41,21 @@ use idl_rt::json::JsonWriter;
 use crate::{
     ast::{BaseType, Type},
     model::TypeId,
-    schema::{Body, Def, Mode, Schema, Top},
+    schema::{Body, Def, Fld, Mode, Schema, Top},
     value::{self, Encoded, Fault, Fields, OPEN_ID, OPEN_START, Value},
 };
+
+/// A sample of a `[nonzero]` field: 1 where the type's sample is 0.
+pub(crate) fn nonzero(f: &Fld<'_>, v: Value) -> Value {
+    if !f.nonzero() {
+        return v;
+    }
+    match v {
+        Value::Int(0) => Value::Int(1),
+        Value::Opt(Some(b)) if *b == Value::Int(0) => Value::Opt(Some(Box::new(Value::Int(1)))),
+        v => v,
+    }
+}
 
 /// The longest vector line written.
 pub const MAX_LINE: usize = 4096;
@@ -68,7 +80,7 @@ struct Line {
 }
 
 /// Every fault kind the generator applies to each rule's samples.
-const FAULTS: [Fault; 18] = [
+const FAULTS: [Fault; 20] = [
     Fault::TailSwap,
     Fault::TailDup,
     Fault::TailTagZero,
@@ -87,6 +99,8 @@ const FAULTS: [Fault; 18] = [
     Fault::CapHigh,
     Fault::CapRepeat,
     Fault::StreamIdZero,
+    Fault::Noncharacter,
+    Fault::Zero,
 ];
 
 /// A corruption kind, for the coverage check: a fault, or a generic one.
@@ -116,7 +130,7 @@ pub const BUDGET: usize = 1 << 16;
 
 /// The most values the samples of one file may make, every rule of every
 /// minor together. A file declares up to 4096 types and methods, each
-/// with rules of its own, and up to 65,536 minors, so a budget for each
+/// with rules of its own, and up to 1,024 minors, so a budget for each
 /// rule alone, or each minor, would still let a small file cost hours and
 /// gigabytes. One [`Budget`] serves all of a file's minors.
 pub const FILE_BUDGET: usize = 1 << 18;
@@ -334,7 +348,7 @@ impl<'s, 'm> Gen<'s, 'm> {
             .s
             .known_fields(b)
             .iter()
-            .map(|f| (!f.optional()).then(|| self.minimal(b.unit, &f.field.ty)))
+            .map(|f| (!f.optional()).then(|| nonzero(f, self.minimal(b.unit, &f.field.ty))))
             .collect();
         Value::Struct(Fields {
             known,
@@ -350,7 +364,7 @@ impl<'s, 'm> Gen<'s, 'm> {
             .s
             .known_fields(b)
             .iter()
-            .map(|f| Some(self.full(b.unit, &f.field.ty)))
+            .map(|f| Some(nonzero(f, self.full(b.unit, &f.field.ty))))
             .collect();
         Value::Struct(Fields {
             known,
@@ -374,7 +388,7 @@ impl<'s, 'm> Gen<'s, 'm> {
             let mut vs: Vec<Option<Value>> = self
                 .variants(b.unit, &f.field.ty)
                 .into_iter()
-                .map(Some)
+                .map(|v| Some(nonzero(f, v)))
                 .collect();
             if f.optional() {
                 vs.push(None);
@@ -798,6 +812,13 @@ pub fn samples(s: &Schema<'_>, budget: &Budget) -> Result<Vec<Sample>, String> {
         let vs = g.samples(top);
         for v in vs {
             let enc = value::encode(s, top, &v, true);
+            if enc.refused {
+                return Err(format!(
+                    "{}: a sample holds a value no encoder takes: {}",
+                    s.top_rule(top),
+                    escape(&enc.octets)
+                ));
+            }
             let dec = value::decode(s, top, &enc.octets, enc.caps).map_err(|e| {
                 format!(
                     "{}: a sample doesn't decode ({e:?}): {}",
@@ -933,6 +954,7 @@ pub fn wire(
                     octets,
                     caps,
                     fired,
+                    ..
                 } = value::encode_with(s, top, &x.value, false, Some(f));
                 if fired {
                     candidates.push((Kind::Fault(f), octets, caps));
@@ -1058,11 +1080,21 @@ const TARGET: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789
 /// The most octets of JSON one sample may write.
 const MAX_JSON: usize = 1 << 16;
 
-fn json(s: &Schema<'_>, top: Top, v: &Value, buf: &mut [u8]) -> Result<String, String> {
+/// A sample's JSON, with the `zero`-th `[nonzero]` field's number written
+/// as 0 when it is set, and the `[nonzero]` fields it wrote numbers for
+/// ([`value::to_json_zeroing`]).
+fn json(
+    s: &Schema<'_>,
+    top: Top,
+    v: &Value,
+    buf: &mut [u8],
+    zero: Option<usize>,
+) -> Result<(String, Vec<usize>), String> {
     let mut w = JsonWriter::new(buf);
-    value::to_json(s, top, v, &mut w);
+    let fields = value::to_json_zeroing(s, top, v, &mut w, zero);
     let out = w.finish().map_err(|_| String::from("JSON over 64 KiB"))?;
-    String::from_utf8(out.to_vec()).map_err(|_| String::from("JSON isn't UTF-8"))
+    let text = String::from_utf8(out.to_vec()).map_err(|_| String::from("JSON isn't UTF-8"))?;
+    Ok((text, fields))
 }
 
 /// The text vectors of a schema's minor, from the wire samples, against
@@ -1095,30 +1127,58 @@ pub fn text(
     let mut lines: Vec<(usize, Line)> = Vec::new();
     let mut rejected = 0;
     let mut by_top = by_top(samples);
+    let m = |i: usize| crate::schema::kebab(s.member_name(i));
+    let action = |i: usize| format!("{}/{}/{}", unit.name, unit.major(), s.member_name(i));
+    // The lines that carry a sample's JSON, as (rule, text).
+    let forms = |top: Top, j: &str| -> Vec<(String, String)> {
+        match top {
+            Top::Request(i) => vec![
+                (format!("m-{}--args", m(i)), j.into()),
+                (
+                    format!("m-{}--call", m(i)),
+                    format!("{} {target} {j}", action(i)),
+                ),
+            ],
+            Top::Reply(i) => vec![
+                (format!("m-{}--results", m(i)), j.into()),
+                (format!("m-{}--reply", m(i)), format!("ok {j}")),
+            ],
+            // The opening reply's JSON is the reply's results.
+            Top::Open(_) => Vec::new(),
+            _ => vec![(s.top_rule(top), j.into())],
+        }
+    };
     // Each rule's lines come from one top-level rule's samples.
     'rules: for &top in &tops {
         let mine = by_top.remove(&top).unwrap_or_default();
         let o = order(top);
         let mut these: Vec<(usize, Line)> = Vec::new();
         let mut methods_done = BTreeSet::new();
+        // Each `[nonzero]` field's number written as 0, once per field:
+        // in every form, a line the text grammar must refuse.
+        let mut zeroed = BTreeSet::new();
+        let mut zeros: Vec<(String, String)> = Vec::new();
         for x in mine {
-            let j = json(s, x.top, &x.value, &mut buf)?;
-            let m = |i: usize| crate::schema::kebab(s.member_name(i));
-            let action = |i: usize| format!("{}/{}/{}", unit.name, unit.major(), s.member_name(i));
+            let (j, fields) = json(s, x.top, &x.value, &mut buf, None)?;
+            for (k, &f) in fields.iter().enumerate() {
+                if zeroed.insert(f) {
+                    let (bad, _) = json(s, x.top, &x.value, &mut buf, Some(k))?;
+                    zeros.extend(forms(x.top, &bad));
+                }
+            }
+            for (rule, text) in forms(x.top, &j) {
+                these.push(ok(o, rule, text));
+            }
             match x.top {
                 Top::Request(i) => {
-                    these.push(ok(o, format!("m-{}--args", m(i)), j.clone()));
-                    let call = format!("m-{}--call", m(i));
-                    these.push(ok(o, call.clone(), format!("{} {target} {j}", action(i))));
                     if methods_done.insert((i, 0)) {
                         // Arguments are opt-in (ADR 0063, rule 8).
+                        let call = format!("m-{}--call", m(i));
                         these.push(ok(o, call, format!("{} {target}", action(i))));
                     }
                 }
                 Top::Reply(i) => {
-                    these.push(ok(o, format!("m-{}--results", m(i)), j.clone()));
                     let reply = format!("m-{}--reply", m(i));
-                    these.push(ok(o, reply.clone(), format!("ok {j}")));
                     if methods_done.insert((i, 1)) {
                         these.push(ok(o, reply.clone(), "ok".into()));
                         for e in s.error_list(i) {
@@ -1129,9 +1189,7 @@ pub fn text(
                         these.push(ok(o, reply, format!("indeterminate {TARGET}/1!#17")));
                     }
                 }
-                // The opening reply's JSON is the reply's results.
-                Top::Open(_) => {}
-                _ => these.push(ok(o, s.top_rule(x.top), j)),
+                _ => {}
             }
         }
         // Every ok line matches its rule, constraints included.
@@ -1158,6 +1216,28 @@ pub fn text(
             }
         }
         lines.append(&mut these);
+        for (rule, bad) in zeros {
+            let Some((cf, full)) = judge(g, &rule, bad.as_bytes(), 0, budget)? else {
+                break 'rules;
+            };
+            if full {
+                return Err(format!(
+                    "{rule}: the text grammar accepts a [nonzero] field's 0: {}",
+                    escape(bad.as_bytes())
+                ));
+            }
+            rejected += 1;
+            lines.push((
+                o,
+                Line {
+                    tag: if cf { "errc" } else { "err" },
+                    rule,
+                    octets: bad.into_bytes(),
+                    caps: 0,
+                    unwrapped: 0,
+                },
+            ));
+        }
         for (o, rule, text) in firsts {
             for bad in text_faults(&text) {
                 let Some((cf, full)) = judge(g, &rule, bad.as_bytes(), 0, budget)? else {

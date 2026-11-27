@@ -60,6 +60,7 @@ e-no-such-method = "{" e-no-such-method--method e-no-such-method---a1 "}"
 e-no-such-method--method = %x22 %s"method" %x22 ":" e-no-such-method--method---value
 e-no-such-method--method---value = json-uint
     ; constraint: at most 65535
+    ; constraint: not 0
 e-no-such-method--session-minor = %x22 %s"session_minor" %x22 ":" e-no-such-method--session-minor---value
 e-no-such-method--session-minor---value = json-uint
     ; constraint: at most 65535
@@ -321,6 +322,7 @@ t-error-key--major---value = json-uint
 t-error-key--code = %x22 %s"code" %x22 ":" t-error-key--code---value
 t-error-key--code---value = json-uint
     ; constraint: at most 65535
+    ; constraint: not 0
 
 ; token_problem
 t-token-problem---number = json-uint

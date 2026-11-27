@@ -64,6 +64,14 @@ pub mod vectors;
 pub use diag::{Code, Diagnostic, Span};
 pub use model::{Checked, check};
 
+/// The highest minor an IDL file's `version(M.m)` may name, so a major
+/// has at most 1,024 minors, 0 to 1,023; a major that needs more starts a
+/// new major. idlc and the catalog do work for each minor: the grammars
+/// of each projection that changes, the step check, and a lock hash for
+/// each published minor. The wire's u16 minor fields are wider than this
+/// (docs/design/call-language.md, "Types", Limits).
+pub const MAX_MINOR: u16 = 1023;
+
 /// The front end's budgets. The defaults are the ones
 /// docs/design/call-language.md gives ("Types", "Limits"); the catalog
 /// runs with them on publishers' files.
@@ -86,6 +94,8 @@ pub struct Limits {
     pub import_depth: usize,
     /// Interfaces loaded through `use`, in all.
     pub imports: usize,
+    /// The highest minor `version(M.m)` may name ([`MAX_MINOR`]).
+    pub minor: u16,
 }
 
 impl Default for Limits {
@@ -99,6 +109,7 @@ impl Default for Limits {
             attrs: 64,
             import_depth: 8,
             imports: 64,
+            minor: MAX_MINOR,
         }
     }
 }
