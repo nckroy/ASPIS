@@ -232,8 +232,9 @@ pub const SELECTS_ALL: &[&str] = &[
 pub const REFERENCE: &str = "crates/abnf";
 
 /// Whether a change to `path` selects `t` for per-change fuzzing: one of
-/// its `paths`, its target file, its seeds or regressions, the reference
-/// matcher if it has a grammar, or anything in [`SELECTS_ALL`].
+/// its `paths` or `extra_paths`, its target file, its seeds or
+/// regressions, the reference matcher if it has a grammar, or anything in
+/// [`SELECTS_ALL`].
 pub fn selects(t: &Target, path: &str) -> bool {
     let own = [
         format!("fuzz/fuzz_targets/{}.rs", t.name),
@@ -241,6 +242,7 @@ pub fn selects(t: &Target, path: &str) -> bool {
         format!("fuzz/regressions/{}", t.name),
     ];
     t.paths.iter().any(|p| under(path, p))
+        || t.extra_paths.iter().any(|p| under(path, p))
         || (t.grammar.is_some() && under(path, REFERENCE))
         || own.iter().any(|p| under(path, p))
         || SELECTS_ALL.iter().any(|p| under(path, p))
@@ -524,9 +526,10 @@ pub fn sha256(data: &[u8]) -> [u8; 32] {
     out
 }
 
-/// A nightly shard, `i/n` with 1 ≤ i ≤ n: the seam for splitting the
-/// nightly into a matrix once its targets near the job's 2-hour limit
-/// (docs/design/call-language.md, "The harness").
+/// A nightly shard, `i/n` with 1 ≤ i ≤ n. The nightly runs as a matrix of
+/// two shards, and takes a third when a shard's share of its budget gets
+/// too short (docs/design/call-language.md, "The harness", "Seams for
+/// later", `--shard`).
 pub fn shard(spec: &str) -> Option<(usize, usize)> {
     let (i, n) = spec.split_once('/')?;
     let (i, n) = (i.parse().ok()?, n.parse().ok()?);
@@ -540,8 +543,8 @@ pub fn in_shard(index: usize, (i, n): (usize, usize)) -> bool {
 }
 
 /// The source directories a target's coverage is reported on: the
-/// `src/` of each crate in its `paths` (`crates/<name>`). Grammar files
-/// and the harness's own code aren't counted.
+/// `src/` of each crate in its `paths` (`crates/<name>`). Grammar files,
+/// `extra_paths` and the harness's own code aren't counted.
 pub fn coverage_dirs(t: &Target) -> Vec<String> {
     t.paths
         .iter()

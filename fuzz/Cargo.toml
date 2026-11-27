@@ -111,6 +111,34 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "idl-names"
+path = "fuzz_targets/idl-names.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "idl-front-end"
+path = "fuzz_targets/idl-front-end.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "idl-decode"
+path = "fuzz_targets/idl-decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "idl-generated"
+path = "fuzz_targets/idl-generated.rs"
+test = false
+doc = false
+bench = false
+
 # Not a gate target: `cargo xtask fuzz build` runs it to show that overflow
 # checks and the memory bound fire in the fuzz build.
 [[bin]]

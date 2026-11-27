@@ -10,7 +10,7 @@
 //! that the check catches it. The targets pass the real one.
 
 use abnf::{
-    Context,
+    Context, Exhausted,
     constraint::{self, Constraint, ConstraintError},
     vectors::{Report, Tag, VectorFile, Verdict},
 };
@@ -39,6 +39,81 @@ pub fn grammar_accepts(grammar: &str, rule: &str, input: &[u8]) -> bool {
                 input.len()
             )
         })
+}
+
+/// How many times, at most, a rule of `grammars/names.abnf` or
+/// `grammars/idl.abnf` makes C06's constrained matcher walk one run of
+/// name octets. Measured: `action-ref` takes about 3.2 times a run's
+/// n² / 2 steps (it tries a name three times), `idl-file` about 2.1 (a
+/// type name), and every other rule about 1. This is about 2.5 times the
+/// worst, so a run that does explain running out of steps is never taken
+/// for a finding.
+pub const NAME_RUN_TRIES: u64 = 8;
+
+/// The steps C06's constrained matcher can spend on the runs of name
+/// octets in `input` (`a-z`, `0-9` and `_`): n² / 2 for a run of n,
+/// [`NAME_RUN_TRIES`] times. A run's every end is a candidate the
+/// constraint `length at most 63` then refuses, so the match of a label
+/// or member name is quadratic in the run.
+pub fn name_run_steps(input: &[u8]) -> u64 {
+    input
+        .split(|&b| !(b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'))
+        .map(|r| (r.len() as u64).pow(2) / 2 * NAME_RUN_TRIES)
+        .sum()
+}
+
+/// Whether the runs of name octets in `input` can explain the reference
+/// matcher running out of steps: [`name_run_steps`] reaches the step
+/// budget [`ORACLE_LIMITS`](crate::ORACLE_LIMITS) gives an input of its
+/// length. A run costs at most `4n` steps an octet, against a budget of
+/// 1,000 an octet, so only runs of a few hundred octets can: never the
+/// 64 hex digits of an `object_id` or an interface ID's text.
+pub fn name_runs_explain_exhaustion(input: &[u8]) -> bool {
+    let l = &crate::ORACLE_LIMITS;
+    name_run_steps(input) >= l.steps_base + l.steps_per_octet * input.len() as u64
+}
+
+/// [`grammar_accepts`] for `grammars/names.abnf` and the grammars that
+/// use it (`idl.abnf`), or None when the reference matcher ran out of
+/// steps on an input whose runs of name octets explain it
+/// ([`name_runs_explain_exhaustion`]). With its constraints on, C06's
+/// matcher takes steps quadratic in such a run's length (about n² / 2
+/// for a label of n octets, where the context-free match takes about
+/// 10n), so a run of a few hundred octets can pass
+/// [`ORACLE_LIMITS`](crate::ORACLE_LIMITS)' linear budget (at about 720
+/// octets for `action-ref`), and such an input is left unjudged rather
+/// than failed. Running out of budget on any other input, or of any
+/// other budget, is still a finding ("The gate for each target", item 6).
+pub fn names_grammar_accepts(grammar: &str, rule: &str, input: &[u8]) -> Option<bool> {
+    let g = repo::oracle(grammar).unwrap_or_else(|| panic!("no repository grammar {grammar}"));
+    let r = g
+        .rule(rule)
+        .unwrap_or_else(|| panic!("{grammar} has no rule {rule}"));
+    names_verdict(
+        grammar,
+        rule,
+        input,
+        g.matches_constrained(r, input, &Context::default()),
+    )
+}
+
+/// The verdict [`names_grammar_accepts`] takes from the matcher's
+/// result: separate so `tests/oracles.rs` can show that running out of
+/// steps is still a finding when the input's name runs don't explain it.
+pub fn names_verdict(
+    grammar: &str,
+    rule: &str,
+    input: &[u8],
+    result: Result<bool, Exhausted>,
+) -> Option<bool> {
+    match result {
+        Ok(v) => Some(v),
+        Err(Exhausted::Steps) if name_runs_explain_exhaustion(input) => None,
+        Err(e) => panic!(
+            "{grammar}/{rule}: the reference matcher ran out of a budget ({e:?}) on {} octets",
+            input.len()
+        ),
+    }
 }
 
 /// The kernel-argument parser as the agreement check sees it: a line is
@@ -121,6 +196,103 @@ pub fn check_constraint_agreement(
             verb(grammar)
         );
     }
+}
+
+/// The rules of `grammars/names.abnf` that `idl-names` holds the name
+/// parsers to: the three references, and the parts the parsers expose.
+pub const NAMES_RULES: [&str; 7] = [
+    "interface-ref",
+    "action-ref",
+    "error-ref",
+    "name",
+    "label",
+    "member-name",
+    "number",
+];
+
+/// C07's name parsers as the agreement check sees them (ADR 0063,
+/// rule 10), one per rule of [`NAMES_RULES`], mapped as
+/// `crates/idl-rt/tests/names.rs` maps them: a reference parses whole,
+/// and a number takes the whole input.
+pub fn names_accepts(rule: &str, input: &[u8]) -> bool {
+    use idl_rt::names;
+    match rule {
+        "interface-ref" => names::parse_interface_ref(input).is_ok(),
+        "action-ref" => names::parse_action_ref(input).is_ok(),
+        "error-ref" => names::parse_error_ref(input).is_ok(),
+        "name" => names::is_name(input),
+        "label" => names::is_label(input),
+        "member-name" => names::is_member_name(input),
+        "number" => matches!(names::number(input), Some((_, n)) if n == input.len()),
+        _ => panic!("no name parser for {rule}"),
+    }
+}
+
+/// `idl-names`' agreement (ADR 0063, rule 10; "The gate for each target",
+/// item 3): for every rule of [`NAMES_RULES`], `parse` accepts the input
+/// exactly when `grammars/names.abnf` matches it with its constraints.
+/// This generalizes `crates/idl-rt/tests/names.rs` from its small
+/// alphabet to any input. Every input up to [`AGREEMENT_MAX`] octets is
+/// judged (`idl-names`' inputs are all shorter), except as a rule's
+/// matcher leaves a long name run unjudged ([`names_grammar_accepts`]).
+pub fn check_names_agreement(input: &[u8], parse: impl Fn(&str, &[u8]) -> bool) {
+    if input.len() > AGREEMENT_MAX {
+        return;
+    }
+    for rule in NAMES_RULES {
+        let subject = parse(rule, input);
+        let Some(grammar) = names_grammar_accepts("names", rule, input) else {
+            continue;
+        };
+        assert_eq!(
+            subject,
+            grammar,
+            "as {rule}, the parser {} the input, but the grammar {} it",
+            verb(subject),
+            verb(grammar)
+        );
+    }
+}
+
+/// The IDL parser's verdict on a whole file, as `crates/idl/tests/grammar.rs`
+/// reads it: accepted, rejected, or none when the parser stopped at one of
+/// its own limits ([`idl::Limits`]), which the grammar doesn't have.
+pub fn idl_file_verdict(input: &[u8]) -> Option<bool> {
+    use idl::{
+        Code, Limits,
+        parse::{Rule, parse_rule},
+    };
+    match parse_rule(Rule::IdlFile, input, &Limits::default()) {
+        Ok(()) => Some(true),
+        Err(d) if d.code == Code::Limit => None,
+        Err(_) => Some(false),
+    }
+}
+
+/// `idl-front-end`'s agreement (ADR 0067, rule 11): the parser accepts a
+/// file exactly when `grammars/idl.abnf` matches it as `idl-file` with its
+/// constraints. An input the parser gives no verdict on, at one of its
+/// own limits, isn't compared, and neither is one over
+/// [`AGREEMENT_MAX`] octets (`tests/linear.rs` judges longer files
+/// outside the fuzzer) or one with a long name run the matcher leaves
+/// unjudged ([`names_grammar_accepts`]).
+pub fn check_idl_agreement(input: &[u8], parser: impl Fn(&[u8]) -> Option<bool>) {
+    if input.len() > AGREEMENT_MAX {
+        return;
+    }
+    let Some(subject) = parser(input) else {
+        return;
+    };
+    let Some(grammar) = names_grammar_accepts("idl", "idl-file", input) else {
+        return;
+    };
+    assert_eq!(
+        subject,
+        grammar,
+        "the parser {} the file, but the grammar {} it",
+        verb(subject),
+        verb(grammar)
+    );
 }
 
 // ---- Round trips (item 2) ----------------------------------------------

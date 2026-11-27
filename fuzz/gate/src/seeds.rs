@@ -9,13 +9,25 @@
 
 use abnf::vectors::{self, Vector};
 
-use crate::repo::{GRAMMARS, RepoGrammar};
+use crate::{
+    idl_repo::WireMinor,
+    repo::{GRAMMARS, RepoGrammar},
+};
 
 /// The vectors of one embedded file. The files are the repository's own,
 /// which `cargo xtask grammars` reads, so they always parse.
 pub fn vector_lines(g: &RepoGrammar) -> Vec<Vector> {
     vectors::parse(g.vectors)
         .unwrap_or_else(|e| panic!("{}:{e}", g.vectors_path))
+        .vectors
+}
+
+/// The vectors of one embedded wire vector file (`idl-decode`). The
+/// files are generated and checked by `cargo xtask idl`, so they always
+/// parse.
+pub fn wire_vectors(w: &WireMinor) -> Vec<Vector> {
+    vectors::parse(w.vectors)
+        .unwrap_or_else(|e| panic!("{}:{e}", w.vectors_path))
         .vectors
 }
 

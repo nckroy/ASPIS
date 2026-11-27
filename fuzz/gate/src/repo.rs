@@ -43,8 +43,9 @@ macro_rules! repo_grammar {
 /// rule comes before any later one that does, so [`defining`] finds the
 /// owner first, and each comes after the grammars its `; uses:` names.
 /// C07's grammars (`json`, `names`, `idl`, `idl-lock`) are here as
-/// inputs to C06's checker; fuzzing C07's own parsers is C71's C07
-/// follow-up.
+/// inputs to C06's checker, and `names` and `idl` as the references
+/// `idl-names` and `idl-front-end` agree with. The generated wire
+/// grammars are in [`crate::idl_repo`].
 pub const GRAMMARS: &[RepoGrammar] = &[
     repo_grammar!("core", "grammars"),
     repo_grammar!("constraint", "grammars"),

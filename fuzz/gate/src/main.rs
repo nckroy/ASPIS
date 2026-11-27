@@ -191,8 +191,13 @@ fn list(args: &[String]) {
             continue;
         }
         let grammar = t.grammar.map_or("-".into(), |(g, r)| format!("{g}/{r}"));
+        let also = if t.extra_paths.is_empty() {
+            String::new()
+        } else {
+            format!("  also {}", t.extra_paths.join(", "))
+        };
         println!(
-            "{:<16} {:<9} ADR {:<26} max_len {:>8}  timeout {}s  memory {} MiB  grammar {grammar}  paths {}",
+            "{:<16} {:<9} ADR {:<26} max_len {:>8}  timeout {}s  memory {} MiB  grammar {grammar}  paths {}{also}",
             t.name,
             t.chunk,
             t.adr,

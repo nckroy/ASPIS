@@ -124,11 +124,12 @@ jobs:
   # The fuzz targets (ADR 0068, rules 6 and 7; docs/design/call-language.md,
   # "Per change"): build every target with the pinned cargo-fuzz, check
   # the oracle, replay every seed, regression and cached corpus input
-  # once, fuzz the targets the change selects for 60 s each (600 s in
-  # all; each after its corpus load, which comes on top), and run the
-  # ABNF differential's self-test and 300 of its cases. Findings are
-  # uploaded for 7 days: until the first release, fuzzing runs in public
-  # and findings are fixed in the open (rule 13).
+  # once (the corpora of both nightly shards), fuzz the targets the change
+  # selects for 60 s each (600 s in all; each after its corpus load,
+  # which comes on top), and run the ABNF differential's self-test and
+  # 300 of its cases. Findings are uploaded for 7 days: until the first
+  # release, fuzzing runs in public and findings are fixed in the open
+  # (rule 13).
   fuzz:
     name: Fuzz targets
     needs: changes
@@ -156,13 +157,21 @@ jobs:
           key: fuzz-tools-${{ runner.os }}-${{ runner.arch }}-${{ steps.pins.outputs.hash }}-${{ hashFiles('rust-toolchain.toml') }}
       - run: cargo xtask fuzz install
       - run: cargo xtask fuzz build
-      # The nightly's newest corpus. This job never saves it.
-      - name: Fuzz corpus
+      # The nightly's newest corpus, one cache per nightly shard, each
+      # holding its own targets' directories: the second restore adds its
+      # directories beside the first's. This job never saves them.
+      - name: Fuzz corpus (shard 1)
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/fuzz/corpus
-          key: fuzz-corpus-v1-none
-          restore-keys: fuzz-corpus-v1-
+          key: fuzz-corpus-v2-s1-none
+          restore-keys: fuzz-corpus-v2-s1-
+      - name: Fuzz corpus (shard 2)
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/fuzz/corpus
+          key: fuzz-corpus-v2-s2-none
+          restore-keys: fuzz-corpus-v2-s2-
       - run: cargo xtask fuzz replay
       # The seed is the run number, printed, so `cargo xtask fuzz run
       # <target> --time 60 --seed <n>` repeats a target's run.

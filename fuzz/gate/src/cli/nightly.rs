@@ -16,8 +16,8 @@
 //! gets `--time` seconds or its share of the budget, whichever is less,
 //! so a new target shortens the others' runs instead of pushing the job
 //! past its time limit. `--shard i/n` runs every n-th target from the
-//! i-th: the seam for a matrix of nightly jobs once the share falls well
-//! under `--time`.
+//! i-th: the nightly job is a matrix of two shards, since one job's
+//! share fell well under `--time` at 11 targets.
 
 use std::{fs, process::Command};
 

@@ -106,7 +106,9 @@ fn a_change_selects_its_targets() {
         ]
     );
     // crates/abnf is the reference matcher, so it selects kargs-parse,
-    // whose oracle matches against kernel-args.abnf.
+    // whose oracle matches against kernel-args.abnf, and the idl-
+    // targets, whose oracles match against names.abnf, idl.abnf and the
+    // generated grammars.
     assert_eq!(
         names(&["crates/abnf/src/matcher.rs"]),
         [
@@ -115,9 +117,45 @@ fn a_change_selects_its_targets() {
             "abnf-vectors",
             "abnf-constraint",
             "abnf-generated",
-            "kargs-parse"
+            "kargs-parse",
+            "idl-names",
+            "idl-front-end",
+            "idl-decode",
+            "idl-generated"
         ]
     );
+    // C07's crates and files (docs/design/call-language.md, "Per change").
+    let idl3 = ["idl-front-end", "idl-decode", "idl-generated"];
+    let idl4 = ["idl-names", "idl-front-end", "idl-decode", "idl-generated"];
+    assert_eq!(names(&["crates/idl-rt/src/names.rs"]), idl4);
+    assert_eq!(names(&["crates/idl/src/value.rs"]), idl3);
+    for p in ["crates/interfaces/build.rs", "crates/idl-fixtures/build.rs"] {
+        assert_eq!(names(&[p]), ["idl-decode", "idl-generated"], "{p}");
+    }
+    assert_eq!(names(&["interfaces/aspis/rpc/v1.idl"]), idl3);
+    assert_eq!(
+        names(&["crates/idl/tests/data/interfaces/org/example/kinds/v1.2.vectors"]),
+        idl3
+    );
+    assert_eq!(names(&["tools/idlc/src/main.rs"]), idl3);
+    // The front end hashes each canonical form with aspis-crypto's SHA3-256.
+    assert_eq!(names(&["crates/crypto/src/hash.rs"]), ["idl-front-end"]);
+    let abnf3 = ["abnf-grammar", "abnf-match", "abnf-vectors"];
+    let with = |more: &[&'static str]| -> Vec<&'static str> {
+        abnf3.iter().chain(more).copied().collect()
+    };
+    assert_eq!(
+        names(&["grammars/names.abnf"]),
+        with(&["idl-names", "idl-front-end"])
+    );
+    assert_eq!(names(&["grammars/names.vectors"]), with(&["idl-names"]));
+    assert_eq!(names(&["grammars/idl.vectors"]), with(&["idl-front-end"]));
+    assert_eq!(
+        names(&["grammars/json.abnf"]),
+        with(&["idl-names", "idl-front-end"])
+    );
+    assert_eq!(names(&["grammars/core.abnf"]), with(&idl4));
+    assert!(names(&["crates/idl-other/src/lib.rs"]).is_empty());
     // The oracle copies the stub's buffers.
     assert_eq!(names(&["boot/stub/src/main.rs"]), ["kargs-grub"]);
     let all: Vec<&str> = TARGETS.iter().map(|t| t.name).collect();
@@ -262,6 +300,17 @@ fn nightly_shards() {
     assert_eq!(harness::shard("4/3"), None);
     assert_eq!(harness::shard("1/0"), None);
     assert_eq!(harness::shard("x"), None);
+    // At most 8 targets a shard in the nightly's 2 shards, so each
+    // target's share of a shard's 4200 s budget stays at about 8 minutes
+    // or more (525 s at 8; up to 7 keep the full 600 s). At 17 targets a
+    // shard would hold 9 (466 s), and a third shard comes
+    // (docs/design/call-language.md, "Seams for later", `--shard`).
+    for i in 1..=2 {
+        let n = (0..TARGETS.len())
+            .filter(|&k| harness::in_shard(k, (i, 2)))
+            .count();
+        assert!(n <= 8, "shard {i}/2 holds {n} targets: add a third shard");
+    }
     // Every target is in exactly one shard, for any count of shards.
     for n in 1..=TARGETS.len() + 1 {
         for k in 0..TARGETS.len() {
@@ -277,6 +326,26 @@ fn coverage_is_counted_on_the_parsers() {
     assert_eq!(dirs("abnf-grammar"), ["crates/abnf/src"]);
     assert_eq!(dirs("abnf-constraint"), ["crates/abnf/src"]);
     assert_eq!(dirs("kargs-parse"), ["crates/kargs/src"]);
+    assert_eq!(dirs("idl-names"), ["crates/idl-rt/src"]);
+    assert_eq!(
+        dirs("idl-front-end"),
+        ["crates/idl/src", "crates/idl-rt/src"]
+    );
+    assert_eq!(dirs("idl-decode"), ["crates/idl-rt/src", "crates/idl/src"]);
+    assert_eq!(
+        dirs("idl-generated"),
+        ["crates/idl-rt/src", "crates/idl/src"]
+    );
+    // The extra paths select a target, but aren't counted in its coverage.
+    for t in TARGETS {
+        for p in t.extra_paths {
+            assert!(
+                !harness::coverage_dirs(t).contains(&format!("{p}/src")),
+                "{}: {p}",
+                t.name
+            );
+        }
+    }
     // Every target reports on at least one crate.
     for t in TARGETS {
         assert!(!harness::coverage_dirs(t).is_empty(), "{}", t.name);

@@ -77,7 +77,8 @@ pub const MAX_MINOR: u16 = 1023;
 /// runs with them on publishers' files.
 #[derive(Debug, Clone)]
 pub struct Limits {
-    /// Octets of one source file.
+    /// Octets of one source file, and of its canonical form at each of
+    /// its minors, so a stored form checks again under these limits.
     pub source: usize,
     /// Types nested inside one another: `seq<seq<...>>` (ADR 0068, rule
     /// 5's explicit depth limit).

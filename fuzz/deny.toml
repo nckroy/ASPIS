@@ -17,8 +17,9 @@ confidence-threshold = 0.9
 allow = ["MIT", "Apache-2.0", "MPL-2.0", "BSD-3-Clause", "NCSA"]
 # The list is ADR 0008's, whether or not today's lock uses each one.
 unused-allowed-license = "allow"
-# ASPIS's own crates (fuzz-gate, fuzz-alloc, abnf, kargs) are unpublished,
-# MPL-2.0 like every ASPIS crate (ADR 0008).
+# ASPIS's own crates (the fuzz workspace's, and the product crates it uses
+# by path: abnf, kargs, idl, idl-rt, aspis-interfaces, idl-fixtures and
+# aspis-crypto) are unpublished, MPL-2.0 like every ASPIS crate (ADR 0008).
 private = { ignore = true }
 
 [bans]

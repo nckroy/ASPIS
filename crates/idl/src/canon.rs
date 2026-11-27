@@ -7,7 +7,9 @@
 //!
 //! It is the projected source with comments and docs removed, every
 //! derived number written out, attributes in a fixed order and fixed
-//! whitespace. It is itself a valid `idl-file`, so it parses back.
+//! whitespace. It is itself a valid `idl-file`, so it parses back, and
+//! within the source limit, which the checker holds it to
+//! ([`crate::Limits::source`]).
 //!
 //! - `edition 2026;`, then the `use` lines, then the header and
 //!   `interface name {`, one member per line, then `}`. LF line ends, no
