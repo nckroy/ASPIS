@@ -1802,7 +1802,7 @@ doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF an
 - **A parser at a trust boundary isn't done until it passes the gate** ([The gate for each target](#the-gate-for-each-target)). Its input comes from another principal, the network, removable media, the boot command line, or a publisher through the catalog. Its chunk brings its own targets ([build plan](build-plan.md), C71).
 - **Fuzzing runs on the pinned stable toolchain only**: Rust 1.100.0 ([0035](../decisions/0035-toolchain-image-linkage-and-esp-layout.md), rule 1). There are no sanitizers, so **every crate that parses input from across a trust boundary is `#![forbid(unsafe_code)]`**, as `crates/initfs` already is. That includes every IDL-generated interface crate. The `unsafe` glue that reaches the kernel interface library's entry table lives in `aspis-rt`, and parses nothing ([Back ends](#back-ends)). The oracle is panics, Rust's overflow checks and debug assertions.
 - **Differential tests** check decoders against their grammars, the two ABNF checkers against each other, and ASPIS's PDP against Cedar's own engine.
-- **Model checking** is TLA+ with TLC, for leases and catalog sequence numbers.
+- **Model checking** is TLA+ with TLC, for the kernel's concurrent protocols (C12, C14 and C15), leases and catalog sequence numbers.
 - **A nightly in-QEMU fuzzer of the kernel's call surface**, generated from the kernel interfaces' IDL, runs from C13 to C17. It doesn't block per-change CI.
 - **Partition fault injection** between QEMU instances comes from C40, through an unprivileged host-side switch.
 - **Disclosure.** Fuzzing runs in public CI until ASPIS's first release. After it, nightly crash artifacts have short retention and go into a private advisory, and long campaigns run on a private fork or runner ([Triage and disclosure](#triage-and-disclosure)).
@@ -1815,7 +1815,7 @@ doc-char     = %x01-09 / %x0B-7F / utf8-2 / utf8-3 / utf8-4 ; anything but LF an
 | libfuzzer-sys | 0.4.x | (MIT OR Apache-2.0) AND NCSA (the bundled LLVM libFuzzer) | The engine. NCSA is a BSD-style permissive license. |
 | arbitrary | 1.5.x | MIT OR Apache-2.0 | Structure-aware inputs, inside `fuzz/` only. C71 wraps `crates/idl`'s structured value generator in it ([Fuzz entry points](#fuzz-entry-points)). |
 | afl.rs | 0.18.x | Apache-2.0 | A fallback only, if libFuzzer on stable fails C71's first check |
-| TLA+ tools (TLC) | v1.7.4, the newest release that isn't a prerelease (v1.8.0 is a prerelease of 2026-11-19) | MIT | Model checking ([Model checking](#model-checking)) |
+| TLA+ tools (TLC) | v1.7.4, the newest release that isn't a prerelease (v1.8.0 is still a prerelease, last built 2026-11-26) | MIT | Model checking ([Model checking](#model-checking)) |
 | Apalache | 0.63.x | Apache-2.0 | Optional, for inductive invariants |
 | Eclipse Temurin 21 (LTS), a JRE | pinned to a patch release | GPL-2.0-only WITH Classpath-exception-2.0 | Runs TLC and Apalache. Installed with GitHub's own `actions/setup-java` (`distribution: temurin`), pinned by SHA, as every action in `ci.yml` is. |
 
@@ -1863,7 +1863,7 @@ Each parser at a trust boundary, and the chunk that owns it:
 | JOSE, JWT and JSON, the shared verification library | C37 | [0015](../decisions/0015-jwt-tokens-and-oidc-identity.md), Consequences |
 | AuthZEN messages | C31, C32, C61 | |
 | The secure transport's handshake messages | C29 | with D65's stack |
-| Catalog queries and their text forms | C51 | |
+| Catalog queries, as IDL values, and their text forms | C51 | Their decoders are generated ([0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 7) |
 | The JSON mapping's decoder (HTTPS input) | C52 | |
 | TOML manifests | C54 | |
 | SVG, XML, font and image decoders | C44 | Isolated, but still targets ([0010](../decisions/0010-svg-core-primitive.md), rule 11) |
@@ -1947,7 +1947,7 @@ C32 builds this test.
 
 ### Model checking
 
-- **TLA+, checked with TLC v1.7.4**; Apalache is optional. Specs live in `specs/<name>.tla`, with MPL-2.0 SPDX tags in TLA+ comments, and come with the chunk whose protocol they model. The JVM is a CI dependency of these jobs only.
+- **TLA+, checked with TLC v1.7.4**; Apalache is optional. Specs live in `specs/<name>.tla`, with MPL-2.0 SPDX tags in TLA+ comments, and come with the chunk whose protocol they model. The kernel's specs, for scheduling-context donation (C12), IPC and eventcounts (C14) and the pager protocol (C15), have their properties in the [kernel specification](kernel-specification.md#model-checking). The JVM is a CI dependency of these jobs only.
 - **Leases (C40, C50):**
   - a lookup never returns an instance more than the lease length plus the clock-uncertainty bound after its last successful renewal;
   - an exclusive lease has at most one holder acting, enforced by a monotonic fencing epoch;
@@ -1960,7 +1960,7 @@ C32 builds this test.
   - an answer marked with epoch e reflects exactly the changes up to e.
 
   This is also where stream resumption ([Remote push within QUIC's credit](#remote-push-within-quics-credit)) is checked.
-- **Recommended, not required by the gate:** the call protocol's at-most-once reply cache and cancel (C18; [0004](../decisions/0004-network-transparency-and-failure.md), rule 3; [0054](../decisions/0054-ipc-endpoints.md)), and export reference counting with release and `export_ended` (C29).
+- **Recommended, not required by the gate:** C11's preemptible delete and revoke ([kernel specification](kernel-specification.md#model-checking)); the call protocol's at-most-once reply cache and cancel (C18; [0004](../decisions/0004-network-transparency-and-failure.md), rule 3; [0054](../decisions/0054-ipc-endpoints.md)), and export reference counting with release and `export_ended` (C29).
 - **Sans-IO cores.** The protocol cores are written as sans-IO, `no_std`, host-buildable state machines. Later, test builds emit traces that TLC validates (trace validation: Cirstea and others, arXiv 2404.16075).
 
 ### The kernel-call fuzzer
@@ -2291,7 +2291,7 @@ What coverage threshold should each fuzz target meet?
 
 The TLA+ specs themselves.
 
-- **Owner:** C40 and C50 (leases); C51 (sequence numbers).
+- **Owner:** C12 (scheduling-context donation), C14 (IPC and eventcounts) and C15 (the pager protocol), whose properties are in the [kernel specification](kernel-specification.md#model-checking); C40 and C50 (leases); C51 (sequence numbers).
 - **Meanwhile:** the properties in [Model checking](#model-checking).
 - **From:** [Model checking](#model-checking).
 

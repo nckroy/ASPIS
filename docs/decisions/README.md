@@ -48,7 +48,7 @@ These come from the project brief and aren't re-decided here:
 | [0010](0010-svg-core-primitive.md) | SVG as a core primitive: the native SVG layer and Display SVG | Accepted | 2026-11-24 |
 | [0011](0011-dm-window-system.md) | dm: the window system, built on Display SVG | Accepted | 2026-11-24 |
 | [0012](0012-posix-compatibility-layer.md) | POSIX compatibility: a user-space personality on ASPIS APIs | Accepted | 2026-11-24 |
-| [0013](0013-abnf-for-protocols-and-calls.md) | ABNF for protocols, formats, and every RPC and IPC call | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0013](0013-abnf-for-protocols-and-calls.md) | ABNF for protocols, formats, and every RPC and IPC call | Accepted | 2026-11-24, updated 2026-11-26 |
 | [0014](0014-versioned-object-apis.md) | Versioned object APIs | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0015](0015-jwt-tokens-and-oidc-identity.md) | Security tokens: JWTs, with OpenID Connect for user and workload identity | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0016](0016-authorization-sparse-merkle-tree.md) | Authorization store: a sparse Merkle tree, revoked by branch | Accepted | 2026-11-24, updated 2026-11-25 |
@@ -63,10 +63,10 @@ These come from the project brief and aren't re-decided here:
 | [0025](0025-twelve-factor-app-contract.md) | Twelve-factor apps: the app's contract as native APIs | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0026](0026-realm-as-cloud-provider.md) | The realm as a virtual cloud provider for twelve-factor apps | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0027](0027-applications-extend-the-system.md) | Applications extend the system through objects and versioned interfaces | Accepted | 2026-11-24, updated 2026-11-25 |
-| [0028](0028-discovery-and-realm-catalog.md) | Discovery: a realm catalog of interfaces, types and objects, updated in real time | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0028](0028-discovery-and-realm-catalog.md) | Discovery: a realm catalog of interfaces, types and objects, updated in real time | Accepted | 2026-11-24, updated 2026-11-26 |
 | [0029](0029-founding-node-self-signed-certificate.md) | The founding node's initial certificate is self-signed | Accepted | 2026-11-24, updated 2026-11-25 |
 | [0030](0030-bind-tokens-sessions-and-group-memberships.md) | What managers accept, when sessions end, and where group memberships come from | Superseded by [0015](0015-jwt-tokens-and-oidc-identity.md) and [0018](0018-cedar-policy-language.md) | 2026-11-24 |
-| [0031](0031-abnf-is-not-a-command-language.md) | ABNF specifies protocols and formats, not the command interpreter | Accepted | 2026-11-24, updated 2026-11-25 |
+| [0031](0031-abnf-is-not-a-command-language.md) | ABNF specifies protocols and formats, not the command interpreter | Accepted | 2026-11-24, updated 2026-11-26 |
 | [0032](0032-stateful-services-run-as-platform-deploys.md) | Stateful services run as platform deploys | Accepted | 2026-11-24 |
 | [0033](0033-contributions-docs-license-and-notice-years.md) | Contributions under the DCO, documents under CC BY 4.0, and year ranges in notices | Accepted | 2026-11-25 |
 | [0034](0034-noto-fonts-under-ofl.md) | Fonts: Noto, under the SIL Open Font License, with atlases at 16, 24 and 32 pixels | Accepted | 2026-11-25 |
@@ -103,4 +103,4 @@ These come from the project brief and aren't re-decided here:
 | [0065](0065-typed-errors-and-minor-versions-on-the-wire.md) | Typed errors and minor versions on the wire | Accepted | 2026-11-25 |
 | [0066](0066-capability-parameters-and-server-streams.md) | Capability parameters and server streams | Accepted | 2026-11-25 |
 | [0067](0067-the-aspis-idl.md) | The ASPIS IDL | Accepted | 2026-11-25 |
-| [0068](0068-the-fuzzing-and-differential-testing-gate.md) | The fuzzing and differential-testing gate | Accepted | 2026-11-25 |
+| [0068](0068-the-fuzzing-and-differential-testing-gate.md) | The fuzzing and differential-testing gate | Accepted | 2026-11-25, updated 2026-11-26 |

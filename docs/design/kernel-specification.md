@@ -13,7 +13,7 @@ This note is the kernel specification that [0047](../decisions/0047-the-kernel-f
 - **Open questions are numbered.** Each is listed once, as K01, K02, …, under [Open questions](#open-questions) at the end, and the sections link to them. The [design backlog](design-backlog.md#m2-kernel-objects) carries them as D150 to D160, grouped, under M2. D161, under [M3](design-backlog.md#m3-node-user-space-and-the-entropy-gate), carries K12, and D162, under [M6](design-backlog.md#m6-a-console-you-can-log-in-to), carries K73. K10 and K61 belong to D95 and D115.
 - **The records are accepted.** The project owner accepted ADRs 0047 to 0061 on 2026-11-25, with the call-language records 0062 to 0068 that this note cites for message layouts ([call-language specification](call-language.md)).
 
-The sections follow the order in which the kernel is built: memory and address spaces, capabilities, threads and scheduling, SMP, IPC, eventcounts, interrupts, memory objects and paging, faults, jobs and memory reclaim, the kernel interface library, processes and spawn, debugging, and the boot hand-off.
+The sections follow the order in which the kernel is built: memory and address spaces, capabilities, threads and scheduling, SMP, IPC, eventcounts, interrupts, memory objects and paging, faults, jobs and memory reclaim, the kernel interface library, processes and spawn, debugging, the boot hand-off, and the model-checking properties of the kernel's concurrent protocols.
 
 ## The model
 
@@ -1153,6 +1153,30 @@ Boot objects belong to no job, count against no reservation or limit, and are ne
 - **The untyped CNodes** are 16 one-page CNodes of radix 7, so they hold 2048 untyped capabilities, the most the kernel makes ([Boot memory](#boot-memory)). The kernel takes a fixed 16 pages for them before it divides the rest of RAM into pieces, since taking pages can split the free set into more pieces: a fixed count is what always fits.
 - **Each piece gets one untyped capability**, RAM pieces first, then device pieces, each in address order, from slot 0 of the first untyped CNode on. Each is a root of the derivation tree, with no parent, and a watermark of 0. Free RAM untyped memory is zero.
 - The boot log reports the number of untyped capabilities. C19 fixes what the root server receives in root slots 2 to 15, and how it learns the layout.
+
+## Model checking
+
+This section gives the properties behind [0068](../decisions/0068-the-fuzzing-and-differential-testing-gate.md), rule 10, for the kernel's concurrent protocols. Each spec is `specs/<name>.tla`, checked with TLC as the call-language specification's [Model checking](call-language.md#model-checking) says, and comes with the chunk whose protocol it models. A spec models the protocol's states and steps, preemption points and interrupts included, not the Rust. The chunk's tests check, on the runs they make, that the code takes only the spec's steps.
+
+- **Scheduling-context donation (C12)**, from [Passive servers and taking a context back](#passive-servers-and-taking-a-context-back):
+  - each scheduling context is bound to at most one thread, and a thread runs only on a context bound to it;
+  - along a chain of calls, the reply objects lead from the caller to the thread that holds the donated context, and no context is lost or duplicated;
+  - when a delivered call that donated the caller's context is canceled, or its deadline passes, the caller gets its context back, and its call ends with "canceled" or "timed out". A server's later reply fails with "no caller", and never reaches the caller;
+  - each passive server left without a context along that chain gets one context-withdrawn fault, if it has a timeout endpoint;
+  - a long chain followed in bounded batches ends in the same state as one followed at once.
+- **IPC endpoints and eventcounts (C14)**, from [Endpoint operations and messages](#endpoint-operations-and-messages) and [Eventcount operations](#eventcount-operations):
+  - a call ends exactly once: with its reply, "canceled", "timed out" or an error. A reply object answers at most one call;
+  - waiting senders and receivers are served in priority order, first come first served within a priority;
+  - an eventcount's count never decreases. An advance wakes every waiter whose target is at or below the count, and no other. A wait whose target is already reached returns at once, so no wake-up is lost between reading the count and waiting;
+  - an advance restarted after a preemption point adds one exactly once ([K31](#k31-restarting-an-advance)), and a wake batched for an interrupt reaches every waiter whose target the advance reached before the eventcount's pending mark clears;
+  - revoking an eventcount capability, or deleting a wait-set entry's copy of it, removes that entry ([0049](../decisions/0049-capability-spaces-rights-and-revocation.md), rule 4; [Derivation and revocation](#derivation-and-revocation)). What a removal does to a wait in progress is open ([K08](#k08-removing-a-binding-in-use)).
+- **The pager protocol (C15)**, from [The pager protocol](#the-pager-protocol) and [Decommit](#decommit):
+  - each pending page has at most one request, and at most one carrier until the pager receives it. A page that Read-ahead marks pending has none;
+  - every thread waiting on a page resumes after Supply and repeats its access, gets a page-unavailable fault after Fail, is canceled, ends at its fetch timeout ([0056](../decisions/0056-faults-and-page-fetch-deadlines.md)), or does what [K45](#k45-evicting-or-decommitting-a-pending-page) settles for Evict and Decommit. None waits past its fetch timeout;
+  - Supply maps nothing, and no writable mapping of a frame being filled outlasts Supply or Fail;
+  - a frame is charged to the job that allocated it until its last share is freed, by Fail, Evict, Decommit, a request dropped at a fetch timeout, or the object's destruction, and it is freed once;
+  - Evict, Decommit and destruction leave no request, waiter or frame that points at a page that no longer exists, whatever [K45](#k45-evicting-or-decommitting-a-pending-page) settles.
+- **Recommended, not required by the gate:** C11's preemptible delete and revoke ([Derivation and revocation](#derivation-and-revocation)). Revoke removes exactly the capability's descendants; an operation stopped at any preemption point and restarted any number of times ends as it would have unstopped; and no capability is left inside a finished object. `crates/kcap`'s host tests check these against a model of the tree on random runs; a spec would check every place a preemption point can stop.
 
 ## Open questions
 

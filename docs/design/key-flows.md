@@ -3,7 +3,7 @@
 
 # Key flows
 
-*2026-11-24, updated 2026-11-25. The dynamic views: ten flows that show how the parts in [Inside a realm](realm-containers.md), [Inside a node](node-components.md) and [Inside the kernel](kernel-components.md) work together.*
+*2026-11-24, updated 2026-11-26. The dynamic views: ten flows that show how the parts in [Inside a realm](realm-containers.md), [Inside a node](node-components.md) and [Inside the kernel](kernel-components.md) work together.*
 
 Each flow follows the accepted decisions it cites. Where a step depends on something not yet decided, the diagram says so in a note rather than guessing.
 
@@ -640,6 +640,6 @@ sequenceDiagram
 - **Steps 7–9.** Binding always uses the ID, so a look-alike name can't capture it ([0027](../decisions/0027-applications-extend-the-system.md), rule 7). The bind follows [flow 4](#4-binding-to-an-object-on-the-same-node) or [flow 5](#5-binding-and-calling-across-nodes), and still fails closed if the node's tree is too stale ([0028](../decisions/0028-discovery-and-realm-catalog.md), rule 6).
 - **Steps 10–11.** The client listed at S and watches from S, so it misses no change and sees none twice. Local watchers are woken through eventcounts, and remote watchers receive a stream over RPC. Each change has a 64-bit sequence number: a registration when its epoch is signed, and an availability change when its lease starts or ends ([0028](../decisions/0028-discovery-and-realm-catalog.md), rule 6).
 - **Open.**
-  - The catalog's query interface: fixed kinds of query, or a small query language ([the discovery note](extensibility-and-discovery.md#8-open-questions)).
+  - The catalog's query interface: fixed kinds of query, or selectors composed as an IDL value. A query is never a string in a query language ([0013](../decisions/0013-abnf-for-protocols-and-calls.md), rule 7; [the discovery note](extensibility-and-discovery.md#8-open-questions)).
   - How quickly changes must reach replicas and watchers ([0028](../decisions/0028-discovery-and-realm-catalog.md), rule 6).
   - The location service's architecture and replication, and its protocol for deploy authorities ([0027](../decisions/0027-applications-extend-the-system.md), Consequences; [0028](../decisions/0028-discovery-and-realm-catalog.md), Consequences).
