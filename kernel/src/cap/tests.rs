@@ -82,7 +82,10 @@ fn verify_zombies(slots: impl Iterator<Item = SlotRef>) {
         let Cap::Zombie { kind, ptr, n } = cap(s) else {
             continue;
         };
-        let a = SlotArray::of(kind, ptr);
+        // A queue zombie (C14) has no slots to have swept.
+        let Some(a) = SlotArray::of(kind, ptr) else {
+            continue;
+        };
         for i in n..a.count {
             let x = a.slot(i);
             assert!(

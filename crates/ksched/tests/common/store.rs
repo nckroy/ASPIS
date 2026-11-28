@@ -27,6 +27,12 @@ pub struct Host {
     /// Faults sent: (thread, kind, badge).
     pub faults: Vec<(Tcb, FaultKind, u64)>,
     pub withdrawn: Vec<(Tcb, FaultKind)>,
+    /// Every thread the protocol asked the kernel to take out of what it
+    /// keeps for its wait (`cancel_other`), in order.
+    pub other_canceled: Vec<Tcb>,
+    /// What ending each thread's wait costs, as the kernel would say (C14);
+    /// 1 unless a test sets it.
+    pub wait_costs: Vec<u32>,
     pub steps: Vec<Step>,
 }
 
@@ -58,6 +64,8 @@ impl Host {
             work: Vec::new(),
             faults: Vec::new(),
             withdrawn: Vec::new(),
+            other_canceled: Vec::new(),
+            wait_costs: vec![1; nt + 1],
             steps: Vec::new(),
         };
         for i in 1..=ns {
@@ -180,14 +188,21 @@ impl Store for Host {
         self.seq += 1;
         self.seq
     }
-    fn cancel_other(&mut self, _t: Tcb) {}
+    fn cancel_other(&mut self, x: Tcb) {
+        self.other_canceled.push(x);
+    }
+
     fn withdraw_fault(&mut self, x: Tcb, kind: FaultKind) {
         self.withdrawn.push((x, kind));
     }
     fn send_fault(&mut self, x: Tcb, kind: FaultKind, badge: u64) {
         self.faults.push((x, kind, badge));
     }
+    fn wait_cost(&self, x: Tcb) -> u32 {
+        self.wait_costs[x.0 as usize]
+    }
     fn changed(&mut self, _t: Tcb) {}
+
     fn walk_queued(&mut self, cursor: Reply) {
         assert!(!self.work.contains(&cursor), "walk queued twice");
         self.work.push(cursor);
@@ -218,6 +233,7 @@ pub struct Abs {
     pub ts: Vec<&'static str>,
     pub wr: Vec<usize>,
     pub fk: Vec<&'static str>,
+    pub flt: Vec<&'static str>,
     pub res: Vec<&'static str>,
     pub serving: Vec<usize>,
     pub tep: Vec<bool>,
@@ -252,6 +268,7 @@ pub fn project(h: &mut Host) -> Abs {
         ts: vec![],
         wr: vec![],
         fk: vec![],
+        flt: vec![],
         res: vec![],
         serving: vec![],
         tep: vec![],
@@ -302,19 +319,15 @@ pub fn project(h: &mut Host) -> Abs {
             TState::Ready => ("ready", 0, "none"),
             TState::Recv(q) => ("recv", q.0 as usize, "none"),
             TState::Call(q) => ("call", q.0 as usize, "none"),
-            TState::Fault(FaultKind::Timeout) => ("fault", 0, "timeout"),
-            TState::Fault(FaultKind::Withdrawn) => ("fault", 0, "withdrawn"),
+            TState::Send => ("send", 0, "none"),
+            TState::Fault(k) => ("fault", 0, fault_name(k)),
             TState::Other => ("other", 0, "none"),
         };
         a.ts.push(ts);
         a.wr.push(wr);
         a.fk.push(fk);
-        a.res.push(match tr.result {
-            Res::None => "none",
-            Res::Replied => "replied",
-            Res::Canceled => "canceled",
-            Res::TimedOut => "timedout",
-        });
+        a.flt.push(tr.fault.map_or("none", fault_name));
+        a.res.push(res_name(tr.result));
         a.serving.push(rn(tr.serving));
         a.tep.push(tr.tep);
         a.susp.push(tr.suspended);
@@ -331,6 +344,26 @@ pub fn project(h: &mut Host) -> Abs {
         a.walks.insert(w);
     }
     a
+}
+
+/// A fault kind as the spec names it.
+pub fn fault_name(k: FaultKind) -> &'static str {
+    match k {
+        FaultKind::Timeout => "timeout",
+        FaultKind::Withdrawn => "withdrawn",
+        FaultKind::Endpoint => "endpoint",
+    }
+}
+
+/// A result as the spec names it.
+pub fn res_name(r: Res) -> &'static str {
+    match r {
+        Res::None => "none",
+        Res::Replied => "replied",
+        Res::Canceled => "canceled",
+        Res::TimedOut => "timedout",
+        Res::Destroyed => "destroyed",
+    }
 }
 
 fn fun<T>(xs: &[T], f: impl Fn(&T) -> String) -> String {
@@ -350,9 +383,9 @@ impl Abs {
         write!(
             o,
             "[holder |-> {}, home |-> {}, stack |-> {}, rst |-> {}, rcaller |-> {}, \
-             rserver |-> {}, rsc |-> {}, ts |-> {}, wr |-> {}, fk |-> {}, res |-> {}, \
-             serving |-> {}, tep |-> {}, susp |-> {}, walks |-> {{{}}}, talive |-> {}, \
-             ralive |-> {}, scalive |-> {}]",
+             rserver |-> {}, rsc |-> {}, ts |-> {}, wr |-> {}, fk |-> {}, flt |-> {}, \
+             res |-> {}, serving |-> {}, tep |-> {}, susp |-> {}, walks |-> {{{}}}, \
+             talive |-> {}, ralive |-> {}, scalive |-> {}]",
             fun(&self.holder, num),
             fun(&self.home, num),
             fun(&self.stack, |k| fun(k, num)),
@@ -363,6 +396,7 @@ impl Abs {
             fun(&self.ts, st),
             fun(&self.wr, num),
             fun(&self.fk, st),
+            fun(&self.flt, st),
             fun(&self.res, st),
             fun(&self.serving, num),
             fun(&self.tep, b),

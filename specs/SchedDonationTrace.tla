@@ -25,12 +25,17 @@ TraceInit ==
     /\ s = Traces[k][1]
     /\ s = InitState
 
+\* Next comes first, so it gives s' its value, and the trace's state is
+\* then compared with that.  In the other order TLC v1.7.4 compares the
+\* trace's tuples with the spec's functions, and can find an equal pair
+\* unequal (a tuple against a function the spec built with EXCEPT), so a
+\* valid step would deadlock.
 TraceNext ==
     \/ /\ i < Len(Traces[k])
        /\ i' = i + 1
-       /\ s' = Traces[k][i + 1]
        /\ UNCHANGED k
        /\ (Next \/ UNCHANGED s)
+       /\ s' = Traces[k][i + 1]
     \/ /\ i = Len(Traces[k])
        /\ UNCHANGED <<s, k, i>>
 

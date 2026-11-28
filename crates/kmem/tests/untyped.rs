@@ -7,8 +7,9 @@ mod common;
 
 use common::Lcg;
 use kmem::untyped::{
-    MAX_BITS, MAX_RADIX, MAX_SCHED_CONTEXT_BITS, MIN_BITS, MIN_SCHED_CONTEXT_BITS, ObjectType,
-    RetypeError, THREAD_BITS, Untyped, decompose,
+    EVENTCOUNT_BITS, MAX_BITS, MAX_RADIX, MAX_SCHED_CONTEXT_BITS, MAX_WAIT_SET_BITS,
+    MAX_WAIT_SET_ENTRIES, MIN_BITS, MIN_SCHED_CONTEXT_BITS, MIN_WAIT_SET_BITS, ObjectType,
+    RetypeError, THREAD_BITS, Untyped, decompose, wait_set_entries,
 };
 
 const KIB: u64 = 1024;
@@ -176,6 +177,48 @@ fn threads_contexts_and_replies_have_their_sizes() {
         ObjectType::SchedContext(8),
         ObjectType::Reply,
     ] {
+        assert_eq!(d.retype(ty, 1), Err(RetypeError::DeviceMemory));
+    }
+}
+
+#[test]
+fn eventcounts_and_wait_sets_have_their_sizes() {
+    // C14: an eventcount and an endpoint are 64 bytes; a wait set is 128
+    // bytes to 4 KiB, holding 1, 3, 7, 15, 31 or 60 entries (kernel
+    // specification K07 and K33).
+    assert_eq!(ObjectType::Eventcount.size_bits(), EVENTCOUNT_BITS);
+    assert_eq!(EVENTCOUNT_BITS, 6);
+    assert_eq!(ObjectType::Endpoint.size_bits(), 6);
+    assert!(ObjectType::Eventcount.size_ok());
+    let entries: Vec<u64> = (MIN_WAIT_SET_BITS..=MAX_WAIT_SET_BITS)
+        .map(|bits| {
+            assert_eq!(ObjectType::WaitSet(bits).size_bits(), bits);
+            assert!(ObjectType::WaitSet(bits).size_ok());
+            wait_set_entries(bits)
+        })
+        .collect();
+    assert_eq!(entries, [1, 3, 7, 15, 31, 60]);
+    assert_eq!(wait_set_entries(MAX_WAIT_SET_BITS), MAX_WAIT_SET_ENTRIES);
+    for bits in [0, 6, 13, u8::MAX] {
+        assert!(!ObjectType::WaitSet(bits).size_ok());
+        assert_eq!(wait_set_entries(bits), 0);
+    }
+    let mut u = Untyped::new(0x4000_0000, 14, false).unwrap();
+    for bits in [0, 6, 13, u8::MAX] {
+        assert_eq!(
+            u.retype(ObjectType::WaitSet(bits), 1),
+            Err(RetypeError::BadSize)
+        );
+    }
+    assert_eq!(u.retype(ObjectType::Eventcount, 3), Ok(0x4000_0000));
+    // Each wait set is aligned to its size, past the eventcounts.
+    assert_eq!(u.retype(ObjectType::WaitSet(7), 1), Ok(0x4000_0100));
+    assert_eq!(u.retype(ObjectType::WaitSet(12), 2), Ok(0x4000_1000));
+    assert_eq!(u.retype(ObjectType::WaitSet(9), 1), Ok(0x4000_3000));
+    assert_eq!(u.watermark(), 0x3200);
+    // The kernel keeps none of them in MMIO.
+    let mut d = Untyped::new(0x900_0000, 21, true).unwrap();
+    for ty in [ObjectType::Eventcount, ObjectType::WaitSet(7)] {
         assert_eq!(d.retype(ty, 1), Err(RetypeError::DeviceMemory));
     }
 }

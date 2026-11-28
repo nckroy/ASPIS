@@ -162,7 +162,8 @@ pub struct PerCore {
     /// The compare value last written, so it is written only when it
     /// changes; 0 before the first. Zero keeps the block in `.bss`.
     pub cval: u64,
-    /// The core's work list: the walks of take-backs it started (K24).
+    /// The core's work list: the walks of take-backs it started, and the
+    /// eventcounts with wakes pending that it first queued (K24).
     pub work: WorkList,
     /// Which source the core's next batch starts from (K24).
     pub batcher: Batcher,
@@ -245,10 +246,13 @@ pub struct Stats {
     /// Batches that ran at least one unit, and the most units one ran.
     pub batches: u64,
     pub batch_max: u64,
-    /// Batches that ran units of each source: releases, deadlines, walks.
+    /// Batches that ran units of each source: releases, deadlines, the
+    /// work list.
     pub batches_of: [u64; 3],
     /// Steps of take-back walks.
     pub walk_steps: u64,
+    /// Units of eventcounts' pending wakes (C14; K24).
+    pub ec_units: u64,
     /// Counts spent in batches, charged to no context.
     pub batch_counts: u64,
     /// System calls stopped at a preemption point, to be made again.
@@ -307,6 +311,7 @@ impl PerCore {
                 batch_max: 0,
                 batches_of: [0; 3],
                 walk_steps: 0,
+                ec_units: 0,
                 batch_counts: 0,
                 restarts: 0,
                 idle_with_work: 0,

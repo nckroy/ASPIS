@@ -51,7 +51,9 @@ const SERROR: u64 = 3;
 mod ec {
     pub const SVC64: u64 = 0x15;
     pub const IABT_LOWER: u64 = 0x20;
+    pub const PC_ALIGN: u64 = 0x22;
     pub const DABT_LOWER: u64 = 0x24;
+    pub const WATCHPOINT_LOWER: u64 = 0x34;
     pub const BRK64: u64 = 0x3c;
 }
 
@@ -112,11 +114,29 @@ extern "C" fn aspis_user_entry(kind: u64, esr: u64, far: u64) -> ! {
 }
 
 fn sync(t: Tcb, esr: u64, far: u64) {
+    let far = far_valid(esr, far);
     match esr >> 26 {
         ec::SVC64 => svc(t, esr & 0xffff),
         ec::DABT_LOWER | ec::IABT_LOWER => abort(t, esr, far),
         ec::BRK64 => fault::raise(t, Kind::Debug, esr, t.with(|b| b.ctx.pc)),
         _ => fault::raise(t, Kind::UserException, esr, far),
+    }
+}
+
+/// `far` when `FAR_EL1` holds this exception's address, and 0 otherwise.
+///
+/// The Arm ARM makes `FAR_EL1` UNKNOWN except on an instruction or data
+/// abort, a PC alignment fault and a watchpoint, and on an abort only when
+/// `ESR_EL1.ISS.FnV` (bit 10) is clear. Cores keep the last value written,
+/// the address of the last abort taken on that core, which may be another
+/// job's. The fault message carries the address to an EL0 handler, so a
+/// stale one would leak one address space's layout to another.
+pub const fn far_valid(esr: u64, far: u64) -> u64 {
+    const FNV: u64 = 1 << 10;
+    match esr >> 26 {
+        ec::DABT_LOWER | ec::IABT_LOWER if esr & FNV == 0 => far,
+        ec::PC_ALIGN | ec::WATCHPOINT_LOWER => far,
+        _ => 0,
     }
 }
 

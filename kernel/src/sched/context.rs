@@ -182,9 +182,9 @@ pub fn configure(
 /// it: a thread's binding is itself a capability to it, deleted first, and
 /// its unbind took a donated context back. Walks of its take-backs that are
 /// still pending go on without it (`super::donation`).
-pub fn finish(ptr: u64) {
+pub fn finish(ptr: u64) -> u32 {
     let c = Sc(ptr);
-    super::donation::destroy_sc(c);
+    let units = super::donation::destroy_sc(c);
     run::release_remove(c);
     let h = c.header();
     assert!(
@@ -196,4 +196,5 @@ pub fn finish(ptr: u64) {
         with_used(|u| u[h.core as usize] = u[h.core as usize].release(h.budget_us, h.period_us));
     }
     c.with(|h| h.flags = 0);
+    units
 }

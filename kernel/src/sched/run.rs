@@ -32,8 +32,9 @@
 //! **The exit path** ([`exit`]) runs at the end of every kernel entry from
 //! EL0, and from the idle loop, with the kernel lock held: the budget check; one batch of interrupt
 //! work, at most [`ksched::BATCH_UNITS`] units, drawn in turn from the
-//! core's release tree, deadline tree and work list of walks
-//! (`ksched::batch`), the rest left for the next exit with the compare
+//! core's release tree, deadline tree and work list of walks and
+//! eventcounts (`ksched::batch`), each unit checked to fit by its cost,
+//! one per waiter node linked or unlinked (K24), the rest left for the next exit with the compare
 //! value at most 100 µs ahead (K24); the budget check again, since the
 //! batch's commit can use the budget up; the choice of thread; the timer;
 //! then the return to EL0, or idle, each of which releases the lock. The
@@ -486,14 +487,14 @@ fn choose(now: u64) {
 }
 
 /// The sources of a core's batch (K24): the release tree, the deadline
-/// tree and the work list, in that order.
+/// tree and the work list of walks and eventcounts, in that order.
 struct Work {
     now: u64,
 }
 
 const RELEASES: usize = 0;
 const DEADLINES: usize = 1;
-const WALKS: usize = 2;
+const WORK: usize = 2;
 
 impl Work {
     fn first_release(&self) -> Option<Sc> {
@@ -516,9 +517,23 @@ impl Sources for Work {
         match i {
             RELEASES => self.first_release().is_some(),
             DEADLINES => self.first_deadline().is_some(),
-            WALKS => !this_core().work.is_empty(),
+            WORK => !this_core().work.is_empty(),
             _ => false,
         }
+    }
+
+    /// Each unit's cost in units of work, one per waiter node linked or
+    /// unlinked (K24): a release is one; a deadline's, the wait it ends and a
+    /// take-back's cut; the work list's, its first item's next unit. The
+    /// batch checks it fits before it runs the unit.
+    fn cost(&mut self, i: usize) -> u32 {
+        let c = match i {
+            DEADLINES => self.first_deadline().map_or(1, super::donation::end_cost),
+            WORK => super::donation::work_cost(),
+            _ => 1,
+        };
+        debug_assert!(c <= ksched::batch::MAX_UNIT_COST, "a unit costs {c}");
+        c.min(ksched::batch::MAX_UNIT_COST)
     }
 
     fn unit(&mut self, i: usize) {
@@ -544,9 +559,8 @@ impl Sources for Work {
                 let _ = super::donation::deadline(t);
                 deadline_remove(t);
             }
-            WALKS => {
-                this_core().stats.walk_steps += 1;
-                super::donation::walk_step();
+            WORK => {
+                super::donation::work_unit();
             }
             _ => {}
         }

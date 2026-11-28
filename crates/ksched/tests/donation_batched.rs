@@ -7,7 +7,8 @@
 //! the operation that queued it, once with walk steps interleaved at
 //! random, and the states are compared once the walks end. As in the
 //! spec's refinement model, the operations that would interfere with a
-//! pending walk aren't chosen on its objects.
+//! pending walk aren't chosen on its objects. Half the runs queue sends and
+//! faults (C14's `WithQueue`).
 
 mod common;
 
@@ -21,18 +22,23 @@ const BATCHED: Flags = Flags {
     suspend: true,
     refine: true,
     walks: true,
+    queue: false,
 };
 
 #[test]
 fn batched_equals_at_once() {
     for seed in 0..common::runs(2_000) {
+        let flags = Flags {
+            queue: seed % 2 == 1,
+            ..BATCHED
+        };
         let mut rng = Lcg(seed);
         let (nt, nr) = (6, 5);
         let tep: Vec<usize> = (1..=nt).filter(|_| rng.chance(60)).collect();
         let mut batched = Host::init(nt, nr, 2, &tep);
         let mut at_once = Host::init(nt, nr, 2, &tep);
         for _ in 0..100 {
-            let Some(op) = actions::pick(&mut batched, &mut rng, BATCHED) else {
+            let Some(op) = actions::pick(&mut batched, &mut rng, flags) else {
                 break;
             };
             actions::apply(&mut batched, op);
@@ -69,6 +75,9 @@ fn clone(h: &Host) -> Host {
         work: h.work.clone(),
         faults: vec![],
         withdrawn: vec![],
+        other_canceled: vec![],
+        wait_costs: h.wait_costs.clone(),
+
         steps: vec![],
     }
 }

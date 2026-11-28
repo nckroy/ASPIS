@@ -10,6 +10,7 @@ use common::Lcg;
 use kcap::SlotRef;
 use kcap::cap::{
     Binding, Cap, FrameSize, Kind, Mapping, RECORD_SLOTS, SlotArray, THREAD_SLOTS, ZombieKind,
+    wait_set_slots,
 };
 use kcap::rights::Rights;
 use kcap::slot::{MAX_DEPTH, Slot};
@@ -170,6 +171,7 @@ fn frame_fields_round_trip() {
                             device,
                             rights,
                             mapping,
+                            binding: None,
                         };
                         round_trip(c);
                         // The decoded fields are the ones put in.
@@ -196,6 +198,7 @@ fn frame_fields_round_trip() {
             write: true,
             exec: true,
         }),
+        binding: None,
     };
     assert_eq!(Cap::decode(wx.encode()), None);
     let unaligned = Cap::Frame {
@@ -208,6 +211,7 @@ fn frame_fields_round_trip() {
             write: false,
             exec: false,
         }),
+        binding: None,
     };
     assert_eq!(Cap::decode(unaligned.encode()), None);
     // Size code 3 is unknown.
@@ -267,11 +271,12 @@ fn address_space_endpoint_and_zombie_fields_round_trip() {
 
 #[test]
 fn unknown_tags_and_stray_bits_are_refused() {
-    for tag in 11..32 {
+    for tag in 13..32 {
         assert_eq!(Cap::decode([tag, 0]), None, "tag {tag}");
     }
     // An unknown zombie kind.
-    assert_eq!(Cap::decode([6 | 3 << 5 | 1 << 8, 0]), None);
+    assert_eq!(Cap::decode([6 | 6 << 5, 0]), None);
+    assert_eq!(Cap::decode([6 | 7 << 5, 0]), None);
     // A stray bit above each kind's fields.
     let caps = [
         Cap::Untyped {
@@ -292,6 +297,7 @@ fn unknown_tags_and_stray_bits_are_refused() {
             device: false,
             rights: Rights::ALL,
             mapping: None,
+            binding: None,
         },
         Cap::AddressSpace {
             base: 0x2000,
@@ -317,7 +323,19 @@ fn unknown_tags_and_stray_bits_are_refused() {
             ptr: 0x80,
             rights: Rights::ALL,
         },
+        Cap::Eventcount {
+            ptr: 0x40,
+            rights: Rights::ALL,
+            binding: Some(Binding::WaitSetEntry),
+            set_bits: 12,
+        },
+        Cap::WaitSet {
+            ptr: 0x1000,
+            bits: 12,
+            rights: Rights::ALL,
+        },
     ];
+
     for c in caps {
         let [w0, w1] = c.encode();
         assert_eq!(Cap::decode([w0 | 1 << 63, w1]), None, "{c:x?}");
@@ -430,6 +448,7 @@ fn identify_reports_kind_and_rights_only() {
                 device: false,
                 rights: r,
                 mapping: None,
+                binding: None,
             },
             Kind::Frame,
             r,
@@ -465,6 +484,25 @@ fn identify_reports_kind_and_rights_only() {
             Rights::NONE,
         ),
         (Cap::Reply { ptr: 0, rights: r }, Kind::Reply, r),
+        (
+            Cap::Eventcount {
+                ptr: 0,
+                rights: r,
+                binding: Some(Binding::BoundEventcount),
+                set_bits: 0,
+            },
+            Kind::Eventcount,
+            r,
+        ),
+        (
+            Cap::WaitSet {
+                ptr: 0,
+                bits: 7,
+                rights: r,
+            },
+            Kind::WaitSet,
+            r,
+        ),
     ];
     for (c, kind, rights) in cases {
         assert_eq!(identify(&c), (kind, rights), "{c:x?}");
@@ -473,7 +511,7 @@ fn identify_reports_kind_and_rights_only() {
 
 #[test]
 fn slot_arrays_have_their_geometry() {
-    let a = SlotArray::of(ZombieKind::CNode { radix: 3 }, 0x1000);
+    let a = SlotArray::of(ZombieKind::CNode { radix: 3 }, 0x1000).unwrap();
     assert_eq!((a.base, a.count), (0x1000, 8));
     assert_eq!(a.park(), SlotRef(0x1000));
     assert!(a.contains(SlotRef(0x10e0)) && !a.contains(SlotRef(0x1100)));
@@ -617,4 +655,289 @@ fn thread_context_control_and_reply_fields_round_trip() {
     let a = SlotArray::of_thread(0x4000_0800);
     assert_eq!((a.base, a.count), (0x4000_0800, 8));
     assert_eq!(a.slot(7).0 + 32, 0x4000_0900);
+}
+
+#[test]
+fn eventcount_and_wait_set_fields_round_trip() {
+    // C14's kinds, at their extremes (kernel specification K07 and K33).
+    for rights in all_rights() {
+        for ptr in [0, 64, TOP - 64] {
+            round_trip(Cap::Eventcount {
+                ptr,
+                rights,
+                binding: None,
+                set_bits: 0,
+            });
+            round_trip(Cap::Eventcount {
+                ptr,
+                rights,
+                binding: Some(Binding::BoundEventcount),
+                set_bits: 0,
+            });
+            for set_bits in 7u8..=12 {
+                round_trip(Cap::Eventcount {
+                    ptr,
+                    rights,
+                    binding: Some(Binding::WaitSetEntry),
+                    set_bits,
+                });
+            }
+        }
+        for bits in 7u8..=12 {
+            for ptr in [0, 1 << bits, TOP - (1 << bits)] {
+                round_trip(Cap::WaitSet { ptr, bits, rights });
+            }
+        }
+    }
+    for bits in 7u8..=12 {
+        for n in [0, 1, wait_set_slots(bits)] {
+            round_trip(Cap::Zombie {
+                kind: ZombieKind::WaitSet { bits },
+                ptr: TOP - (1 << bits),
+                n,
+            });
+        }
+    }
+    for kind in [ZombieKind::Endpoint, ZombieKind::Eventcount] {
+        for n in [0, 1] {
+            round_trip(Cap::Zombie {
+                kind,
+                ptr: TOP - 64,
+                n,
+            });
+        }
+        assert!(kind.is_queue());
+        // A queue zombie has no slots: no array is ever built over an
+        // endpoint's or an eventcount's words.
+        assert_eq!(SlotArray::of(kind, 0x4000_0040), None);
+    }
+    assert!(!ZombieKind::WaitSet { bits: 7 }.is_queue());
+    // Out of range: misaligned objects, sizes outside 2^7 to 2^12, an
+    // entry's size missing or a size on a copy that isn't an entry, a role
+    // that isn't an eventcount's, and zombies past their slots or waiters.
+    let ec = |binding, set_bits| Cap::Eventcount {
+        ptr: 64,
+        rights: Rights::ALL,
+        binding,
+        set_bits,
+    };
+    let bad = [
+        Cap::Eventcount {
+            ptr: 32,
+            rights: Rights::ALL,
+            binding: None,
+            set_bits: 0,
+        },
+        Cap::WaitSet {
+            ptr: 0x80,
+            bits: 8,
+            rights: Rights::ALL,
+        },
+        ec(None, 7),
+        ec(Some(Binding::BoundEventcount), 9),
+        ec(Some(Binding::WaitSetEntry), 0),
+        ec(Some(Binding::WaitSetEntry), 6),
+        ec(Some(Binding::WaitSetEntry), 13),
+        ec(Some(Binding::FaultEndpoint), 0),
+        ec(Some(Binding::IpcBuffer), 0),
+        Cap::WaitSet {
+            ptr: 0,
+            bits: 6,
+            rights: Rights::ALL,
+        },
+        Cap::WaitSet {
+            ptr: 0,
+            bits: 13,
+            rights: Rights::ALL,
+        },
+        Cap::Zombie {
+            kind: ZombieKind::WaitSet { bits: 7 },
+            ptr: 0,
+            n: 3,
+        },
+        Cap::Zombie {
+            kind: ZombieKind::Endpoint,
+            ptr: 0,
+            n: 2,
+        },
+        Cap::Zombie {
+            kind: ZombieKind::Eventcount,
+            ptr: 0,
+            n: 2,
+        },
+    ];
+    for c in bad {
+        assert!(!c.is_valid(), "{c:x?}");
+    }
+    // Where the words can hold the bad value, decode refuses it.
+    for c in &bad[2..] {
+        assert_eq!(Cap::decode(c.encode()), None, "{c:x?}");
+    }
+    // Stray bits past each encoding's fields are refused.
+    let plain = ec(None, 0);
+    let [w0, w1] = plain.encode();
+    assert_eq!(Cap::decode([w0 | 1 << 58, w1]), None);
+    assert_eq!(Cap::decode([w0, 1]), None);
+    let ws = Cap::WaitSet {
+        ptr: 0x1000,
+        bits: 12,
+        rights: Rights::ALL,
+    };
+    let [w0, w1] = ws.encode();
+    assert_eq!(Cap::decode([w0 | 1 << 54, w1]), None);
+    assert_eq!(Cap::decode([w0, 1]), None);
+    // A zombie kind past the known ones is refused.
+    let [z0, z1] = Cap::Zombie {
+        kind: ZombieKind::Eventcount,
+        ptr: 0,
+        n: 1,
+    }
+    .encode();
+    assert_eq!(Cap::decode([(z0 & !(7 << 5)) | 6 << 5, z1]), None);
+}
+
+#[test]
+fn c14_roles_round_trip_and_fit_one_kind() {
+    let ec = Cap::Eventcount {
+        ptr: 0x4000_0040,
+        rights: Rights::READ,
+        binding: None,
+        set_bits: 0,
+    };
+    let frame = Cap::Frame {
+        base: 0x4000_1000,
+        size: FrameSize::Small,
+        device: false,
+        rights: Rights::ALL,
+        mapping: None,
+        binding: None,
+    };
+    // The bound eventcount's role, in thread slot 6.
+    let b = ec.with_binding(Binding::BoundEventcount).unwrap();
+    assert!(b.is_binding());
+    assert_eq!(b.binding(), Some(Binding::BoundEventcount));
+    round_trip(b);
+    assert_eq!(Binding::BoundEventcount.thread_slot(), 6);
+    // The IPC buffer's role, a frame's copy in thread slot 7 (K29).
+    let f = frame.with_binding(Binding::IpcBuffer).unwrap();
+    assert!(f.is_binding());
+    assert_eq!(f.binding(), Some(Binding::IpcBuffer));
+    round_trip(f);
+    assert_eq!(f.encode()[1], 8, "the role is word 1's bit 3 alone");
+    assert_eq!(Binding::IpcBuffer.thread_slot(), 7);
+    // A mapped frame takes no IPC-buffer role, and a frame with both is
+    // refused.
+    let mapped = Cap::Frame {
+        base: 0x4000_1000,
+        size: FrameSize::Small,
+        device: false,
+        rights: Rights::ALL,
+        mapping: Some(Mapping {
+            va: 0x1000,
+            write: true,
+            exec: false,
+        }),
+        binding: None,
+    };
+    assert_eq!(mapped.with_binding(Binding::IpcBuffer), None);
+    let [w0, w1] = mapped.encode();
+    assert_eq!(Cap::decode([w0, w1 | 8]), None);
+    // A frame takes no other role in its bit, nor any but its own.
+    let wrong = Cap::Frame {
+        base: 0x4000_1000,
+        size: FrameSize::Small,
+        device: false,
+        rights: Rights::ALL,
+        mapping: None,
+        binding: Some(Binding::Context),
+    };
+
+    assert!(!wrong.is_valid());
+    // A wait-set entry's copy records its set's size; the role needs it.
+    assert_eq!(ec.with_binding(Binding::WaitSetEntry), None);
+    for bits in 7u8..=12 {
+        let e = ec.as_wait_set_entry(bits).unwrap();
+        assert!(e.is_binding());
+        assert_eq!(e.binding(), Some(Binding::WaitSetEntry));
+        round_trip(e);
+    }
+    assert_eq!(ec.as_wait_set_entry(6), None);
+    assert_eq!(ec.as_wait_set_entry(13), None);
+    assert_eq!(frame.as_wait_set_entry(7), None);
+    assert!(!Binding::WaitSetEntry.is_thread_role());
+    assert!(Binding::IpcBuffer.is_thread_role() && Binding::BoundEventcount.is_thread_role());
+    // No role fits another kind.
+    for role in [
+        Binding::BoundEventcount,
+        Binding::IpcBuffer,
+        Binding::WaitSetEntry,
+    ] {
+        for c in [
+            Cap::Endpoint {
+                ptr: 64,
+                rights: Rights::ALL,
+                badge: 0,
+                binding: None,
+            },
+            Cap::SchedContext {
+                ptr: 256,
+                bits: 8,
+                binding: None,
+            },
+        ] {
+            assert_eq!(c.with_binding(role), None);
+        }
+    }
+    assert_eq!(ec.with_binding(Binding::IpcBuffer), None);
+    assert_eq!(frame.with_binding(Binding::BoundEventcount), None);
+    // A copy of any of them is the plain capability.
+    for kept in [b, f, ec.as_wait_set_entry(9).unwrap()] {
+        let d = kcap::derive::derive(&kept, false).unwrap();
+        assert_eq!(d.binding(), None);
+        assert!(!d.is_binding());
+        assert!(d.same_object(&kept));
+        round_trip(d);
+    }
+    // Neither plain kind is a binding; a wait set has slots, and an
+    // endpoint and an eventcount a queue.
+    let ws = Cap::WaitSet {
+        ptr: 0x4000_1000,
+        bits: 12,
+        rights: Rights::ALL,
+    };
+    assert!(!ec.is_binding() && !ws.is_binding());
+    assert!(ws.has_slots() && !ws.has_queue());
+    assert!(ec.has_queue() && !ec.has_slots());
+    assert_eq!(
+        ws.zombie(),
+        Some(Cap::Zombie {
+            kind: ZombieKind::WaitSet { bits: 12 },
+            ptr: 0x4000_1000,
+            n: 64
+        })
+    );
+    assert_eq!(
+        ec.zombie(),
+        Some(Cap::Zombie {
+            kind: ZombieKind::Eventcount,
+            ptr: 0x4000_0040,
+            n: 1
+        })
+    );
+    let a = SlotArray::of_wait_set(0x4000_1000, 12);
+    assert_eq!((a.base, a.count), (0x4000_1000, 64));
+    assert_eq!(
+        a.slot(63).0 + 32,
+        0x4000_1800,
+        "the slots fill the first half"
+    );
+    assert_eq!(
+        SlotArray::of(ZombieKind::WaitSet { bits: 7 }, 0x4000_0080),
+        Some(SlotArray {
+            base: 0x4000_0080,
+            count: 2
+        })
+    );
+    assert!(ec.same_object(&b) && !ec.same_object(&ws));
+    assert_eq!(ws.object(), Some((0x4000_1000, 4096)));
 }

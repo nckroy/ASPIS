@@ -397,7 +397,7 @@ CI also checks, mechanically, that every valid type name parses as a Cedar `Path
 - **So the received message is one contiguous octet string**, and decoders borrow from it directly. Text, byte strings and any field that straddles a word are `&str` and `&[u8]` views, with no copy. A `u64` field anywhere, in a register word or in the buffer, is read with `from_be_bytes`, like every other integer.
 - **The network server needs no conversion.** It copies the octet string into a QUIC frame and back.
 
-Whether the library writes the register words into the buffer's first 32 octets, or keeps a separate 32-octet header area beside a view of the buffer, is the private ABI's ([K28](kernel-specification.md#k28-message-and-buffer-layout); D156). Either way the decoder sees one octet string.
+The library writes the register words into the buffer's first 32 octets, which the kernel never reads or writes, so the decoder sees one octet string in the buffer's message area (C14; [K28](kernel-specification.md#k28-message-and-buffer-layout), D156).
 
 **Message lengths are in octets.** The kernel reports each message's length in octets, from 0 to 960, through the private ABI, beside its capability count. seL4's message info word gives the length in words, so the kernel specification's message info changes to match ([K28](kernel-specification.md#k28-message-and-buffer-layout)). The published message is exactly those octets, so every body has an exact end. The published header lives in the message words, never in the message info's label.
 
@@ -905,9 +905,10 @@ The call runtime (`aspis-rt`, C18) turns kernel results on IPC into `aspis.rpc` 
 | "timed out" after delivery | `deadline_passed` | indeterminate |
 | "canceled", before or after delivery | `canceled` | unreachable or indeterminate |
 | an invalid session capability (revoked), or a send canceled in the queue | `session_ended`, reason `unknown` | unreachable |
-| the server's reply object destroyed, because the server exited | `indeterminate`, cause `server_exited` | indeterminate |
+| "object destroyed" before delivery: the endpoint destroyed while the call was queued | `session_ended`, reason `unknown` | unreachable |
+| "object destroyed" after delivery: the server's reply object destroyed, or, for a donated call, the server's thread, because the server exited | `indeterminate`, cause `server_exited` | indeterminate |
 
-This needs the kernel's "timed out" and "canceled" results to say whether the message had been delivered. [0054](../decisions/0054-ipc-endpoints.md), rules 5 and 6 and the kernel specification's [IPC deadlines and cancellation](kernel-specification.md#ipc-deadlines-and-cancellation) are revised to carry that bit.
+This needs the kernel's "timed out", "canceled" and "object destroyed" results to say whether the message had been delivered: bit 8 of the status says so ([K28](kernel-specification.md#k28-message-and-buffer-layout); [K30](kernel-specification.md#k30-results-and-error-names), settled in part with C14). [0054](../decisions/0054-ipc-endpoints.md), rules 5 and 6 carry that bit for "timed out" and "canceled", and the kernel specification's [IPC deadlines and cancellation](kernel-specification.md#ipc-deadlines-and-cancellation) and [K30](kernel-specification.md#k30-results-and-error-names) for all three.
 
 Kernel interfaces' own failures are typed errors of their `aspis.kernel.*` interfaces, declared in their IDL. The raw status numbers stay private ([0059](../decisions/0059-the-kernel-interface-library.md), rules 1 and 2).
 
@@ -2034,7 +2035,7 @@ The replay tests feed them every line of `grammars/idl.vectors`, `grammars/names
 - from C32, runs 10,000 fixed-seed PDP differential cases;
 - from C40, runs a two-node smoke test with one scripted partition, asserting that new binds fail closed.
 
-`ci.yml` also has a `tlc` job (C12), on `ubuntu-24.04-arm`. When a change touches a TLA+ spec, the code whose traces it validates, or what defines the job (`xtask/`, the workflows, the shared setup action, the toolchain, the workspace manifest and the lock file), it runs `cargo xtask tlc`: TLC with CI-sized constants, and trace validation, for at most 10 minutes in all.
+`ci.yml` also has a `tlc` job (C12), on `ubuntu-24.04-arm`. When a change touches a TLA+ spec, the code whose traces it validates (`crates/ksched/`, `crates/kipc/`, and the crates `kipc` builds on, `crates/kcap/` and `crates/kmem/`), or what defines the job (`xtask/`, the workflows, the shared setup action, the toolchain, the workspace manifest and the lock file), it runs `cargo xtask tlc`: TLC with CI-sized constants, and trace validation, for at most 10 minutes in all.
 
 `cargo xtask test` also runs an engine-neutral replay test, which feeds `fuzz/seeds` and `fuzz/regressions` to the same entry functions under plain `cargo test`. So a regression fails locally without libFuzzer.
 
@@ -2045,7 +2046,7 @@ The replay tests feed them every line of `grammars/idl.vectors`, `grammars/names
 - every target for 10 minutes of fuzzing after its corpus load, in the `fuzz` job's two shards, each `--time 600 --budget 4200` over its own targets, at most 70 minutes of fuzzing a shard, each with its own corpus cache, through `cargo xtask fuzz nightly --shard i/2`. Each shard restores both shards' caches and keeps only its own targets' directories; each target's corpus is merged after its run (`-merge=1`), and the shard saves its targets' corpora under a new key of its own. The coverage summary and the run records are uploaded for 14 days, and findings for 7. The run number is libFuzzer's seed. The fuzzing step has a 100-minute timeout of its own, inside the job's 2 hours: a step timeout fails the step rather than canceling the job, so the corpus, the coverage and the findings are still saved;
 - the ABNF differential on 20,000 cases, with the run number as its seed, in the `abnf-differential` job ([Differential tests](#differential-tests)), with a 40-minute budget for starting batches and a 50-minute step timeout, so its cases are uploaded even when it runs long;
 - the PDP differential for 30 minutes, structure-aware through `arbitrary`;
-- TLC with nightly constants, in `nightly.yml`'s `tlc` job (C12), for at most 60 minutes, after `crates/ksched`'s seeded host tests at 20 times their per-change runs (`KSCHED_RUNS_SCALE`);
+- TLC with nightly constants, in `nightly.yml`'s `tlc` job (C12), for at most 60 minutes, after `crates/ksched`'s and `crates/kipc`'s seeded host tests at 20 times their per-change runs (`KSCHED_RUNS_SCALE`, which both read);
 - once the kernel interfaces' IDL and the interface library exist (C07 and C17), the in-QEMU kernel-call fuzzer, in a job of its own, `kernel-calls` ([The kernel-call fuzzer](#the-kernel-call-fuzzer));
 - from C40, a partition campaign: 3 nodes, and 20 seeded fault schedules of 5 minutes each ([Partition injection](#partition-injection)).
 
@@ -2423,7 +2424,8 @@ What coverage threshold should each fuzz target meet?
 The TLA+ specs themselves.
 
 - **Owner:** C12 (scheduling-context donation), C14 (IPC and eventcounts) and C15 (the pager protocol), whose properties are in the [kernel specification](kernel-specification.md#model-checking); C40 and C50 (leases); C51 (sequence numbers).
-- **Settled in part with C12:** scheduling-context donation is `specs/SchedDonation.tla` ([specs/README.md](../../specs/README.md)). The others are still to be written.
+- **Settled in part with C12:** scheduling-context donation is `specs/SchedDonation.tla` ([specs/README.md](../../specs/README.md)).
+- **Settled in part with C14:** IPC endpoints are `specs/IpcEndpoint.tla` and eventcounts `specs/Eventcount.tla`, and C14 extends `specs/SchedDonation.tla` with queued sends and faults ([specs/README.md](../../specs/README.md)). The pager protocol's, the leases' and the sequence numbers' are still to be written.
 - **Meanwhile:** the properties in [Model checking](#model-checking).
 - **From:** [Model checking](#model-checking).
 

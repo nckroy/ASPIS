@@ -45,8 +45,8 @@ pub fn decompose(start: u64, end: u64) -> impl Iterator<Item = (u64, u8)> {
     })
 }
 
-/// What a retype makes (C10's, C11's and C12's objects; later chunks add
-/// theirs).
+/// What a retype makes (C10's, C11's, C12's and C14's objects; later
+/// chunks add theirs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ObjectType {
     /// A smaller piece of untyped memory, of `2^bits` bytes.
@@ -71,8 +71,8 @@ pub enum ObjectType {
     /// A CNode of `2^radix` capability slots of 32 bytes each, with a radix
     /// from [`MIN_RADIX`] to [`MAX_RADIX`] (C11; ADR 0049, rule 1).
     CNode(u8),
-    /// An endpoint. Its 64 bytes are provisional until C14 settles its
-    /// layout (kernel specification K25).
+    /// An endpoint: 64 bytes, its queue's state and roots (C14; kernel
+    /// specification K07 and K25).
     Endpoint,
     /// A thread: 2 KiB, its eight capability slots first, then its saved
     /// registers and its scheduling state (C12; kernel specification K07).
@@ -85,6 +85,16 @@ pub enum ObjectType {
     /// A reply object: 128 bytes (C12; kernel specification, "Passive
     /// servers and taking a context back").
     Reply,
+    /// An eventcount: 64 bytes, its count, its waiters' tree and its links
+    /// on a core's work list (C14; ADR 0053, rule 1; kernel specification
+    /// K07).
+    Eventcount,
+    /// A wait set of `2^bits` bytes, from [`MIN_WAIT_SET_BITS`] to
+    /// [`MAX_WAIT_SET_BITS`]: its slot array in the first half, then a
+    /// header and one queue node per entry. Its size sets how many entries
+    /// it holds, `2^(bits - 6) - 1`, at most 60, as a CNode's radix sets its
+    /// slots (C14; ADR 0053, rule 4; kernel specification K33).
+    WaitSet(u8),
 }
 
 /// The size of an address space object, in bits: 8 KiB.
@@ -95,7 +105,7 @@ pub const SLOT_BITS: u8 = 5;
 pub const MIN_RADIX: u8 = 1;
 /// The largest CNode radix: a CNode of 2^47 bytes, the largest piece.
 pub const MAX_RADIX: u8 = MAX_BITS - SLOT_BITS;
-/// The size of an endpoint, in bits: 64 bytes, provisional until C14.
+/// The size of an endpoint, in bits: 64 bytes (C14; K07).
 pub const ENDPOINT_BITS: u8 = 6;
 /// The size of a thread, in bits: 2 KiB (kernel specification K07).
 pub const THREAD_BITS: u8 = 11;
@@ -105,6 +115,30 @@ pub const MIN_SCHED_CONTEXT_BITS: u8 = 8;
 pub const MAX_SCHED_CONTEXT_BITS: u8 = 12;
 /// The size of a reply object, in bits: 128 bytes.
 pub const REPLY_BITS: u8 = 7;
+/// The size of an eventcount, in bits: 64 bytes (C14; K07).
+pub const EVENTCOUNT_BITS: u8 = 6;
+/// The smallest wait set, in bits: 128 bytes, one entry (K33).
+pub const MIN_WAIT_SET_BITS: u8 = 7;
+/// The largest wait set, in bits: 4 KiB, 60 entries (K33; ADR 0053, rule 4).
+pub const MAX_WAIT_SET_BITS: u8 = 12;
+/// The most entries a wait set holds (ADR 0053, rule 4).
+pub const MAX_WAIT_SET_ENTRIES: u64 = 60;
+
+/// The entries a wait set of `2^bits` bytes holds: its first half is
+/// `2^(bits - 6)` capability slots, of which slot 0 is the park slot, so
+/// `2^(bits - 6) - 1`, at most [`MAX_WAIT_SET_ENTRIES`]: 1, 3, 7, 15, 31
+/// or 60 (K33). 0 for a size out of range.
+pub const fn wait_set_entries(bits: u8) -> u64 {
+    if bits < MIN_WAIT_SET_BITS || bits > MAX_WAIT_SET_BITS {
+        return 0;
+    }
+    let n = (1u64 << (bits - 6)) - 1;
+    if n > MAX_WAIT_SET_ENTRIES {
+        MAX_WAIT_SET_ENTRIES
+    } else {
+        n
+    }
+}
 
 impl ObjectType {
     /// log2 of the object's size in bytes.
@@ -120,14 +154,17 @@ impl ObjectType {
             ObjectType::Thread => THREAD_BITS,
             ObjectType::SchedContext(bits) => bits,
             ObjectType::Reply => REPLY_BITS,
+            ObjectType::Eventcount => EVENTCOUNT_BITS,
+            ObjectType::WaitSet(bits) => bits,
         }
     }
 
     /// Whether the size argument is in range: an untyped size from
     /// [`MIN_BITS`] to [`MAX_BITS`], a CNode radix from [`MIN_RADIX`] to
     /// [`MAX_RADIX`], a scheduling context's size from
-    /// [`MIN_SCHED_CONTEXT_BITS`] to [`MAX_SCHED_CONTEXT_BITS`]. Other types
-    /// take no size.
+    /// [`MIN_SCHED_CONTEXT_BITS`] to [`MAX_SCHED_CONTEXT_BITS`], a wait
+    /// set's from [`MIN_WAIT_SET_BITS`] to [`MAX_WAIT_SET_BITS`]. Other
+    /// types take no size.
     pub const fn size_ok(self) -> bool {
         match self {
             ObjectType::Untyped(bits) => bits >= MIN_BITS && bits <= MAX_BITS,
@@ -135,6 +172,7 @@ impl ObjectType {
             ObjectType::SchedContext(bits) => {
                 bits >= MIN_SCHED_CONTEXT_BITS && bits <= MAX_SCHED_CONTEXT_BITS
             }
+            ObjectType::WaitSet(bits) => bits >= MIN_WAIT_SET_BITS && bits <= MAX_WAIT_SET_BITS,
             _ => true,
         }
     }

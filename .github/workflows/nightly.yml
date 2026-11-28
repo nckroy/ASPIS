@@ -6,8 +6,8 @@
 # Beside it, the nightly fuzzing (C71; ADR 0068, rule 8): every fuzz
 # target for 10 minutes on the merged, cached corpus, in two shards, and
 # the ABNF differential on 20,000 generated cases; and TLC with the nightly
-# constants (C12; ADR 0068, rule 10), after crates/ksched's seeded host
-# tests at 20 times their per-change runs.
+# constants (C12, C14; ADR 0068, rule 10), after crates/ksched's and
+# crates/kipc's seeded host tests at 20 times their per-change runs.
 
 name: Nightly
 
@@ -220,8 +220,8 @@ jobs:
         with:
           path: build/tla/tla2tools.jar
           key: tla2tools-v1.7.4-936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
-      - name: Seeded scheduler runs, 20 times the per-change count
-        run: cargo test --locked --release -p ksched
+      - name: Seeded scheduler and IPC runs, 20 times the per-change count
+        run: cargo test --locked --release -p ksched -p kipc
         env:
           KSCHED_RUNS_SCALE: "20"
       - run: cargo xtask tlc --nightly

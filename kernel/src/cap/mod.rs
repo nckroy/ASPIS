@@ -50,11 +50,16 @@
 //! - **C13b:** the interrupt handler kind, with one binding slot, and the
 //!   interrupt control capability, which can't be derived. K40: the finish
 //!   of a handler, and what a revoke reports when an ITS table refuses it.
-//! - **C14:** the endpoint's real layout and size (K25), and its finish,
-//!   which releases queued threads. `cancel_badged_sends`, called between
-//!   the revoke and the delete that release a badge. Reply capabilities,
-//!   eventcounts and wait sets (K32). The IPC path calls [`transfer`] with
-//!   the addresses in the sender's IPC buffer and the receiver's slots.
+//! - **C14:** [`KernelHooks`] passes C14's kinds to [`crate::ipc`]: an
+//!   endpoint's or an eventcount's last capability becomes a queue zombie,
+//!   which its drain hook steps one waiter at a time, then its finish; a
+//!   wait set is a zombie kind whose zombify ends its wait; a wait-set
+//!   entry's unbind unlinks its node; a thread's bound eventcount (slot 6)
+//!   and IPC buffer (slot 7) unbind through [`crate::sched`]. Canceling a
+//!   badge's sends (`crate::ipc::endpoint::cancel_badged`) comes between
+//!   the revoke and the delete that release a badge (ADR 0049, rule 5), and
+//!   the IPC path (`crate::ipc::message`) calls [`transfer`] with the
+//!   addresses in the sender's IPC buffer and the receiver's slots.
 //! - **C15:** memory objects replace frame mapping ([`map`], [`unmap`] and
 //!   the frame binding in [`KernelHooks::unbind`]), and mapping records
 //!   replace the address space's binding slots (K02). Listing (K42). Boot
@@ -81,7 +86,8 @@ use crate::mm::space::{AddressSpace, Frame, UntypedTables};
 #[cfg(aspis_test_build)]
 use core::sync::atomic::{AtomicU64, Ordering};
 use kcap::SlotRef;
-use kcap::cap::{Cap, Kind, Mapping, SlotArray, ZombieKind};
+use kcap::cap::{Binding, Cap, Kind, Mapping, SlotArray, ZombieKind};
+
 use kcap::delete::{self, Hooks};
 use kcap::lookup::{self, LookupError};
 use kcap::mdb;
@@ -171,7 +177,7 @@ pub static UNBOUND: AtomicU64 = AtomicU64::new(0);
 pub struct KernelHooks;
 
 impl Hooks for KernelHooks {
-    fn finish(&mut self, cap: &Cap) {
+    fn finish(&mut self, cap: &Cap) -> u32 {
         #[cfg(aspis_test_build)]
         FINISHED.fetch_add(1, Ordering::Relaxed);
         // An address space: every binding slot of its record is clear, so no
@@ -180,16 +186,31 @@ impl Hooks for KernelHooks {
         // C12's kinds: a thread, a scheduling context, scheduling control
         // and a reply object ([`crate::sched::finish`]).
         //
+        // C14's kinds: an endpoint's or an eventcount's queue zombie, once
+        // its queue is drained, and a wait set's zombie ([`crate::ipc`]).
+        //
         // Nothing else needs work. A CNode's slots are clear. A frame is
         // unmapped everywhere, since each of its mappings held a copy of it.
-        // Untyped memory goes back at its parent's next reset. An endpoint
-        // has nothing to release until C14 queues threads on it.
+        // Untyped memory goes back at its parent's next reset.
+        //
+        // The units: 1, but for a reply object or a scheduling context,
+        // whose take-back ends its holder's wait (K23).
         match *cap {
             Cap::Zombie {
                 kind: ZombieKind::AddressSpace,
                 ptr,
                 ..
-            } => AddressSpace::from_object(ptr).finish(),
+            } => {
+                AddressSpace::from_object(ptr).finish();
+                1
+            }
+            Cap::Zombie {
+                kind: ZombieKind::Endpoint | ZombieKind::Eventcount | ZombieKind::WaitSet { .. },
+                ..
+            } => {
+                crate::ipc::finish(cap);
+                1
+            }
             Cap::Zombie {
                 kind: ZombieKind::Thread,
                 ..
@@ -197,22 +218,40 @@ impl Hooks for KernelHooks {
             | Cap::SchedContext { .. }
             | Cap::SchedControl { .. }
             | Cap::Reply { .. } => crate::sched::finish(cap),
-            _ => {}
+            _ => 1,
         }
     }
 
-    fn zombify(&mut self, cap: &Cap) {
-        // A thread stops for good before its zombie clears its slots.
-        crate::sched::zombify(cap);
+    fn zombify(&mut self, cap: &Cap) -> u32 {
+        match cap {
+            // A wait set's wait ends, and its entries leave their trees
+            // (C14).
+            Cap::WaitSet { .. } => crate::ipc::zombify(cap),
+            // A thread stops for good before its zombie clears its slots:
+            // the units of the waits that ends (K23).
+            _ => crate::sched::zombify(cap),
+        }
     }
 
-    fn unbind(&mut self, slot: SlotRef, cap: &Cap) {
+    fn drain(&mut self, zombie: &Cap) -> bool {
+        // An endpoint's or an eventcount's queue zombie releases one waiter
+        // a step (C14).
+        crate::ipc::drain(zombie)
+    }
+
+    fn unbind(&mut self, slot: SlotRef, cap: &Cap) -> u32 {
         #[cfg(aspis_test_build)]
         UNBOUND.fetch_add(1, Ordering::Relaxed);
-        // A thread's binding (C12): its role says what to undo.
-        if cap.binding().is_some() {
-            crate::sched::unbind(slot, cap);
-            return;
+        match cap.binding() {
+            // A wait-set entry (C14): it lies in its set, not a thread. Its
+            // one node leaves its tree.
+            Some(Binding::WaitSetEntry) => {
+                crate::ipc::unbind_entry(slot, cap);
+                return 1;
+            }
+            // A thread's binding (C12, C14): its role says what to undo.
+            Some(_) => return crate::sched::unbind(slot, cap),
+            None => {}
         }
         // A frame's mapping, in a binding slot of an address space's
         // record. The binding depends only on the capability's own
@@ -231,7 +270,7 @@ impl Hooks for KernelHooks {
         // One leaf, since Map needs the address aligned to the frame's
         // size; the unmap invalidates it in the TLB under the space's ASID.
         match space.unmap(m.va, size.bytes()) {
-            Ok(1) => {}
+            Ok(1) => 1,
             r => panic!(
                 "the binding at {:#x} for {:#x} unmapped {r:?}, not one leaf",
                 slot.0, m.va
@@ -368,8 +407,7 @@ pub fn revoke(slot: SlotRef) {
 }
 
 /// Transfers up to three capabilities from the sender's space into the
-/// receive slots (ADR 0049, rule 6). C14 calls it from the IPC path; until
-/// then only the tests do.
+/// receive slots (ADR 0049, rule 6): the IPC path's (`crate::ipc::message`).
 pub fn transfer(send: &Send<'_>, recv: &[SlotRef]) -> Transferred {
     transfer::transfer(&mut DirectSlots, send, recv)
 }

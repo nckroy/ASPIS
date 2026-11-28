@@ -5,7 +5,9 @@
 //! context back"): chains, take-back on a cancel and on a deadline, at the
 //! bottom and in the middle of a chain, two take-backs on one context, the
 //! walk and its faults, unbinding and destroying mid-chain, K08, K17 and
-//! K50. The invariants are checked after every operation.
+//! K50; and C14's queued sends and faults, their delivery, wakes, and the
+//! delivered fault's machine. The invariants are checked after every
+//! operation.
 
 mod common;
 
@@ -265,7 +267,8 @@ fn unbinding_a_donated_context_takes_it_back_first() {
 }
 
 /// A server destroyed while it serves a donated call: its caller gets
-/// the context back, and the servers above it are walked.
+/// the context back, its call ended "object destroyed" (K30), and the
+/// servers above it are walked.
 #[test]
 fn destroying_a_server_mid_chain() {
     let mut h = chain(&[2, 3, 4]);
@@ -273,7 +276,7 @@ fn destroying_a_server_mid_chain() {
     h.destroy_thread(3);
     h.check();
     assert_eq!(h.scs[1].holder, Some(t(2)));
-    assert_eq!(h.threads[2].result, Res::Canceled);
+    assert_eq!(h.threads[2].result, Res::Destroyed);
     h.drain();
     h.check();
     // S2 is gone; S3 above it is faulted; S1 keeps the context.
@@ -290,11 +293,13 @@ fn destroying_replies_mid_walk() {
     let mut h = chain(&[2, 3, 4]);
     call_down(&mut h, 3);
     donation::cancel(&mut h, t(1)).unwrap();
-    // r2, stale and not the cursor: S2 faulted at once, S1's call on it ends.
+    // r2, stale and not the cursor: S2 faulted at once, S1's call on it
+    // ends "object destroyed" (K30).
     h.destroy_reply(2);
     h.check();
     assert_eq!(withdrawn(&h), vec![t(3)]);
-    assert_eq!(h.threads[2].result, Res::Canceled);
+    assert_eq!(h.threads[2].result, Res::Destroyed);
+
     h.drain();
     h.check();
     assert_eq!(withdrawn(&h), vec![t(3), t(2), t(4)]);
@@ -420,4 +425,360 @@ fn suspend_keeps_a_donated_call() {
             .count(),
         2
     );
+}
+
+// ---------------------------------------------------------------------------
+// C14: queued sends and faults (kernel specification, "IPC"; K17, K30, K50).
+
+/// Thread 1 holds context 1, thread 2 context 2; threads 3 and 4 are
+/// passive servers receiving on replies 1 and 2.
+fn two_contexts(tep: &[usize]) -> Host {
+    Host::init(4, 3, 2, tep)
+}
+
+#[test]
+fn a_queued_call_delivered_to_a_passive_server_donates() {
+    let mut h = two_contexts(&[]);
+    donation::send_wait(&mut h, t(1));
+    h.check();
+    assert_eq!(h.threads[1].state, TState::Send);
+    assert_eq!(
+        h.threads[1].sc,
+        Some(c(1)),
+        "a queued caller keeps its context"
+    );
+    assert_eq!(
+        donation::deliver(&mut h, t(1), t(3)),
+        Ok(Delivered::Donated(c(1)))
+    );
+    h.check();
+    assert_eq!(h.threads[1].state, TState::Call(r(1)));
+    assert_eq!(h.threads[1].fault, None);
+    assert_eq!(h.scs[1].holder, Some(t(3)));
+    assert_eq!(h.steps.last(), Some(&Step::DeliverCall(t(1), t(3))));
+    donation::reply(&mut h, t(3), r(1)).unwrap();
+    h.check();
+    assert_eq!(
+        (h.threads[1].state, h.threads[1].result),
+        (TState::Ready, Res::Replied)
+    );
+    assert_eq!(h.scs[1].holder, Some(t(1)));
+}
+
+#[test]
+fn a_queued_call_to_an_active_server_is_plain() {
+    let mut h = two_contexts(&[]);
+    donation::send_wait(&mut h, t(1));
+    donation::recv(&mut h, t(2), r(3)).unwrap();
+    assert_eq!(donation::deliver(&mut h, t(1), t(2)), Ok(Delivered::Plain));
+    h.check();
+    assert_eq!(h.scs[1].holder, Some(t(1)));
+    assert_eq!(h.replies[3].state, RState::Pending);
+    assert_eq!(h.replies[3].sc, None);
+    // Only a queued thread can be delivered, only to a receiver.
+    assert_eq!(
+        donation::deliver(&mut h, t(1), t(4)),
+        Err(Error::NotWaiting)
+    );
+    donation::send_wait(&mut h, t(2));
+    assert_eq!(
+        donation::deliver(&mut h, t(2), t(1)),
+        Err(Error::NotReceiving)
+    );
+}
+
+#[test]
+fn a_queued_send_ends_both_waits_and_frees_the_reply_object() {
+    let mut h = two_contexts(&[]);
+    donation::send_wait(&mut h, t(1));
+    assert_eq!(donation::deliver_send(&mut h, t(1), t(3)), Ok(()));
+    h.check();
+    for i in [1, 3] {
+        assert_eq!(
+            (h.threads[i].state, h.threads[i].result),
+            (TState::Ready, Res::Replied)
+        );
+    }
+    // The passive receiver is left ready with no context, as in seL4.
+    assert_eq!(h.threads[3].sc, None);
+    assert_eq!(h.replies[1].state, RState::Idle);
+    assert_eq!(h.replies[1].server, None);
+    assert_eq!(
+        donation::deliver_send(&mut h, t(1), t(4)),
+        Err(Error::NotWaiting)
+    );
+}
+
+#[test]
+fn wakes_end_queued_and_kept_waits() {
+    for res in [Res::Replied, Res::Destroyed, Res::None] {
+        let mut h = two_contexts(&[]);
+        donation::send_wait(&mut h, t(1));
+        donation::wait_other(&mut h, t(2));
+        donation::wake(&mut h, t(1), res).unwrap();
+        donation::wake(&mut h, t(2), res).unwrap();
+        donation::wake(&mut h, t(3), res).unwrap();
+        h.check();
+        for tr in &h.threads[1..=3] {
+            assert_eq!((tr.state, tr.result), (TState::Ready, res));
+        }
+        // A receive's reply object goes back to idle.
+        assert_eq!(h.replies[1].state, RState::Idle);
+        assert_eq!(h.steps.last(), Some(&Step::Wake(t(3), res)));
+        // A ready thread or a call can't be woken.
+        assert_eq!(donation::wake(&mut h, t(1), res), Err(Error::NotWaiting));
+        donation::call(&mut h, t(1), t(4)).unwrap();
+        assert_eq!(donation::wake(&mut h, t(1), res), Err(Error::NotWaiting));
+    }
+}
+
+#[test]
+fn canceling_a_queued_sender_is_undelivered() {
+    let mut h = two_contexts(&[]);
+    donation::send_wait(&mut h, t(1));
+    donation::cancel(&mut h, t(1)).unwrap();
+    h.check();
+    assert_eq!(
+        (h.threads[1].state, h.threads[1].result),
+        (TState::Ready, Res::Canceled)
+    );
+    // The kernel took it out of the endpoint's queue.
+    assert_eq!(h.other_canceled, [t(1)]);
+    donation::send_wait(&mut h, t(1));
+    donation::deadline(&mut h, t(1)).unwrap();
+    assert_eq!(h.threads[1].result, Res::TimedOut);
+    assert_eq!(h.other_canceled, [t(1), t(1)]);
+}
+
+#[test]
+fn destroying_a_receivers_reply_object_dequeues_it() {
+    let mut h = two_contexts(&[]);
+    h.destroy_reply(1);
+    h.check();
+    // K30: the receive ends "object destroyed", and the kernel was asked
+    // to take the receiver out of its endpoint's queue first.
+    assert_eq!(
+        (h.threads[3].state, h.threads[3].result),
+        (TState::Ready, Res::Destroyed)
+    );
+    assert_eq!(h.other_canceled, [t(3)]);
+    // A plain call's reply object destroyed: the call ends "object
+    // destroyed" too.
+    let mut h = two_contexts(&[]);
+    donation::recv(&mut h, t(2), r(3)).unwrap();
+    donation::call(&mut h, t(1), t(2)).unwrap();
+    h.destroy_reply(3);
+    h.check();
+    assert_eq!(h.threads[1].result, Res::Destroyed);
+}
+
+/// Thread 1 faults on its fault endpoint, and the passive handler 3 gets it.
+fn deliver_fault(h: &mut Host) {
+    donation::fault_wait(h, t(1));
+    h.check();
+    assert_eq!(h.threads[1].state, TState::Fault(FaultKind::Endpoint));
+    assert_eq!(
+        donation::deliver(h, t(1), t(3)),
+        Ok(Delivered::Donated(c(1)))
+    );
+    h.check();
+    assert_eq!(h.threads[1].state, TState::Call(r(1)));
+    assert_eq!(h.threads[1].fault, Some(FaultKind::Endpoint));
+}
+
+#[test]
+fn a_delivered_faults_reply_resumes_with_no_result() {
+    let mut h = two_contexts(&[]);
+    deliver_fault(&mut h);
+    // No deadline on a fault, queued or delivered.
+    assert_eq!(donation::deadline(&mut h, t(1)), Err(Error::NotWaiting));
+    donation::reply(&mut h, t(3), r(1)).unwrap();
+    h.check();
+    let tr = h.threads[1];
+    assert_eq!(
+        (tr.state, tr.result, tr.fault, tr.sc),
+        (TState::Ready, Res::None, None, Some(c(1)))
+    );
+}
+
+#[test]
+fn a_canceled_delivered_fault_reexecutes_and_its_reply_fails() {
+    let mut h = two_contexts(&[3]);
+    deliver_fault(&mut h);
+    donation::cancel(&mut h, t(1)).unwrap();
+    h.check();
+    // The context is back at once; the thread resumes with no result, and
+    // re-executes. No queued fault was withdrawn: it was a call.
+    let tr = h.threads[1];
+    assert_eq!(
+        (tr.state, tr.result, tr.fault, tr.sc),
+        (TState::Ready, Res::None, None, Some(c(1)))
+    );
+    assert!(h.withdrawn.is_empty());
+    h.drain();
+    h.check();
+    // The handler, stranded, gets its context-withdrawn fault, and its
+    // reply fails with "no caller".
+    assert_eq!(withdrawn(&h), vec![t(3)]);
+    assert_eq!(donation::reply(&mut h, t(3), r(1)), Err(Error::NoCaller));
+}
+
+#[test]
+fn a_delivered_faults_reply_object_destroyed_reexecutes() {
+    let mut h = two_contexts(&[]);
+    deliver_fault(&mut h);
+    h.destroy_reply(1);
+    h.check();
+    let tr = h.threads[1];
+    assert_eq!(
+        (tr.state, tr.result, tr.fault),
+        (TState::Ready, Res::None, None)
+    );
+    assert_eq!(h.scs[1].holder, Some(t(1)));
+    // So does destroying the handler it donated to.
+    let mut h = two_contexts(&[]);
+    deliver_fault(&mut h);
+    h.destroy_thread(3);
+    h.check();
+    let tr = h.threads[1];
+    assert_eq!(
+        (tr.state, tr.result, tr.fault),
+        (TState::Ready, Res::None, None)
+    );
+}
+
+#[test]
+fn a_queued_endpoint_fault_withdrawn_reexecutes() {
+    let mut h = two_contexts(&[]);
+    donation::fault_wait(&mut h, t(1));
+    donation::cancel(&mut h, t(1)).unwrap();
+    h.check();
+    assert_eq!(h.withdrawn, [(t(1), FaultKind::Endpoint)]);
+    assert_eq!(
+        (h.threads[1].state, h.threads[1].result),
+        (TState::Ready, Res::None)
+    );
+    // A wake withdraws it too, whatever result the kernel names.
+    donation::fault_wait(&mut h, t(1));
+    donation::wake(&mut h, t(1), Res::Destroyed).unwrap();
+    assert_eq!(h.threads[1].result, Res::None);
+    assert_eq!(h.withdrawn.len(), 2);
+}
+
+#[test]
+fn removing_the_timeout_endpoint_keeps_a_fault_endpoint_fault() {
+    // K08, K50: a fault queued on the fault endpoint isn't the timeout
+    // endpoint's, so removing the timeout endpoint leaves it queued.
+    let mut h = two_contexts(&[1]);
+    donation::fault_wait(&mut h, t(1));
+    donation::set_tep(&mut h, t(1), false);
+    h.check();
+    assert!(h.withdrawn.is_empty(), "withdrawn: {:?}", h.withdrawn);
+    assert!(!h.threads[1].tep);
+    assert_eq!(h.threads[1].state, TState::Fault(FaultKind::Endpoint));
+}
+
+#[test]
+fn a_timeout_fault_is_delivered_plain_and_withdrawn_waits_for_its_refill() {
+    let mut h = two_contexts(&[1]);
+    assert!(donation::budget_out(&mut h, t(1)));
+    // Delivered to a passive handler: no donation (ADR 0051, rule 1).
+    assert_eq!(donation::deliver(&mut h, t(1), t(3)), Ok(Delivered::Plain));
+    h.check();
+    assert_eq!(h.threads[1].fault, Some(FaultKind::Timeout));
+    assert_eq!(h.scs[1].holder, Some(t(1)));
+    assert_eq!(h.threads[3].sc, None);
+    // The handler's reply resumes it, with no result.
+    donation::reply(&mut h, t(3), r(1)).unwrap();
+    assert_eq!(
+        (h.threads[1].state, h.threads[1].result),
+        (TState::Ready, Res::None)
+    );
+    // Queued again, then its endpoint removed: withdrawn, a wait for the
+    // refill, which the kernel keeps (K08, K50).
+    assert!(donation::budget_out(&mut h, t(1)));
+    donation::set_tep(&mut h, t(1), false);
+    h.check();
+    assert_eq!(h.withdrawn, [(t(1), FaultKind::Timeout)]);
+    assert_eq!(h.threads[1].state, TState::Ready);
+}
+
+#[test]
+fn a_delivered_fault_on_the_holders_onward_call_ends_silently_at_a_cut() {
+    // C → S1 (2) donated; S1 faults on its fault endpoint, delivered to the
+    // passive handler H (3), donating again. Canceling C cuts below S1:
+    // the holder H's wait is its own, and the walk ends S1's fault call
+    // with no result before S1 is faulted for its context.
+    let mut h = Host::init(4, 3, 1, &[2, 3]);
+    donation::call(&mut h, t(1), t(2)).unwrap();
+    donation::fault_wait(&mut h, t(2));
+    assert_eq!(
+        donation::deliver(&mut h, t(2), t(3)),
+        Ok(Delivered::Donated(c(1)))
+    );
+    h.check();
+    donation::cancel(&mut h, t(1)).unwrap();
+    h.drain();
+    h.check();
+    let tr = h.threads[2];
+    assert_eq!(tr.fault, None);
+    assert_eq!(tr.state, TState::Fault(FaultKind::Withdrawn));
+    assert_eq!(tr.result, Res::None);
+}
+
+#[test]
+fn costs_count_a_take_backs_holder() {
+    let mut h = Host::init(4, 3, 1, &[]);
+    call_down(&mut h, 2);
+    h.wait_costs[3] = 61;
+    // Ending C's live call cuts at r1: S2, the holder, has its wait ended
+    // too.
+    assert_eq!(donation::end_cost(&mut h, t(1)), 1 + 61);
+    // S1's call isn't C's: its cost is its own and the holder's.
+    assert_eq!(donation::end_cost(&mut h, t(2)), 1 + 61);
+    h.wait_costs[2] = 7;
+    // The walk step at r1 ends S1's onward call on r2.
+    donation::cancel(&mut h, t(1)).unwrap();
+    assert_eq!(donation::step_cost(&mut h, r(1)), 1 + 7);
+    h.drain();
+    assert_eq!(donation::end_cost(&mut h, t(1)), 1);
+}
+
+/// K23 (C14): a deletion step counts the waits that destroying a thread, a
+/// reply object or a context ends, a take-back's holder's included, each
+/// once. The holder here waits on a wait set of 60 entries.
+#[test]
+fn destroy_costs_count_the_waits_they_end() {
+    let mut h = Host::init(4, 3, 1, &[]);
+    call_down(&mut h, 2);
+    donation::wait_other(&mut h, t(3));
+    h.check();
+    h.wait_costs[3] = 60;
+    // C's own call, and the cut at r1 that ends S2's wait.
+    assert_eq!(donation::destroy_cost(&mut h, t(1)), 1 + 60);
+    // S1 serves r1: the cut ends S2's wait; S1's own call on r2 ends, and
+    // its holder, S2, is counted once.
+    assert_eq!(donation::destroy_cost(&mut h, t(2)), 60 + 1);
+    // S2 holds the context: the cut at r2 ends its own wait, counted once.
+    assert_eq!(donation::destroy_cost(&mut h, t(3)), 60);
+    // r2: the cut, and its step's base unit. r1: the cut, and its step,
+    // which ends S1's onward call.
+    assert_eq!(donation::destroy_reply_cost(&mut h, r(2)), 60 + 1);
+    assert_eq!(donation::destroy_reply_cost(&mut h, r(1)), 60 + 1 + 1);
+    // Unbinding C's context takes it back at r1.
+    assert_eq!(donation::unbind_cost(&mut h, c(1)), 60);
+    // S3 receives on r3: its receive's end.
+    h.wait_costs[4] = 5;
+    assert_eq!(donation::destroy_cost(&mut h, t(4)), 5);
+    assert_eq!(donation::destroy_reply_cost(&mut h, r(3)), 5);
+    // The counted work is done: destroying S1 ends S2's wait on its set.
+    h.destroy_thread(2);
+    h.check();
+    assert!(h.other_canceled.contains(&t(3)));
+    assert_eq!(h.threads[3].state, TState::Ready);
+    // Nothing waits: a thread's or a reply's destruction costs 1.
+    h.drain();
+    h.check();
+    assert_eq!(donation::destroy_cost(&mut h, t(3)), 1);
+    assert_eq!(donation::destroy_reply_cost(&mut h, r(2)), 1);
 }

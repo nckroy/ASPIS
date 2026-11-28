@@ -11,7 +11,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use kcap::SlotRef;
-use kcap::cap::{Cap, SlotArray, ZombieKind};
+use kcap::cap::{Binding, Cap, SlotArray, ZombieKind};
 use kcap::delete::{self, Hooks};
 use kcap::mdb;
 use kcap::ops::{self, Error};
@@ -26,9 +26,29 @@ pub struct FakeMem {
     slots: BTreeMap<u64, [u64; 4]>,
     /// Every range a reset cleared, in order.
     pub cleared: Vec<(u64, u64)>,
+    /// Ranges that hold no slots, such as an endpoint's or an eventcount's
+    /// words (C14): reading or writing a slot there panics, so a test sees
+    /// any deletion that treats a queue object's words as slots.
+    pub poisoned: BTreeMap<u64, u64>,
 }
 
 impl FakeMem {
+    fn check_poison(&self, s: SlotRef) {
+        if let Some((&b, &l)) = self.poisoned.range(..=s.0).next_back()
+            && s.0 - b < l
+        {
+            panic!(
+                "slot {:#x} lies in the object at {b:#x}+{l:#x}, which has no slots",
+                s.0
+            );
+        }
+    }
+
+    /// Marks `[base, base + len)` as holding no slots.
+    pub fn poison(&mut self, base: u64, len: u64) {
+        self.poisoned.insert(base, len);
+    }
+
     /// Every slot that holds something.
     pub fn full(&self) -> Vec<SlotRef> {
         self.slots.keys().map(|&a| SlotRef(a)).collect()
@@ -43,11 +63,14 @@ impl FakeMem {
 impl Mem for FakeMem {
     fn read(&self, s: SlotRef) -> [u64; 4] {
         assert_eq!(s.0 % 32, 0, "slot {:#x} misaligned", s.0);
+        self.check_poison(s);
         self.slots.get(&s.0).copied().unwrap_or_default()
     }
 
     fn write(&mut self, s: SlotRef, w: [u64; 4]) {
         assert_eq!(s.0 % 32, 0, "slot {:#x} misaligned", s.0);
+        self.check_poison(s);
+
         if w == [0; 4] {
             self.slots.remove(&s.0);
         } else {
@@ -62,6 +85,9 @@ impl Mem for FakeMem {
         for a in gone {
             self.slots.remove(&a);
         }
+        // The memory may be retyped into anything now.
+        self.poisoned.retain(|&b, _| !(b >= pa && b - pa < len));
+
         self.cleared.push((pa, len));
     }
 
@@ -88,7 +114,6 @@ pub fn key(cap: &Cap) -> ObjKey {
             kind: ZombieKind::AddressSpace,
             ..
         } => 4,
-        Cap::Endpoint { .. } => 5,
         Cap::Thread { .. }
         | Cap::Zombie {
             kind: ZombieKind::Thread,
@@ -97,6 +122,21 @@ pub fn key(cap: &Cap) -> ObjKey {
         Cap::SchedContext { .. } => 7,
         Cap::SchedControl { core } => return (8, *core as u64, 0),
         Cap::Reply { .. } => 9,
+        Cap::Endpoint { .. }
+        | Cap::Zombie {
+            kind: ZombieKind::Endpoint,
+            ..
+        } => 5,
+        Cap::Eventcount { .. }
+        | Cap::Zombie {
+            kind: ZombieKind::Eventcount,
+            ..
+        } => 10,
+        Cap::WaitSet { .. }
+        | Cap::Zombie {
+            kind: ZombieKind::WaitSet { .. },
+            ..
+        } => 11,
         Cap::Null => 0,
     };
     let (base, size) = cap.object().unwrap_or((0, 0));
@@ -113,14 +153,29 @@ pub struct Log {
     pub unbound: Vec<(SlotRef, Cap)>,
     /// Every object made a zombie, in order (C12).
     pub zombified: Vec<Cap>,
-    /// Every hook call, in order: 'z' zombify, 'u' unbind, 'f' finish.
+    /// Every hook call, in order: 'z' zombify, 'u' unbind, 'f' finish, 'd'
+    /// a drain step that released a waiter.
     pub order: Vec<char>,
     /// Objects made and not yet finished.
     pub live: BTreeSet<ObjKey>,
+    /// Waiters still queued on each endpoint or eventcount, by address
+    /// (C14): each drain step releases one.
+    pub waiters: BTreeMap<u64, u64>,
+    /// Drain steps that released a waiter.
+    pub drained: u64,
+    /// The units each wait set's zombify reports, by address: 1 plus the
+    /// entries it unlinks (C14).
+    pub zombify_units: BTreeMap<u64, u32>,
+    /// The units each finish reports, by object address: more than 1 for a
+    /// take-back that ends a holder's wait (C14). 1 if absent.
+    pub finish_units: BTreeMap<u64, u32>,
+    /// The units each binding's unbind reports, by the address of the
+    /// object it names. 1 if absent.
+    pub unbind_units: BTreeMap<u64, u32>,
 }
 
 impl Hooks for Log {
-    fn finish(&mut self, cap: &Cap) {
+    fn finish(&mut self, cap: &Cap) -> u32 {
         let k = key(cap);
         assert!(
             self.live.remove(&k),
@@ -128,15 +183,42 @@ impl Hooks for Log {
         );
         self.finished.push(*cap);
         self.order.push('f');
+        let (base, _) = cap.object().unwrap_or((0, 0));
+        self.finish_units.get(&base).copied().unwrap_or(1)
     }
 
-    fn zombify(&mut self, cap: &Cap) {
-        assert!(cap.has_slots(), "zombify of {cap:x?}, which has no slots");
+    fn zombify(&mut self, cap: &Cap) -> u32 {
+        assert!(
+            cap.has_slots() || cap.has_queue(),
+            "zombify of {cap:x?}, which has neither slots nor a queue"
+        );
         self.zombified.push(*cap);
         self.order.push('z');
+        let (base, _) = cap.object().unwrap_or((0, 0));
+        self.zombify_units.get(&base).copied().unwrap_or(1)
     }
 
-    fn unbind(&mut self, slot: SlotRef, cap: &Cap) {
+    fn drain(&mut self, zombie: &Cap) -> bool {
+        let Cap::Zombie { kind, ptr, n: 1 } = *zombie else {
+            panic!("drain of {zombie:x?}, which isn't a queue zombie with waiters");
+        };
+        assert!(kind.is_queue(), "drain of {zombie:x?}");
+        assert!(
+            self.live.contains(&key(zombie)),
+            "drain of {zombie:x?}, which isn't live"
+        );
+        match self.waiters.get_mut(&ptr) {
+            Some(w) if *w > 0 => {
+                *w -= 1;
+                self.drained += 1;
+                self.order.push('d');
+                *w == 0
+            }
+            _ => true,
+        }
+    }
+
+    fn unbind(&mut self, slot: SlotRef, cap: &Cap) -> u32 {
         assert!(
             cap.is_binding(),
             "unbind of {cap:x?}, which isn't a binding"
@@ -148,6 +230,15 @@ impl Hooks for Log {
                 let array = SlotArray::of_address_space(slot.0 & !0x1fff);
                 assert!(array.contains(slot) && slot != array.park());
             }
+            // A wait-set entry's copy sits in an entry's slot of its set,
+            // which it finds from its own encoding (C14).
+            Some(Binding::WaitSetEntry) => {
+                let Cap::Eventcount { set_bits, .. } = *cap else {
+                    panic!("an entry's binding isn't an eventcount: {cap:x?}");
+                };
+                let array = SlotArray::of_wait_set(slot.0 & !((1 << set_bits) - 1), set_bits);
+                assert!(array.contains(slot) && slot != array.park(), "{cap:x?}");
+            }
             // A thread's binding sits in its role's slot of the thread.
             Some(role) => {
                 let array = SlotArray::of_thread(slot.0 & !0x7ff);
@@ -156,6 +247,8 @@ impl Hooks for Log {
         }
         self.unbound.push((slot, *cap));
         self.order.push('u');
+        let (base, _) = cap.object().unwrap_or((0, 0));
+        self.unbind_units.get(&base).copied().unwrap_or(1)
     }
 }
 
@@ -335,6 +428,12 @@ impl World {
         for i in first..first + count {
             let c = self.cap(SlotRef(ptr).offset(i));
             self.log.live.insert(key(&c));
+            // An endpoint's or an eventcount's words are never slots.
+            if c.has_queue()
+                && let Some((b, l)) = c.object()
+            {
+                self.mem.poison(b, l);
+            }
         }
     }
 
@@ -399,7 +498,10 @@ impl World {
     ///   a CNode or address space that a capability or zombie still names,
     ///   so no slot of a finished object holds anything;
     /// - a frame's binding lies only in a binding slot of an address-space
-    ///   record, and a thread's binding only in its role's slot of a thread.
+    ///   record, a thread's binding only in its role's slot of a thread, and
+    ///   a wait-set entry's only in an entry's slot of a wait set;
+    /// - a queue zombie (C14) holds no slots, and nothing is ever read from
+    ///   its object as a slot.
     pub fn check(&self) {
         let full = self.mem.full();
         if let Err(e) = mdb::verify(&self.mem, full.iter().copied()) {
@@ -414,7 +516,7 @@ impl World {
             })
             .collect();
         // (base, count, kind): 0 a CNode, 1 an address-space record, 2 a
-        // thread.
+        // thread, 3 a wait set.
         let mut arrays: Vec<(u64, u64, u8)> = vec![(BOOT, 1 << BOOT_RADIX, 0)];
         for (s, c) in &caps {
             if let Cap::Zombie { kind, ptr, n } = c {
@@ -424,7 +526,10 @@ impl World {
                     "zombie at {:#x} lies in no untyped piece",
                     s.0
                 );
-                let a = SlotArray::of(*kind, *ptr);
+                let Some(a) = SlotArray::of(*kind, *ptr) else {
+                    assert!(kind.is_queue() && *n <= 1, "{c:x?}");
+                    continue;
+                };
                 for i in *n..a.count {
                     let x = a.slot(i);
                     assert!(
@@ -439,6 +544,8 @@ impl World {
                     ZombieKind::CNode { .. } => 0,
                     ZombieKind::AddressSpace => 1,
                     ZombieKind::Thread => 2,
+                    ZombieKind::WaitSet { .. } => 3,
+                    ZombieKind::Endpoint | ZombieKind::Eventcount => continue,
                 };
                 arrays.push((a.base, a.count, k));
             }
@@ -453,6 +560,10 @@ impl World {
                 let a = SlotArray::of_thread(*ptr);
                 arrays.push((a.base, a.count, 2));
             }
+            if let Cap::WaitSet { ptr, bits, .. } = c {
+                let a = SlotArray::of_wait_set(*ptr, *bits);
+                arrays.push((a.base, a.count, 3));
+            }
         }
         arrays.sort();
         arrays.dedup();
@@ -466,6 +577,10 @@ impl World {
                     None => {
                         assert_eq!(home.2, 1, "binding at {:#x} isn't in an address space", s.0)
                     }
+                    Some(Binding::WaitSetEntry) => {
+                        assert_eq!(home.2, 3, "entry {c:x?} isn't in a wait set")
+                    }
+
                     Some(role) => assert_eq!(
                         (home.2, s.0),
                         (2, home.0 + role.thread_slot() * 32),

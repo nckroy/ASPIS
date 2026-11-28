@@ -9,8 +9,9 @@
 //! (`crate::sched::testkit`). The blob starts with a marker that `cargo
 //! xtask check-production` looks for, so production images can't hold it.
 //! Each program reaches the kernel only through the test trap
-//! ([`super::trap`]), takes its arguments in x0 to x2, as the test writes
-//! them, and needs no stack.
+//! ([`super::trap`]), takes its arguments in x0 to x7, as the test writes
+//! them, and needs no stack. The IPC programs use K28's registers
+//! (`kipc::msg::regs`).
 
 use core::arch::global_asm;
 
@@ -163,31 +164,109 @@ global_asm!(
     "    TRAP 0",
     "    b .",
     "",
-    // serve(x0 reply object, x1 spins): forever: receives with x0; on a
-    // call, reports the caller's word, spins x1 times, then replies with
-    // the word plus 1 and receives again.
+    // udf(): an undefined instruction, a user exception with no fault
+    // address; if its handler resumes it past the instruction, reports
+    // 0xdf and ends.
+    ".global aspis_user_udf",
+    "aspis_user_udf:",
+    "    udf #0",
+    "    mov x0, #0xdf",
+    "    TRAP 2",
+    "    TRAP 0",
+    "    b .",
+    "",
+    // serve(x0 endpoint, x1 spins, x2 reply object): forever: receives on
+    // x0 with x2; on a call, checks the receive's status in x0 is ok,
+    // reports its first word, spins x1 times, then replies with a one-word
+    // message, the word plus 1, and receives again. A status other than ok
+    // reports 0xbad and spins.
     ".global aspis_user_serve",
     "aspis_user_serve:",
     "    mov x19, x0",
     "    mov x20, x1",
-    "    mov x1, #0",
+    "    mov x22, x2",
+    "    mov x6, x22",
+    "    mov x7, #0",
     "    TRAP 5",
-    "1:  mov x21, x1",
-    "    mov x0, x1",
+    "1:  cbnz x0, 9f",
+    "    mov x21, x2",
+    "    mov x0, x2",
     "    TRAP 2",
     "    mov x2, x20",
     "2:  subs x2, x2, #1",
     "    b.hi 2b",
     "    mov x0, x19",
-    "    add x1, x21, #1",
+    "    mov x1, #8",
+    "    add x2, x21, #1",
+    "    mov x6, x22",
+    "    mov x7, #0",
     "    TRAP 10",
     "    b 1b",
+    "9:  mov x0, #0xbad",
+    "    TRAP 2",
+    "    b .",
     "",
-    // call_report(x0 server, x1 deadline, x2 word): calls, reports the
-    // call's result, then the reply's word, then ends.
+    // call_report(x0 endpoint, x1 deadline, x2 word): calls with a one-word
+    // message, reports the call's status, then the reply's first word,
+    // then ends.
     ".global aspis_user_call_report",
     "aspis_user_call_report:",
+    "    mov x7, x1",
+    "    mov x1, #8",
     "    TRAP 4",
+    "    mov x19, x2",
+    "    TRAP 2",
+    "    mov x0, x19",
+    "    TRAP 2",
+    "    TRAP 0",
+    "    b .",
+    "",
+    // call_count(x0 endpoint, x1 calls): calls x1 times with the words 1,
+    // 2, ..., each a one-word message, and checks each reply is the word
+    // plus 1; reports the calls made, or 0xbad at the first wrong reply,
+    // then ends.
+    ".global aspis_user_call_count",
+    "aspis_user_call_count:",
+    "    mov x19, x0",
+    "    mov x20, x1",
+    "    mov x21, #0",
+    "1:  add x21, x21, #1",
+    "    mov x0, x19",
+    "    mov x1, #8",
+    "    mov x2, x21",
+    "    mov x7, #0",
+    "    TRAP 4",
+    "    cbnz x0, 9f",
+    "    add x3, x21, #1",
+    "    cmp x2, x3",
+    "    b.ne 9f",
+    "    cmp x21, x20",
+    "    b.lo 1b",
+    "    mov x0, x21",
+    "    b 8f",
+    "9:  mov x0, #0xbad",
+    "8:  TRAP 2",
+    "    TRAP 0",
+    "    b .",
+    "",
+    // trap_report(x0, x1, x2 arguments, x3 the call's number, x6, x7):
+    // makes trap call x3, reports its x0, then ends.
+    ".global aspis_user_trap_report",
+    "aspis_user_trap_report:",
+    "    mov x8, x3",
+    "    svc #0x7e57",
+    "    TRAP 2",
+    "    TRAP 0",
+    "    b .",
+    "",
+    // trap_value_report(x0 to x3 arguments, x5 the call's number, x7):
+    // makes trap call x5, reports its x0, then its x1 (a count or a mask),
+    // then ends. For the eventcount and wait-set calls, which take x0 to
+    // x3 and x7 (C14).
+    ".global aspis_user_trap_value_report",
+    "aspis_user_trap_value_report:",
+    "    mov x8, x5",
+    "    svc #0x7e57",
     "    mov x19, x1",
     "    TRAP 2",
     "    mov x0, x19",
@@ -250,8 +329,12 @@ unsafe extern "C" {
     static aspis_user_brk: u8;
     static aspis_user_svc_unknown: u8;
     static aspis_user_load: u8;
+    static aspis_user_udf: u8;
     static aspis_user_serve: u8;
     static aspis_user_call_report: u8;
+    static aspis_user_call_count: u8;
+    static aspis_user_trap_report: u8;
+    static aspis_user_trap_value_report: u8;
     static aspis_user_revoke_report: u8;
     static aspis_user_count_report: u8;
     static aspis_user_load_loop: u8;
@@ -284,12 +367,25 @@ pub enum Program {
     SvcUnknown,
     /// Loads from x0, reports the value, ends.
     Load,
-    /// A server's loop on the reply object at x0, spinning x1 times on each
-    /// call; reports each caller's word, and replies with it plus 1.
+    /// An undefined instruction; resumed past it, reports 0xdf and ends.
+    Udf,
+    /// A server's loop on the endpoint at x0 with the reply object at x2,
+    /// spinning x1 times on each call; reports each caller's first word,
+    /// and replies with it plus 1. A receive whose status isn't ok reports
+    /// 0xbad.
     Serve,
-    /// Calls the thread at x0, with deadline x1 and word x2; reports the
-    /// result, then the reply's word, then ends.
+    /// Calls the endpoint at x0, with deadline x1 and word x2; reports the
+    /// status, then the reply's first word, then ends.
     CallReport,
+    /// Calls the endpoint at x0 x1 times, checking each reply; reports the
+    /// calls made, or 0xbad, then ends.
+    CallCount,
+    /// Makes trap call x3 with x0 to x2, x6 and x7 as the test wrote them;
+    /// reports its x0, then ends.
+    TrapReport,
+    /// Makes trap call x5 with x0 to x3 and x7 as the test wrote them;
+    /// reports its x0, then its x1, then ends.
+    TrapValueReport,
     /// Revokes the capability at x0, reports the result, ends.
     RevokeReport,
     /// Forever counts from 1, reports the count, and spins x1 times.
@@ -322,8 +418,12 @@ impl Program {
             Program::Brk => &raw const aspis_user_brk,
             Program::SvcUnknown => &raw const aspis_user_svc_unknown,
             Program::Load => &raw const aspis_user_load,
+            Program::Udf => &raw const aspis_user_udf,
             Program::Serve => &raw const aspis_user_serve,
             Program::CallReport => &raw const aspis_user_call_report,
+            Program::CallCount => &raw const aspis_user_call_count,
+            Program::TrapReport => &raw const aspis_user_trap_report,
+            Program::TrapValueReport => &raw const aspis_user_trap_value_report,
             Program::RevokeReport => &raw const aspis_user_revoke_report,
             Program::CountReport => &raw const aspis_user_count_report,
             Program::LoadLoop => &raw const aspis_user_load_loop,

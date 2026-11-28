@@ -14,11 +14,14 @@
 //! queuing and withdrawing faults (C14's seam), putting a thread where it
 //! belongs, and keeping each walk on its core's work list.
 //!
-//! **The seams C14 uses.** [`recv`], [`call`], [`reply`], [`reply_recv`]
-//! and [`cancel`] are the scheduling side of C14's receive, call, reply and
-//! cancel: C14 adds the endpoint's queue, the message and the capability
-//! transfer around them. Until then the test trap and the in-QEMU tests
-//! call them, with one message word standing in for the message.
+//! **IPC.** C14's endpoints and eventcounts (`crate::ipc`) run `kipc`,
+//! which runs this protocol over the same store: [`KStore`] is `kipc`'s
+//! store too (`crate::ipc::store`), so a send, call, receive, reply,
+//! delivery or wake is one of the protocol's steps, with the endpoint's
+//! queue, the message and the capability transfer around it. The store's
+//! effects reach back into `crate::ipc`: ending a wait takes the thread out
+//! of its endpoint's queue and its eventcounts' trees, and a timeout or
+//! context-withdrawn fault is sent on the timeout endpoint as a call.
 //!
 //! **Charging.** Each operation that may move a context first charges the
 //! running thread's time to its context ([`run::commit_current`]), so the
@@ -28,22 +31,26 @@
 //!
 //! **Mapping waits.** A thread's kernel wait ([`Wait`]) is the protocol's
 //! state: a receive and a call are `Recv` and `Call` on the reply object in
-//! [`super::object::SchedState::waiting_reply`]; a timeout or
-//! context-withdrawn fault send is `Fault`; a fault send on the fault
-//! endpoint and a test sleep are `Other`, the waits the kernel keeps itself.
-//! C14's endpoint and eventcount waits, C15's page wait and C16's memory
-//! request join `Other`, each with its own cancel in [`KStore::cancel_other`]
-//! (K17).
+//! [`super::object::SchedState::waiting_reply`]; a delivered fault is a
+//! `Call` with [`flag::FAULT_DELIVERED`] set, its kind in the fault record;
+//! a send or call queued on an endpoint is `Send` (C14); a fault queued on
+//! the fault endpoint, and a timeout or context-withdrawn fault, is
+//! `Fault`; a test sleep and C14's eventcount and wait-set waits are
+//! `Other`, the waits the kernel keeps itself. C15's page wait and C16's
+//! memory request join `Other`, each with its own cancel in
+//! [`KStore::cancel_other`] (K17).
 
 use super::fault::{self, Kind};
-use super::object::{Ended, FaultRecord, ReplyObj, Rp, Sc, Tcb, Wait, flag, reply_word};
+use super::object::{FaultRecord, ReplyObj, Rp, Sc, Tcb, Wait, flag, reply_word};
 use super::percore::this_core;
 use super::run;
+use crate::ipc::store::WorkItems;
 use core::sync::atomic::{AtomicU64, Ordering};
 use kcap::cap::Binding;
+use kipc::msg::Status;
 use ksched::donation::{
-    self as d, Delivered, Error, FaultKind, RState, ReplyRec, Res, ScRec, Step, Store, TState,
-    ThreadRec, WalkNode,
+    self as d, Error, FaultKind, RState, ReplyRec, Res, ScRec, Step, Store, TState, ThreadRec,
+    WalkNode,
 };
 use ksched::tree::Links;
 use ksched::worklist::{Tagged, WLinks, WorkStore};
@@ -58,7 +65,7 @@ static SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// The steps taken, by kind, for the tests (test builds).
 #[cfg(aspis_test_build)]
-pub static STEPS: [AtomicU64; 18] = [const { AtomicU64::new(0) }; 18];
+pub static STEPS: [AtomicU64; 23] = [const { AtomicU64::new(0) }; 23];
 
 fn nz(v: u64) -> Option<u64> {
     (v != 0).then_some(v)
@@ -69,6 +76,7 @@ fn res_of(v: u8) -> Res {
         1 => Res::Replied,
         2 => Res::Canceled,
         3 => Res::TimedOut,
+        4 => Res::Destroyed,
         _ => Res::None,
     }
 }
@@ -79,15 +87,7 @@ const fn res_num(r: Res) -> u8 {
         Res::Replied => 1,
         Res::Canceled => 2,
         Res::TimedOut => 3,
-    }
-}
-
-/// What a system call's x0 says when its wait ends.
-const fn ended(r: Res) -> Ended {
-    match r {
-        Res::None | Res::Replied => Ended::Done,
-        Res::Canceled => Ended::Canceled,
-        Res::TimedOut => Ended::TimedOut,
+        Res::Destroyed => 4,
     }
 }
 
@@ -109,10 +109,23 @@ const fn rstate_num(s: RState) -> u64 {
     }
 }
 
-const fn fault_kind(k: FaultKind) -> (Wait, Kind) {
+/// The wait of a thread whose fault of kind `k` is queued.
+const fn queued_wait(k: FaultKind) -> Wait {
     match k {
-        FaultKind::Timeout => (Wait::TimeoutSend, Kind::Timeout),
-        FaultKind::Withdrawn => (Wait::WithdrawnSend, Kind::Withdrawn),
+        FaultKind::Timeout => Wait::TimeoutSend,
+        FaultKind::Withdrawn => Wait::WithdrawnSend,
+        FaultKind::Endpoint => Wait::FaultSend,
+    }
+}
+
+/// The kind of a delivered fault, from its record: a timeout or
+/// context-withdrawn fault is the protocol's; every other is one sent on
+/// the fault endpoint.
+fn delivered_kind(t: Tcb) -> FaultKind {
+    match Kind::from_record(t.with(|b| b.s.fault.kind)) {
+        Some(Kind::Timeout) => FaultKind::Timeout,
+        Some(Kind::Withdrawn) => FaultKind::Withdrawn,
+        _ => FaultKind::Endpoint,
     }
 }
 
@@ -132,14 +145,18 @@ impl Store for KStore {
     fn thread(&self, t: d::Tcb) -> ThreadRec {
         let t = Tcb(t.0);
         let s = t.state();
-        let state = match Wait::from_u8(s.wait) {
+        let wait = Wait::from_u8(s.wait);
+        let state = match wait {
             Wait::None => TState::Ready,
             Wait::Receive => TState::Recv(d::Reply(s.waiting_reply)),
             Wait::Call => TState::Call(d::Reply(s.waiting_reply)),
+            Wait::Send => TState::Send,
+            Wait::FaultSend => TState::Fault(FaultKind::Endpoint),
             Wait::TimeoutSend => TState::Fault(FaultKind::Timeout),
             Wait::WithdrawnSend => TState::Fault(FaultKind::Withdrawn),
-            Wait::FaultSend | Wait::TestSleep => TState::Other,
+            Wait::TestSleep | Wait::Eventcount | Wait::Set => TState::Other,
         };
+        let delivered = wait == Wait::Call && s.flags & flag::FAULT_DELIVERED != 0;
         ThreadRec {
             state,
             sc: nz(s.sc).map(d::Sc),
@@ -148,14 +165,17 @@ impl Store for KStore {
             result: res_of(s.result),
             tep: fault::has_endpoint(t, Binding::TimeoutEndpoint),
             suspended: s.flags & flag::RESUMED == 0,
+            fault: delivered.then(|| delivered_kind(t)),
         }
     }
 
     /// Writes the record back. Whether the thread has a timeout endpoint is
     /// its slot 4's, which only the endpoint's binding changes, so `tep` is
-    /// read, never written. A wait that ends writes its result into a
-    /// system call's x0 at once (K20), and lets a ready head refill count
-    /// from now, as seL4's `refill_unblock_check`.
+    /// read, never written; a delivered fault's kind is its fault record's,
+    /// so only the flag that says it was delivered is written. A wait that
+    /// ends writes its result into a system call's x0 at once (K20), unless
+    /// it ends with no result (a restart, or a fault's resume), and lets a
+    /// ready head refill count from now, as seL4's `refill_unblock_check`.
     fn set_thread(&mut self, t: d::Tcb, rec: ThreadRec) {
         let t = Tcb(t.0);
         let old = Wait::from_u8(t.with(|b| b.s.wait));
@@ -163,9 +183,10 @@ impl Store for KStore {
             TState::Ready => Wait::None,
             TState::Recv(_) => Wait::Receive,
             TState::Call(_) => Wait::Call,
-            TState::Fault(k) => fault_kind(k).0,
+            TState::Send => Wait::Send,
+            TState::Fault(k) => queued_wait(k),
             TState::Other => match old {
-                Wait::FaultSend | Wait::TestSleep => old,
+                Wait::TestSleep | Wait::Eventcount | Wait::Set => old,
                 w => panic!(
                     "thread {:#x} starts a wait the kernel keeps from {w:?}; the kernel sets it first",
                     t.0
@@ -190,8 +211,15 @@ impl Store for KStore {
             } else {
                 s.flags |= flag::RESUMED;
             }
+            if rec.fault.is_some() {
+                s.flags |= flag::FAULT_DELIVERED;
+            } else {
+                s.flags &= !flag::FAULT_DELIVERED;
+            }
+            // A call that had been delivered says so when it ends canceled,
+            // timed out or "object destroyed" (K30); a queued one doesn't.
             if old.is_call() && wait == Wait::None && rec.result != Res::None {
-                b.ctx.x[0] = ended(rec.result) as u64;
+                b.ctx.x[0] = Status::of_res(rec.result).word(old == Wait::Call);
             }
         });
         if old != Wait::None
@@ -287,24 +315,30 @@ impl Store for KStore {
         SEQ.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// Ends a wait the kernel keeps (K17): a test sleep needs nothing more,
-    /// since its deadline leaves its tree when the wait ends; a fault send
-    /// on the fault endpoint is withdrawn from it (K50), and the thread
-    /// raises the fault again when it re-executes. C14's endpoint and
-    /// eventcount waits, C15's page wait and C16's memory request add their
-    /// cancels here.
+    /// Takes the thread out of what the kernel keeps for its wait (K17): a
+    /// send, a receive, an eventcount or a wait-set wait leaves its
+    /// endpoint's queue or its eventcounts' trees (C14's IPC); a test sleep
+    /// needs nothing more, since its deadline leaves its tree when the wait
+    /// ends. C15's page wait and C16's memory request add their cancels
+    /// here.
     fn cancel_other(&mut self, t: d::Tcb) {
         let t = Tcb(t.0);
-        if t.wait() == Wait::FaultSend {
-            let ep = t.slot_cap(Binding::FaultEndpoint.thread_slot());
-            fault::seam::withdraw_fault(&ep, t);
+        match t.wait() {
+            Wait::Send | Wait::Receive | Wait::Eventcount | Wait::Set => crate::ipc::cancel_wait(t),
+            _ => {}
         }
     }
 
+    /// A queued fault leaves its endpoint's queue (K50): the fault
+    /// endpoint's, or the timeout endpoint's. The thread goes on as its
+    /// fault's kind allows: a faulting instruction re-executes, and faults
+    /// again if its cause remains.
     fn withdraw_fault(&mut self, t: d::Tcb, _kind: FaultKind) {
-        let t = Tcb(t.0);
-        let ep = t.slot_cap(Binding::TimeoutEndpoint.thread_slot());
-        fault::seam::withdraw_fault(&ep, t);
+        crate::ipc::fault::withdraw(Tcb(t.0));
+    }
+
+    fn wait_cost(&self, t: d::Tcb) -> u32 {
+        crate::ipc::wait_cost(Tcb(t.0))
     }
 
     /// A timeout fault carries the badge and the counts its context has
@@ -312,7 +346,13 @@ impl Store for KStore {
     /// (kernel specification, "Fault delivery").
     fn send_fault(&mut self, t: d::Tcb, kind: FaultKind, badge: u64) {
         let t = Tcb(t.0);
-        let (_, k) = fault_kind(kind);
+        let k = match kind {
+            FaultKind::Timeout => Kind::Timeout,
+            FaultKind::Withdrawn => Kind::Withdrawn,
+            // A fault on the fault endpoint is the kernel's to raise, with
+            // its record ([`fault::raise`]), never the protocol's.
+            FaultKind::Endpoint => return,
+        };
         let used = match (kind, t.sc()) {
             (FaultKind::Timeout, Some(c)) => c.with(|h| h.consumed),
             _ => 0,
@@ -327,8 +367,7 @@ impl Store for KStore {
                 extra: used,
             }
         });
-        let ep = t.slot_cap(Binding::TimeoutEndpoint.thread_slot());
-        fault::seam::queue_fault(&ep, t);
+        crate::ipc::fault::send_timeout(t);
     }
 
     /// A deadline belongs to a system call's wait: when that wait ends,
@@ -346,7 +385,7 @@ impl Store for KStore {
     fn walk_queued(&mut self, cursor: d::Reply) {
         let c = this_core();
         let core = c.index as u64;
-        c.work.push_back(&mut Replies, walk_item(cursor.0));
+        c.work.push_back(&mut WorkItems, walk_item(cursor.0));
         Rp(cursor.0).with(|o| {
             o.word = (o.word & !reply_word::CORE) | core << reply_word::CORE_SHIFT;
         });
@@ -356,7 +395,7 @@ impl Store for KStore {
         let core = list_core(from.0);
         super::percore::core(core)
             .work
-            .replace(&mut Replies, walk_item(from.0), walk_item(to.0));
+            .replace(&mut WorkItems, walk_item(from.0), walk_item(to.0));
         Rp(to.0).with(|o| {
             o.word = (o.word & !reply_word::CORE) | (core as u64) << reply_word::CORE_SHIFT;
         });
@@ -366,7 +405,7 @@ impl Store for KStore {
         let core = list_core(cursor.0);
         super::percore::core(core)
             .work
-            .remove(&mut Replies, walk_item(cursor.0));
+            .remove(&mut WorkItems, walk_item(cursor.0));
     }
 
     fn observe(&mut self, _step: Step) {
@@ -397,6 +436,11 @@ pub const fn step_index(s: Step) -> usize {
         Step::DestroyThread(..) => 15,
         Step::DestroyReply(..) => 16,
         Step::DestroySc(..) => 17,
+        Step::SendWait(..) => 18,
+        Step::FaultWait(..) => 19,
+        Step::DeliverCall(..) => 20,
+        Step::DeliverSend(..) => 21,
+        Step::Wake(..) => 22,
     }
 }
 
@@ -424,7 +468,9 @@ fn list_core(r: u64) -> usize {
     ((w & reply_word::CORE) >> reply_word::CORE_SHIFT) as usize
 }
 
-/// The reply objects' work-list links.
+/// The reply objects' work-list links: a walk's cursor's. A list holds
+/// eventcounts too, so lists are run through `crate::ipc::store::WorkItems`,
+/// which passes a reply object's links here.
 pub struct Replies;
 
 impl WorkStore for Replies {
@@ -462,47 +508,6 @@ fn r(x: Rp) -> d::Reply {
     d::Reply(x.0)
 }
 
-/// `thread` waits to receive a call, with reply object `reply`.
-pub fn recv(thread: Tcb, reply: Rp) -> Result<(), Error> {
-    d::recv(&mut KStore::begin(), t(thread), r(reply))
-}
-
-/// `caller`, which holds a context, calls `server`, which waits to
-/// receive. A passive server gets the caller's context (ADR 0051, rule 3).
-/// The server's receive ends with x0 = 0 and x1 = `msg`, the stand-in for
-/// C14's message.
-pub fn call(caller: Tcb, server: Tcb, msg: u64) -> Result<Delivered, Error> {
-    let out = d::call(&mut KStore::begin(), t(caller), t(server))?;
-    server.with(|b| {
-        b.ctx.x[0] = Ended::Done as u64;
-        b.ctx.x[1] = msg;
-    });
-    Ok(out)
-}
-
-/// `thread` replies on `reply`: the caller's call ends with x0 = 0 and x1
-/// = `msg`, and a donated context goes back to it.
-pub fn reply(thread: Tcb, reply: Rp, msg: u64) -> Result<(), Error> {
-    let caller = Rp(reply.0).with(|o| o.caller);
-    d::reply(&mut KStore::begin(), t(thread), r(reply))?;
-    if caller != 0 {
-        Tcb(caller).with(|b| b.ctx.x[1] = msg);
-    }
-    Ok(())
-}
-
-/// A passive server's loop: a reply on `reply`, if there is a call to
-/// answer, then a receive with it. The reply's result is returned; the
-/// receive happens if the reply object is then free.
-pub fn reply_recv(thread: Tcb, reply: Rp, msg: u64) -> Result<(), Error> {
-    let caller = Rp(reply.0).with(|o| o.caller);
-    let out = d::reply_recv(&mut KStore::begin(), t(thread), r(reply));
-    if out.is_ok() && caller != 0 {
-        Tcb(caller).with(|b| b.ctx.x[1] = msg);
-    }
-    out
-}
-
 /// Stalls the thread that holds context `c`, if it runs on another core,
 /// before the context is taken from it (kernel specification, "Cross-core
 /// signals and TLB maintenance"): its time there is charged first.
@@ -538,19 +543,59 @@ pub fn deadline(thread: Tcb) -> Result<(), Error> {
     d::deadline(&mut KStore, t(thread))
 }
 
-/// One step of the walk at the front of this core's work list, inside a
-/// batch. False if the list is empty.
-pub fn walk_step() -> bool {
+/// The units ending `thread`'s wait takes, for the batch's deadline units
+/// (K24): its own wait's, and the holder's for a donated call's take-back.
+pub fn end_cost(thread: Tcb) -> u32 {
+    d::end_cost(&mut KStore, t(thread))
+}
+
+/// The units the next unit of this core's work list costs (K24): a walk's
+/// step, one and the server's onward call it ends, or an eventcount's wake,
+/// one or the nodes of a wait set. 0 if the list is empty.
+pub fn work_cost() -> u32 {
+    let Some(item) = this_core().work.front() else {
+        return 0;
+    };
+    match item.tag() {
+        Tagged::WALK => d::step_cost(&mut KStore, d::Reply(item.addr())),
+        Tagged::EVENTCOUNT => crate::ipc::eventcount::unit_cost(item.addr()),
+        tag => panic!("work-list item {:#x} has tag {tag}", item.addr()),
+    }
+}
+
+/// One unit of this core's work list, inside a batch: a step of a walk, or
+/// one wake of an eventcount's (K24). The list's first item moves to its
+/// back first, so its walks and eventcounts share the units in turn, each
+/// in its own order; an item whose work is done leaves the list in its
+/// unit, wherever it is. False if the list is empty.
+pub fn work_unit() -> bool {
     let Some(item) = this_core().work.front() else {
         return false;
     };
+    // The cost the batch took was this item's: rotating keeps it the one
+    // that runs.
+    let list = &mut this_core().work;
+    list.remove(&mut WorkItems, item);
+    list.push_back(&mut WorkItems, item);
     match item.tag() {
         Tagged::WALK => {
+            this_core().stats.walk_steps += 1;
             d::walk_step(&mut KStore, d::Reply(item.addr()));
+        }
+        Tagged::EVENTCOUNT => {
+            this_core().stats.ec_units += 1;
+            crate::ipc::eventcount::work_unit(item.addr());
         }
         tag => panic!("work-list item {:#x} has tag {tag}", item.addr()),
     }
     true
+}
+
+/// Ends `thread`'s wait on an endpoint, which the kernel has taken it out
+/// of, with `res`: the protocol's `Wake`. A queued fault ends with no
+/// result, so the thread goes on as its fault's kind allows.
+pub fn wake(thread: Tcb, res: Res) -> Result<(), Error> {
+    d::wake(&mut KStore, t(thread), res)
 }
 
 /// `thread`, running, starts a wait the kernel keeps, which the kernel has
@@ -564,11 +609,6 @@ pub fn wait_other(thread: Tcb) {
 /// without one.
 pub fn budget_out(thread: Tcb) -> bool {
     d::budget_out(&mut KStore, t(thread))
-}
-
-/// The handler replied to `thread`'s timeout or context-withdrawn fault.
-pub fn fault_replied(thread: Tcb) -> Result<(), Error> {
-    d::fault_replied(&mut KStore, t(thread))
 }
 
 /// Suspends or resumes `thread`: the flag only; its wait stays (ADR 0061,
@@ -595,28 +635,41 @@ pub fn unbind(c: Sc) -> Result<(), Error> {
     d::unbind_sc(&mut KStore::begin(), d::Sc(c.0))
 }
 
-/// `thread`'s object becomes a zombie: the donated call it serves
-/// goes back to its caller, its own wait ends, and its home context is
-/// unbound.
-pub fn destroy_thread(thread: Tcb) {
-    stall_for_call(thread);
-    stall_holder(thread.state().home);
-    d::destroy_thread(&mut KStore::begin(), t(thread));
+/// The units unbinding `c` takes (K23): a donated context's take-back
+/// ends its holder's wait.
+pub fn unbind_cost(c: Sc) -> u32 {
+    d::unbind_cost(&mut KStore, d::Sc(c.0))
 }
 
-/// The reply object's last capability is gone.
-pub fn destroy_reply(reply: Rp) {
+/// `thread`'s object becomes a zombie: the donated call it serves
+/// goes back to its caller, its own wait ends, and its home context is
+/// unbound. Returns the units it took (K23).
+pub fn destroy_thread(thread: Tcb) -> u32 {
+    stall_for_call(thread);
+    stall_holder(thread.state().home);
+    let units = d::destroy_cost(&mut KStore, t(thread));
+    d::destroy_thread(&mut KStore::begin(), t(thread));
+    units
+}
+
+/// The reply object's last capability is gone. Returns the units it took
+/// (K23).
+pub fn destroy_reply(reply: Rp) -> u32 {
     if reply.get().word & reply_word::STATE == rstate_num(RState::Pending) {
         stall_holder(reply.get().sc);
     }
+    let units = d::destroy_reply_cost(&mut KStore, r(reply));
     d::destroy_reply(&mut KStore::begin(), r(reply));
+    units
 }
 
 /// The context's last capability is gone. Its pending walks go on without
-/// it: they only compare its address.
-pub fn destroy_sc(c: Sc) {
+/// it: they only compare its address. Returns the units it took (K23).
+pub fn destroy_sc(c: Sc) -> u32 {
     stall_holder(c.0);
+    let units = d::unbind_cost(&mut KStore, d::Sc(c.0));
     d::destroy_sc(&mut KStore::begin(), d::Sc(c.0));
+    units
 }
 
 /// Whether the walk tree is empty: no take-back is still being walked.

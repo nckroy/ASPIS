@@ -14,7 +14,8 @@
 //! | 0x218 | 8 | Padding |
 //! | 0x220 | 528 | FP and SIMD: q0 to q31, `FPCR`, `FPSR` |
 //! | 0x430 | 208 | [`SchedState`] |
-//! | 0x500 | 768 | Kept for C14 (endpoint queue, IPC buffer), C15 (page wait), C16 (the job's thread list) and C70 (debug state) |
+//! | 0x500 | 192 | C14's IPC state: the endpoint queue's and the eventcount's nodes, a queued sender's message, the IPC buffer and the bound eventcount (`crate::ipc::object::IpcState`) |
+//! | 0x5c0 | 576 | Kept for C15 (page wait), C16 (the job's thread list) and C70 (debug state) |
 //!
 //! While a thread runs at EL0, `SP_EL1` points at its saved context, so the
 //! EL0 vectors store its registers straight into it, as seL4's AArch64 entry
@@ -84,26 +85,32 @@ pub struct FpState {
 pub enum Wait {
     #[default]
     None = 0,
-    /// Sending a fault on its fault endpoint, and waiting for the reply
-    /// (ADR 0056, rule 1). C14 queues the thread on the endpoint.
+    /// A fault queued on its fault endpoint, not yet delivered (ADR 0056,
+    /// rule 1; C14). Delivered, it is a [`Wait::Call`].
     FaultSend = 1,
-    /// Sending a timeout fault on its timeout endpoint (ADR 0051, rule 1).
+    /// A timeout fault queued on its timeout endpoint (ADR 0051, rule 1).
     TimeoutSend = 2,
-    /// Sending a context-withdrawn fault (ADR 0056, rule 3; C12's stage 3).
+    /// A context-withdrawn fault queued on its timeout endpoint (ADR 0056,
+    /// rule 3).
     WithdrawnSend = 3,
-    /// A test build's sleep: the stand-in for C14's waits, with a deadline
-    /// or none. Never in production.
+    /// A test build's sleep, with a deadline or none: a wait the kernel
+    /// keeps, with no object. Never in production.
     TestSleep = 4,
-    /// Waiting to receive a call, with a reply object
-    /// ([`SchedState::waiting_reply`]): C14's receive on an endpoint wraps
-    /// it.
+    /// Waiting to receive, with a reply object
+    /// ([`SchedState::waiting_reply`]): queued on an endpoint (C14).
     Receive = 5,
     /// Waiting for the reply to its call, on the server's reply object
-    /// ([`SchedState::waiting_reply`]).
+    /// ([`SchedState::waiting_reply`]): a call delivered, or a fault
+    /// delivered ([`flag::FAULT_DELIVERED`]).
     Call = 6,
-    // C14: Send, Eventcount and WaitSet. C15: Page. C16: Memory. Each chunk
-    // fills in its own cancel, through `super::donation`'s `cancel_other`
-    // (K17).
+    /// A send or call queued on an endpoint, not yet delivered (C14).
+    Send = 7,
+    /// Waiting on an eventcount (C14).
+    Eventcount = 8,
+    /// Waiting on a wait set (C14).
+    Set = 9,
+    // C15: Page. C16: Memory. Each chunk fills in its own cancel, through
+    // `super::donation`'s `cancel_other` (K17).
 }
 
 impl Wait {
@@ -115,6 +122,9 @@ impl Wait {
             4 => Wait::TestSleep,
             5 => Wait::Receive,
             6 => Wait::Call,
+            7 => Wait::Send,
+            8 => Wait::Eventcount,
+            9 => Wait::Set,
             _ => Wait::None,
         }
     }
@@ -122,15 +132,24 @@ impl Wait {
     /// Whether the wait is a system call's, whose result goes into the
     /// thread's x0 when it ends. A fault send isn't: the thread re-executes
     /// its instruction, or goes on where its budget ran out, with its
-    /// registers as they were.
+    /// registers as they were; nor is a delivered fault's call, which ends
+    /// with no result (`ksched::donation::Res::None`).
     pub const fn is_call(self) -> bool {
-        matches!(self, Wait::TestSleep | Wait::Receive | Wait::Call)
+        matches!(
+            self,
+            Wait::TestSleep
+                | Wait::Receive
+                | Wait::Call
+                | Wait::Send
+                | Wait::Eventcount
+                | Wait::Set
+        )
     }
 }
 
-/// How a wait ended, written into the thread's x0 at once, and seen when it
-/// next runs (K20). The numbers are the test trap's; C17's ABI names them
-/// (K30).
+/// How a test sleep ended, written into the thread's x0 at once, and seen
+/// when it next runs (K20). The numbers are `kipc::msg::Status`'s, which
+/// every other wait's end writes, with its delivered bit (K30).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u64)]
 pub enum Ended {
@@ -138,6 +157,9 @@ pub enum Ended {
     Canceled = 1,
     TimedOut = 2,
 }
+
+const _: () = assert!(Ended::Canceled as u64 == kipc::msg::Status::Canceled as u64);
+const _: () = assert!(Ended::TimedOut as u64 == kipc::msg::Status::TimedOut as u64);
 
 /// The fault a thread raised, kept in the thread until its handler replies
 /// (kernel specification, "Fault delivery").
@@ -168,6 +190,9 @@ pub mod flag {
     pub const DEAD: u8 = 1 << 3;
     /// It ended its test program (test builds).
     pub const DONE: u8 = 1 << 4;
+    /// Its [`super::Wait::Call`] is a delivered fault's (C14): the fault
+    /// record's kind says which, and the call ends with no result.
+    pub const FAULT_DELIVERED: u8 = 1 << 5;
 }
 
 /// A thread's scheduling state, at [`TCB_SCHED`].
