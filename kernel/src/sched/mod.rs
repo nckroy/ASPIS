@@ -14,10 +14,10 @@
 //! - [`thread`]: the operations on a thread through its capability.
 //! - [`context`]: configuring scheduling contexts through scheduling
 //!   control, and the share check's root-job stand-in.
-//! - [`fault`]: raising faults, and the seam C14's IPC fills.
+//! - [`fault`]: raising faults, which C14's IPC carries to their handlers.
 //! - [`donation`]: reply objects, donation along chains of calls, and taking
-//!   a context back, over `ksched::donation`; the seams C14's call, reply
-//!   and receive use.
+//!   a context back, over `ksched::donation`, whose store C14's IPC runs
+//!   `kipc` over.
 //! - [`entry`]: the kernel entry from EL0.
 //! - [`boot`]: the boot core's setup, and the first thread.
 //!
@@ -27,7 +27,8 @@
 //!
 //! **The test trap.** Until C17's system-call ABI exists, the in-QEMU tests'
 //! EL0 programs reach the kernel through `svc #0x7e57`, in test builds only
-//! (`crate::testing::trap`); `cargo xtask check-production` checks that
+//! (`crate::testing::trap`), which calls C14's decoded IPC calls
+//! (`crate::ipc::syscall`); `cargo xtask check-production` checks that
 //! production images hold none of it. C17 replaces it.
 
 pub mod boot;
@@ -77,6 +78,9 @@ pub enum Error {
     CoreOffline,
     /// The thread isn't waiting.
     NotWaiting,
+    /// Stopped at a preemption point while deleting a capability, with
+    /// its progress recorded: make the call again (C14; ADR 0052, rule 2).
+    Preempted,
 }
 
 impl From<ksched::donation::Error> for Error {
@@ -91,31 +95,43 @@ impl From<ksched::donation::Error> for Error {
 }
 
 /// `kcap`'s zombify hook: an object with slots is about to become a zombie.
-/// A thread stops for good.
-pub fn zombify(cap: &Cap) {
-    if let Some(t) = Tcb::of(cap) {
-        thread::zombify(t);
+/// A thread stops for good. Returns the units it took: those of the waits
+/// it ends, a take-back's included (K23), at least 1.
+pub fn zombify(cap: &Cap) -> u32 {
+    match Tcb::of(cap) {
+        Some(t) => thread::zombify(t),
+        None => 1,
     }
 }
 
 /// `kcap`'s unbind hook, for a thread's binding in `slot`: its role says
-/// what to undo, and the thread is the object that holds the slot.
-pub fn unbind(slot: SlotRef, cap: &Cap) {
+/// what to undo, and the thread is the object that holds the slot. Returns
+/// the units it took: 1, or a context's take-back's (K23).
+pub fn unbind(slot: SlotRef, cap: &Cap) -> u32 {
     let t = Tcb::holding(slot);
     match cap.binding() {
-        Some(Binding::Context) => thread::unbind_context_step(t, cap),
-        Some(role) => fault::unbind_endpoint(t, role, cap),
-        None => panic!(
+        Some(Binding::Context) => return thread::unbind_context_step(t, cap),
+        Some(role @ (Binding::FaultEndpoint | Binding::TimeoutEndpoint)) => {
+            fault::unbind_endpoint(t, role)
+        }
+        // C14's thread roles: the bound eventcount's node leaves its tree,
+        // and a receive goes on on the endpoint alone; the IPC buffer is
+        // unregistered (K29).
+        Some(Binding::BoundEventcount) => crate::ipc::unbind_bound(t),
+        Some(Binding::IpcBuffer) => crate::ipc::buffer::unbind(t),
+        Some(Binding::WaitSetEntry) | None => panic!(
             "unbind of {cap:x?} at {:#x}, which isn't a thread's binding",
             slot.0
         ),
     }
+    1
 }
 
-/// `kcap`'s finish hook, for C12's kinds.
-pub fn finish(cap: &Cap) {
+/// `kcap`'s finish hook, for C12's kinds. Returns the units it took: 1, or
+/// for a reply object or a context, its take-back's (K23).
+pub fn finish(cap: &Cap) -> u32 {
     match *cap {
-        Cap::SchedContext { ptr, .. } => context::finish(ptr),
+        Cap::SchedContext { ptr, .. } => return context::finish(ptr),
         Cap::Zombie {
             kind: ZombieKind::Thread,
             ptr,
@@ -133,12 +149,14 @@ pub fn finish(cap: &Cap) {
                 "a thread was finished while it could still run or was linked"
             );
         }
-        // A reply object: a pending call on it is canceled, and a walk that
-        // has it takes its step at once.
-        Cap::Reply { ptr, .. } => donation::destroy_reply(object::Rp(ptr)),
+        // A reply object: a pending call on it, or a receive with it, ends
+        // "object destroyed" (K30), and a walk that has it takes its step
+        // at once.
+        Cap::Reply { ptr, .. } => return donation::destroy_reply(object::Rp(ptr)),
         // Scheduling control names no memory.
         _ => {}
     }
+    1
 }
 
 /// The timer's hook (`timer::hooks::deadline_reached`).

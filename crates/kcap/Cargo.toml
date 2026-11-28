@@ -60,3 +60,7 @@ path = "tests/derivation.rs"
 [[test]]
 name = "threads"
 path = "tests/threads.rs"
+
+[[test]]
+name = "queues"
+path = "tests/queues.rs"

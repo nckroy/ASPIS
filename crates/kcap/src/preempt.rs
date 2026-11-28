@@ -5,7 +5,9 @@
 //! specification, "The kernel lock and long operations", K22 and K23).
 //!
 //! A long operation counts its work in units: one step of a deletion, one
-//! unlink, one copy, or 4 KiB of memory cleared. Every [`UNITS_PER_CHECK`]
+//! unlink, one copy, or 4 KiB of memory cleared. A deletion step that ends
+//! waits counts more: the waiter nodes its hooks unlink (C14,
+//! [`crate::delete::Hooks`]). Every [`UNITS_PER_CHECK`]
 //! units it asks whether an interrupt is pending, as seL4's
 //! `preemptionPoint` does. If one is, the operation stops with
 //! [`Preempted`], having recorded its progress in the objects it works on:

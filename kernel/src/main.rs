@@ -33,6 +33,11 @@ mod cap;
 mod console;
 mod entry;
 mod exceptions;
+// C14's IPC: until C17's system calls exist, only the in-QEMU tests and
+// the capability layer's seams reach it.
+#[cfg_attr(not(aspis_test_build), allow(dead_code))]
+mod ipc;
+
 // C13b builds on most of it: until then, only the boot, the scheduler, the
 // panic path and the in-QEMU tests use it.
 #[cfg_attr(not(aspis_test_build), allow(dead_code))]

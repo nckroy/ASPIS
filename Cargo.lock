@@ -102,6 +102,7 @@ dependencies = [
  "glyph-atlas",
  "kargs",
  "kcap",
+ "kipc",
  "kirq",
  "kmem",
  "ksched",
@@ -546,6 +547,14 @@ checksum = "01737161ba802849cfd486b5bd209d38ba4943494c249a8126005170c7621edd"
 dependencies = [
  "crypto-common",
  "rand_core",
+]
+
+[[package]]
+name = "kipc"
+version = "0.1.0"
+dependencies = [
+ "kcap",
+ "ksched",
 ]
 
 [[package]]

@@ -9,7 +9,7 @@
 //! found it ([`testkit::finish`]).
 
 use super::context::{self, configure};
-use super::fault::{self, Kind};
+use super::fault::Kind;
 use super::object::{Ended, Sc, Tcb, Wait, capacity, flag};
 use super::percore::this_core;
 use super::testkit::{
@@ -19,6 +19,7 @@ use super::testkit::{
 use super::{Error, boot, thread};
 use crate::cap::testkit::Scratch;
 use crate::cap::{self, DirectSlots, boot as cboot};
+use crate::ipc::testkit::answer_fault;
 use crate::testing::driver::run_until;
 use crate::testing::report;
 use crate::testing::user::Program;
@@ -427,8 +428,9 @@ crate::kernel_test!(budget_exhaustion_sends_timeout_fault_with_badge, {
     assert_eq!(u.tcb.wait(), Wait::TimeoutSend);
     assert!(!u.tcb.has(flag::QUEUED));
     assert!(u.tcb.sc().is_some());
-    // The reply resumes it.
-    assert!(fault::reply(u.tcb));
+    // A handler's reply resumes it: the fault was delivered as a plain
+    // call, which donated nothing.
+    assert_eq!(answer_fault(&mut sc, ep), u.tcb);
     assert_eq!(u.tcb.wait(), Wait::None);
     // Removing the endpoint while a timeout fault is queued withdraws it,
     // and the thread waits for its refill instead (K50).
@@ -744,7 +746,7 @@ crate::kernel_test!(unknown_svc_faults_or_suspends, {
     assert!(run_until(waiting1, ms(2_000)), "no fault");
     assert_eq!(v.tcb.wait(), Wait::FaultSend);
     assert_eq!(v.tcb.state().fault.kind, Kind::UnknownSyscall as u64);
-    assert!(fault::reply(v.tcb));
+    assert_eq!(answer_fault(&mut sc, ep), v.tcb);
     assert!(run_until(done1, ms(2_000)));
     assert!(report::values_of(v.tcb.0).eq([0x51]));
     // An endpoint without the write right, or without grant and

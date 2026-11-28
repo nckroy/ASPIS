@@ -562,8 +562,14 @@ pub fn device_tree() -> Option<fdt::Fdt<'static>> {
     unsafe { crate::device_tree(va, len) }
 }
 
+/// Whether the direct map covers all of `[pa, pa + len)`, read-write when
+/// `write`: so the kernel may reach it through the direct map with that
+/// access, as an IPC buffer's page (C14; K29).
+pub fn direct_map_covers(pa: u64, len: u64, write: bool) -> bool {
+    classified().direct_map_covers(pa, len, write)
+}
+
 /// The memory map, as `init` divided it.
-#[cfg_attr(not(aspis_test_build), allow(dead_code))]
 fn classified() -> &'static Classified {
     // SAFETY: written only by `init`.
     unsafe { CLASSIFIED.get() }

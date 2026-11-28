@@ -6,17 +6,19 @@
 //! 0051, rules 1, 3 and 5; ADR 0052, rule 2; ADR 0056, rule 3; ADR 0061,
 //! rule 3; K08, K17, K21, K24, K50, K77; kernel specification, "Passive servers and taking a context back").
 //!
-//! Most drive the protocol through the kernel's seams
-//! ([`super::donation`]) on threads that stay suspended, so nothing runs
-//! but the batches, and set up many waits at once without running each
-//! thread at EL0. Two run at EL0, through the test trap: a passive
-//! server on its caller's budget, and a revoke restarted at every
-//! preemption point. After each step that changes donation state, a test
+//! Most drive the protocol through the kernel's endpoint operations
+//! (`crate::ipc::endpoint`, C14) on threads that stay suspended, so nothing
+//! runs but the batches, and set up many waits at once without running
+//! each thread at EL0: servers receive on one endpoint, and each call goes
+//! to the first. The faults a take-back sends queue on the servers' timeout
+//! endpoint, in the order they were sent. Two run at EL0, through the test
+//! trap: a passive server on its caller's budget, and a revoke restarted at
+//! every preemption point. After each step that changes donation state, a test
 //! checks `ksched::donation`'s invariants on the kernel's objects (the C12
 //! plan, §4.8). Each ends with [`testkit::finish`]'s baseline check.
 
 use super::donation::{self, is_live, reply_rec, sc_rec};
-use super::fault::{Kind, seam};
+use super::fault::Kind;
 use super::object::{Ended, Rp, Sc, Tcb, Wait, flag};
 use super::percore::this_core;
 use super::testkit::{
@@ -25,6 +27,8 @@ use super::testkit::{
 use super::{boot, context, run, thread};
 use crate::cap::testkit::Scratch;
 use crate::cap::{self, DirectSlots, boot as cboot};
+use crate::ipc::endpoint;
+use crate::ipc::testkit::{epc, info, queue_len, queued_at, set_words};
 use crate::testing::driver::run_until;
 use crate::testing::report;
 use crate::testing::trap::{FORCE_PREEMPT, LAST_DAIF};
@@ -33,8 +37,10 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use kcap::SlotRef;
 use kcap::cap::{Binding, Cap};
 use kcap::mdb;
+use kipc::Outcome;
+use kipc::msg::Status;
 use kmem::untyped::ObjectType;
-use ksched::donation::{Delivered, Error as DErr, Step};
+use ksched::donation::{Reply, Step};
 
 /// The thread a test's condition watches.
 static W: AtomicU64 = AtomicU64::new(0);
@@ -75,12 +81,26 @@ fn no_releases() -> bool {
     this_core().release_root == 0
 }
 
-/// A scratch space with room made on the boot core, and empty logs.
+/// A scratch space with room made on the boot core, and an empty log.
 fn scratch() -> Scratch {
     make_room();
     report::clear();
-    seam::clear_sent();
     Scratch::new(20)
+}
+
+/// x0 after a call that had been delivered ended with `s` (K30).
+fn delivered(s: Status) -> u64 {
+    s.word(true)
+}
+
+fn rr(r: Rp) -> Reply {
+    Reply(r.0)
+}
+
+/// `t` replies on `r` with the one-word message `w`.
+fn reply(t: Tcb, r: Rp, w: u64) -> Result<(), Status> {
+    set_words(t, [w, 0, 0, 0]);
+    endpoint::reply(t, rr(r), false, info(0, 8, 0))
 }
 
 fn tcb(s: SlotRef) -> Tcb {
@@ -131,11 +151,14 @@ fn caller(sc: &mut Scratch, s: SlotRef, badge: u64) -> User {
     u
 }
 
-/// A chain C → S1 → … → Sn of passive servers, each waiting with its own
-/// reply object, then called in turn.
+/// A chain C → S1 → … → Sn of passive servers, each receiving on one
+/// endpoint with its own reply object, then called in turn: each call goes
+/// to the first waiting. Their timeout endpoint is `tep`, which may not be
+/// set.
 struct Chain {
     c: User,
     ctx: Sc,
+    tep: SlotRef,
     st: [SlotRef; 4],
     s: [Tcb; 4],
     rs: [SlotRef; 4],
@@ -181,11 +204,13 @@ fn chain(sc: &mut Scratch, n: usize, tep: bool, badge: u64) -> Chain {
     assert!(n <= 4);
     let s = space(sc);
     let ep = endpoint(sc);
+    let cep = endpoint(sc);
     let c = caller(sc, s, badge);
     let ctx = sc_of(c.context);
     let mut ch = Chain {
         c,
         ctx,
+        tep: ep,
         st: [SlotRef(0); 4],
         s: [Tcb(0); 4],
         rs: [SlotRef(0); 4],
@@ -195,15 +220,15 @@ fn chain(sc: &mut Scratch, n: usize, tep: bool, badge: u64) -> Chain {
     for i in 0..n {
         let (st, t) = passive(sc, s, tep.then_some(ep));
         let (rs, r) = reply_obj(sc);
-        donation::recv(t, r).unwrap();
+        assert_eq!(endpoint::recv(t, epc(cep), rr(r), 0), Ok(Outcome::Blocked));
         (ch.st[i], ch.s[i], ch.rs[i], ch.r[i]) = (st, t, rs, r);
     }
     let mut from = ch.c.tcb;
     for i in 0..n {
-        match donation::call(from, ch.s[i], 100 + i as u64) {
-            Ok(Delivered::Donated(d)) if d.0 == ctx.0 => {}
-            r => panic!("call {i} of the chain: {r:?}"),
-        }
+        set_words(from, [100 + i as u64, 0, 0, 0]);
+        let r = endpoint::call(from, epc(cep), info(0, 8, 0), 0);
+        assert_eq!(r, Ok(Outcome::Blocked), "call {i} of the chain");
+        assert_eq!(ch.holder(), Some(ch.s[i].0), "call {i} didn't donate");
         ch.check(&[], &[]);
         from = ch.s[i];
     }
@@ -226,21 +251,21 @@ crate::kernel_test!(donation_moves_the_context_along_a_chain, {
     );
     assert!(c.sc().is_none() && s1.sc().is_none() && s2.sc() == Some(ch.ctx));
     // The server's receive ended with the caller's word.
-    assert_eq!((x(s2, 0), x(s2, 1)), (Ended::Done as u64, 101));
+    assert_eq!((x(s2, 0), x(s2, 2)), (Ended::Done as u64, 101));
     // Only the holder answers, at the top; anyone else changes nothing.
-    assert_eq!(donation::reply(s1, ch.r[0], 0), Err(DErr::NotHolder));
+    assert_eq!(reply(s1, ch.r[0], 0), Err(Status::NotHolder));
     ch.check(&[], &[]);
     // The replies return it step by step.
-    donation::reply(s2, ch.r[1], 7).unwrap();
+    reply(s2, ch.r[1], 7).unwrap();
     assert_eq!(ch.holder(), Some(s1.0));
     assert_eq!(s1.wait(), Wait::None);
-    assert_eq!((x(s1, 0), x(s1, 1)), (Ended::Done as u64, 7));
+    assert_eq!((x(s1, 0), x(s1, 2)), (Ended::Done as u64, 7));
     ch.check(&[], &[]);
-    donation::reply(s1, ch.r[0], 8).unwrap();
+    reply(s1, ch.r[0], 8).unwrap();
     assert_eq!(ch.holder(), Some(c.0));
     assert_eq!(ch.top(), None);
     assert_eq!(
-        (c.wait(), x(c, 0), x(c, 1)),
+        (c.wait(), x(c, 0), x(c, 2)),
         (Wait::None, Ended::Done as u64, 8)
     );
     assert_eq!(c.sc(), Some(ch.ctx));
@@ -257,7 +282,7 @@ crate::kernel_test!(take_back_on_cancel, {
     assert_eq!(ch.holder(), Some(ch.c.tcb.0));
     assert_eq!(
         (ch.c.tcb.wait(), x(ch.c.tcb, 0)),
-        (Wait::None, Ended::Canceled as u64)
+        (Wait::None, delivered(Status::Canceled))
     );
     assert!(!this_core().work.is_empty(), "no walk was queued");
     ch.check(&[], &[]);
@@ -277,15 +302,15 @@ crate::kernel_test!(take_back_on_cancel, {
     assert!(ch.s[1].sc().is_none(), "the holder kept the context");
     ch.check(&[], &[]);
     assert!(run_until(walks_done, ms(2_000)), "the walk didn't end");
-    assert_eq!(seam::sent_count(), 2);
-    assert_eq!(seam::sent(0), Some(ch.s[0]));
-    assert_eq!(seam::sent(1), Some(ch.s[1]));
-    assert_eq!(x(ch.s[0], 0), Ended::Canceled as u64);
+    assert_eq!(queue_len(ch.tep), 2);
+    assert_eq!(queued_at(ch.tep, 0), Some(ch.s[0]));
+    assert_eq!(queued_at(ch.tep, 1), Some(ch.s[1]));
+    assert_eq!(x(ch.s[0], 0), delivered(Status::Canceled));
     for s in &ch.s[..2] {
         assert_eq!(s.wait(), Wait::WithdrawnSend);
         assert_eq!(s.state().fault.addr, 0x0ce2);
     }
-    assert_eq!(donation::reply(ch.s[0], ch.r[0], 0), Err(DErr::NoCaller));
+    assert_eq!(reply(ch.s[0], ch.r[0], 0), Err(Status::NoCaller));
     ch.check(&[], &[]);
     testkit::finish(sc);
 });
@@ -302,7 +327,7 @@ crate::kernel_test!(take_back_on_deadline, {
         run_until(w_ready, ms(2_000)),
         "the deadline didn't end the call"
     );
-    assert_eq!(x(ch.c.tcb, 0), Ended::TimedOut as u64);
+    assert_eq!(x(ch.c.tcb, 0), delivered(Status::TimedOut));
     assert_eq!(ch.holder(), Some(ch.c.tcb.0));
     assert_eq!(this_core().stats.expiries - expiries, 1);
     assert!(run_until(walks_done, ms(2_000)));
@@ -323,7 +348,7 @@ crate::kernel_test!(take_back_cancels_stranded_waits, {
     thread::cancel(ch.c.thread).unwrap();
     assert_eq!((s2.wait(), x(s2, 0)), (Wait::None, Ended::Canceled as u64));
     assert!(run_until(walks_done, ms(2_000)));
-    assert_eq!(x(ch.s[0], 0), Ended::Canceled as u64);
+    assert_eq!(x(ch.s[0], 0), delivered(Status::Canceled));
     assert_eq!(ch.s[0].wait(), Wait::WithdrawnSend);
     // The fault doesn't touch x0: the server sees "canceled" when its
     // handler resumes it (K20).
@@ -343,7 +368,7 @@ crate::kernel_test!(stranded_server_without_timeout_endpoint_gets_no_fault, {
     let s1 = ch.s[0];
     assert_eq!(s1.wait(), Wait::None);
     assert!(s1.sc().is_none() && !s1.has(flag::QUEUED));
-    assert_eq!(seam::sent_count(), 0);
+    assert_eq!(queue_len(ch.tep), 0);
     ch.check(&[], &[]);
     testkit::finish(sc);
 });
@@ -358,7 +383,7 @@ crate::kernel_test!(removing_the_timeout_endpoint_while_donated, {
     thread::cancel(ch.c.thread).unwrap();
     assert!(run_until(walks_done, ms(2_000)));
     assert_eq!(ch.s[0].wait(), Wait::None);
-    assert_eq!(seam::sent_count(), 0);
+    assert_eq!(queue_len(ch.tep), 0);
     ch.check(&[], &[]);
     testkit::finish(sc);
 });
@@ -390,7 +415,10 @@ crate::kernel_test!(unbinding_a_donated_context_takes_it_back, {
     );
     thread::unbind_context(ch.c.thread).unwrap();
     let c = ch.c.tcb;
-    assert_eq!((c.wait(), x(c, 0)), (Wait::None, Ended::Canceled as u64));
+    assert_eq!(
+        (c.wait(), x(c, 0)),
+        (Wait::None, delivered(Status::Canceled))
+    );
     assert!(c.sc().is_none() && c.home().is_none());
     assert_eq!((sc_rec(ch.ctx).holder, sc_rec(ch.ctx).home), (None, None));
     assert!(run_until(walks_done, ms(2_000)));
@@ -405,38 +433,42 @@ crate::kernel_test!(unbinding_a_donated_context_takes_it_back, {
 
 crate::kernel_test!(destroying_a_reply_or_server_mid_walk, {
     // Destroying a server that serves a live donated call gives the
-    // context back to its caller, whose call ends "canceled"; the rest of
-    // the chain stands, and the caller can still reply.
+    // context back to its caller, whose call ends "object destroyed" (K30);
+    // the rest of the chain stands, and the caller can still reply.
     let mut sc = scratch();
     let ch = chain(&mut sc, 2, true, 2);
     cap::delete(ch.st[1]);
     let s1 = ch.s[0];
     assert_eq!(ch.holder(), Some(s1.0));
-    assert_eq!((s1.wait(), x(s1, 0)), (Wait::None, Ended::Canceled as u64));
+    assert_eq!(
+        (s1.wait(), x(s1, 0)),
+        (Wait::None, delivered(Status::ObjectDestroyed))
+    );
     assert!(is_live(ch.r[0]));
     assert!(run_until(walks_done, ms(2_000)));
     ch.check(&[ch.s[1]], &[]);
-    donation::reply(s1, ch.r[0], 5).unwrap();
-    assert_eq!((ch.holder(), x(ch.c.tcb, 1)), (Some(ch.c.tcb.0), 5));
+    reply(s1, ch.r[0], 5).unwrap();
+    assert_eq!((ch.holder(), x(ch.c.tcb, 2)), (Some(ch.c.tcb.0), 5));
     ch.check(&[ch.s[1]], &[]);
     testkit::finish(sc);
     // With a walk pending over C → S1 → S2 → S3, destroying the stale
     // r2 takes its step at once (S2's onward call canceled, then its
-    // fault), and destroying S3, which serves the stale r3, leaves the walk
-    // to skip it.
+    // fault; S1's call on r2 ends "object destroyed"), and destroying S3,
+    // which serves the stale r3, leaves the walk to skip it.
     let mut sc = scratch();
     let ch = chain(&mut sc, 3, true, 3);
     thread::cancel(ch.c.thread).unwrap();
     cap::delete(ch.rs[1]);
     assert_eq!(ch.s[1].wait(), Wait::WithdrawnSend);
-    assert_eq!(x(ch.s[1], 0), Ended::Canceled as u64);
-    assert_eq!(x(ch.s[0], 0), Ended::Canceled as u64);
+    assert_eq!(x(ch.s[1], 0), delivered(Status::Canceled));
+    assert_eq!(x(ch.s[0], 0), delivered(Status::ObjectDestroyed));
     cap::delete(ch.st[2]);
+
     ch.check(&[ch.s[2]], &[ch.r[1]]);
     assert!(run_until(walks_done, ms(2_000)));
-    assert_eq!(seam::sent_count(), 2);
+    assert_eq!(queue_len(ch.tep), 2);
     assert_eq!(
-        (seam::sent(0), seam::sent(1)),
+        (queued_at(ch.tep, 0), queued_at(ch.tep, 1)),
         (Some(ch.s[1]), Some(ch.s[0]))
     );
     assert_eq!(ch.s[0].wait(), Wait::WithdrawnSend);
@@ -452,13 +484,13 @@ crate::kernel_test!(mid_chain_cancel_and_two_take_backs, {
     let s1 = ch.s[0];
     thread::cancel_thread(s1).unwrap();
     assert_eq!(ch.holder(), Some(s1.0));
-    assert_eq!(x(s1, 0), Ended::Canceled as u64);
+    assert_eq!(x(s1, 0), delivered(Status::Canceled));
     assert!(is_live(ch.r[0]) && !is_live(ch.r[1]));
     ch.check(&[], &[]);
-    donation::reply(s1, ch.r[0], 9).unwrap();
-    assert_eq!((ch.holder(), x(ch.c.tcb, 1)), (Some(ch.c.tcb.0), 9));
+    reply(s1, ch.r[0], 9).unwrap();
+    assert_eq!((ch.holder(), x(ch.c.tcb, 2)), (Some(ch.c.tcb.0), 9));
     assert!(run_until(walks_done, ms(2_000)));
-    assert_eq!(seam::sent(0), Some(ch.s[1]));
+    assert_eq!(queued_at(ch.tep, 0), Some(ch.s[1]));
     ch.check(&[], &[]);
     testkit::finish(sc);
     // Two take-backs on one context while the first walk is pending:
@@ -470,11 +502,57 @@ crate::kernel_test!(mid_chain_cancel_and_two_take_backs, {
     assert_eq!(ch.holder(), Some(ch.c.tcb.0));
     ch.check(&[], &[]);
     assert!(run_until(walks_done, ms(2_000)));
-    assert_eq!(seam::sent_count(), 3);
-    assert_eq!(seam::sent(0), Some(ch.s[2]));
-    assert_eq!(seam::sent(1), Some(ch.s[0]));
-    assert_eq!(seam::sent(2), Some(ch.s[1]));
+    assert_eq!(queue_len(ch.tep), 3);
+    assert_eq!(queued_at(ch.tep, 0), Some(ch.s[2]));
+    assert_eq!(queued_at(ch.tep, 1), Some(ch.s[0]));
+    assert_eq!(queued_at(ch.tep, 2), Some(ch.s[1]));
     ch.check(&[], &[]);
+    testkit::finish(sc);
+});
+
+crate::kernel_test!(two_walks_share_the_work_list_in_turn, {
+    // K24 (C14): each unit moves the work list's first item to its back, so
+    // two take-backs' walks pending on one core take their steps in turn,
+    // where C12 ran each walk to its end. Each walk still faults its own
+    // servers in its order, S1 first. The units are run one at a time, as
+    // a batch runs them.
+    let mut sc = scratch();
+    let a = chain(&mut sc, 3, true, 0xa);
+    let b = chain(&mut sc, 3, true, 0xb);
+    thread::cancel(a.c.thread).unwrap();
+    thread::cancel(b.c.thread).unwrap();
+    // Which walk each unit faulted a server for, in order.
+    let mut order = [0u8; 8];
+    let mut n = 0;
+    let (mut la, mut lb) = (queue_len(a.tep), queue_len(b.tep));
+    while donation::work_unit() {
+        let (na, nb) = (queue_len(a.tep), queue_len(b.tep));
+        assert!(na + nb <= la + lb + 1, "a unit faulted two servers");
+        if na > la || nb > lb {
+            assert!(n < order.len(), "too many faults");
+            order[n] = if na > la { b'a' } else { b'b' };
+            n += 1;
+        }
+        (la, lb) = (na, nb);
+    }
+    assert_eq!((queue_len(a.tep), queue_len(b.tep)), (3, 3));
+    // Walk A was queued first. While both walks had steps left, they
+    // alternated; a walk run to its end would give "aaabbb".
+    let faults = &order[..n];
+    assert_eq!(faults.first(), Some(&b'a'), "{faults:?}");
+    for w in faults.windows(2) {
+        assert_ne!(w[0], w[1], "the walks didn't alternate: {faults:?}");
+    }
+    for ch in [&a, &b] {
+        for i in 0..3 {
+            assert_eq!(
+                queued_at(ch.tep, i),
+                Some(ch.s[i]),
+                "fault {i} out of order"
+            );
+        }
+        ch.check(&[], &[]);
+    }
     testkit::finish(sc);
 });
 
@@ -490,10 +568,10 @@ crate::kernel_test!(suspend_keeps_a_donated_call, {
     thread::suspend(ch.st[0]).unwrap();
     assert_eq!(ch.holder(), Some(s1.0));
     assert_eq!(c.wait(), Wait::Call);
-    assert_eq!(seam::sent_count(), 0);
-    donation::reply(s1, ch.r[0], 3).unwrap();
+    assert_eq!(queue_len(ch.tep), 0);
+    reply(s1, ch.r[0], 3).unwrap();
     assert_eq!(
-        (c.wait(), x(c, 0), x(c, 1)),
+        (c.wait(), x(c, 0), x(c, 2)),
         (Wait::None, Ended::Done as u64, 3)
     );
     assert!(
@@ -524,13 +602,16 @@ fn many(sc: &mut Scratch, ty: ObjectType, n: u64) -> SlotRef {
 }
 
 crate::kernel_test!(long_chain_take_back_runs_in_batches, {
-    // 250 passive servers: the walk takes 250 units, so at least three
-    // batches of at most 100; every server is faulted, S1 first (ADR 0052,
-    // rule 2; K24).
+    // 250 passive servers: each walk step that ends a server's onward call
+    // costs 2 units, its own and the call's wait (C14's `step_cost`), and
+    // the last costs 1, so the walk takes 499 units, at least five batches
+    // of at most 100; every server is faulted, S1 first (ADR 0052, rule 2;
+    // K23, K24).
     const N: usize = 250;
     let mut sc = scratch();
     let s = space(&mut sc);
     let ep = endpoint(&mut sc);
+    let cep = endpoint(&mut sc);
     let c = caller(&mut sc, s, 0x250);
     let ts = many(&mut sc, ObjectType::Thread, N as u64);
     let rs = many(&mut sc, ObjectType::Reply, N as u64);
@@ -543,11 +624,16 @@ crate::kernel_test!(long_chain_take_back_runs_in_batches, {
         thread::set_endpoint(t, Binding::TimeoutEndpoint, Some(ep)).unwrap();
         threads[i] = tcb(t);
         replies[i] = Rp::of(&cap::cap(rs.offset(i as u64))).unwrap();
-        donation::recv(threads[i], replies[i]).unwrap();
+        let r = endpoint::recv(threads[i], epc(cep), rr(replies[i]), 0);
+        assert_eq!(r, Ok(Outcome::Blocked));
     }
     let mut from = c.tcb;
-    for (i, &t) in threads[..N].iter().enumerate() {
-        donation::call(from, t, i as u64).unwrap();
+    for &t in &threads[..N] {
+        assert_eq!(
+            endpoint::call(from, epc(cep), info(0, 0, 0), 0),
+            Ok(Outcome::Blocked)
+        );
+        assert_eq!(t.wait(), Wait::None, "the call went elsewhere");
         from = t;
     }
     let ctx = sc_of(c.context);
@@ -563,11 +649,14 @@ crate::kernel_test!(long_chain_take_back_runs_in_batches, {
         donation::steps(Step::WalkStep(ksched::donation::Reply(0))) - steps,
         N as u64
     );
-    assert!(now.batches_of[2] - st.batches_of[2] >= N.div_ceil(100) as u64);
+    let walk_units = 2 * N as u64 - 1;
+    assert!(
+        now.batches_of[2] - st.batches_of[2] >= walk_units.div_ceil(ksched::BATCH_UNITS as u64)
+    );
     assert!(now.batch_max <= ksched::BATCH_UNITS as u64);
-    assert_eq!(seam::sent_count(), N);
+    assert_eq!(queue_len(ep), N);
     for (i, t) in threads[..64].iter().enumerate() {
-        assert_eq!(seam::sent(i), Some(*t), "fault {i} out of order");
+        assert_eq!(queued_at(ep, i), Some(*t), "fault {i} out of order");
     }
     for t in &threads[..N] {
         assert_eq!(t.wait(), Wait::WithdrawnSend);
@@ -655,8 +744,9 @@ crate::kernel_test!(server_runs_on_the_callers_budget_at_el0, {
     let mut sc = scratch();
     let s = space(&mut sc);
     let (r_slot, _) = reply_obj(&mut sc);
+    let sep = endpoint(&mut sc);
     let mut spec = Spec::of(Program::Serve);
-    spec.args = [sc.addr_of(r_slot), 20_000, 0];
+    spec.args = [sc.addr_of(sep), 20_000, sc.addr_of(r_slot)];
     let srv = spawn_in(&mut sc, s, spec);
     watch(srv.tcb);
     assert!(
@@ -667,7 +757,7 @@ crate::kernel_test!(server_runs_on_the_callers_budget_at_el0, {
     thread::unbind_context(srv.thread).unwrap();
     let own_used = own.header().consumed;
     let mut spec = Spec::of(Program::CallReport);
-    spec.args = [sc.addr_of(srv.thread), 0, 41];
+    spec.args = [sc.addr_of(sep), 0, 41];
     spec.badge = 0xca11;
     let cl = spawn_in(&mut sc, s, spec);
     let ctx = sc_of(cl.context);
@@ -689,15 +779,16 @@ crate::kernel_test!(server_runs_on_the_callers_budget_at_el0, {
     // context-withdrawn fault.
     let (r2, _) = reply_obj(&mut sc);
     let ep = endpoint(&mut sc);
+    let sep2 = endpoint(&mut sc);
     let mut spec = Spec::of(Program::Serve);
-    spec.args = [sc.addr_of(r2), u64::MAX, 0];
+    spec.args = [sc.addr_of(sep2), u64::MAX, sc.addr_of(r2)];
     let srv2 = spawn_in(&mut sc, s, spec);
     watch(srv2.tcb);
     assert!(run_until(w_receiving, ms(2_000)));
     thread::set_endpoint(srv2.thread, Binding::TimeoutEndpoint, Some(ep)).unwrap();
     thread::unbind_context(srv2.thread).unwrap();
     let mut spec = Spec::of(Program::CallReport);
-    spec.args = [sc.addr_of(srv2.thread), 0, 5];
+    spec.args = [sc.addr_of(sep2), 0, 5];
     spec.budget_us = 200;
     spec.period_us = 10_000;
     spec.badge = 0xfeed;
@@ -716,7 +807,7 @@ crate::kernel_test!(server_runs_on_the_callers_budget_at_el0, {
     );
     assert_eq!(
         report::values_of(cl2.tcb.0).next(),
-        Some(Ended::Canceled as u64)
+        Some(delivered(Status::Canceled))
     );
     assert!(run_until(walks_done, ms(2_000)));
     let f = srv2.tcb.state().fault;

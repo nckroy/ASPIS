@@ -207,9 +207,12 @@ jobs:
           if-no-files-found: ignore
 
   # TLC over the TLA+ specs, with CI-sized constants, and trace validation
-  # of ksched's donation, when a spec or the traced code changes (ADR 0068,
-  # rule 10; call-language specification, "Per change"), within one
-  # 10-minute budget that `cargo xtask tlc` enforces.
+  # of ksched's donation and kipc's endpoints and eventcounts, when a spec
+  # or the traced code changes (crates/ksched/, crates/kipc/, and the
+  # crates kipc builds on, crates/kcap/ and crates/kmem/; the paths are
+  # tools/ci/code-changed.sh's) (ADR 0068, rule 10; call-language
+  # specification, "Per change"), within one 10-minute budget that
+  # `cargo xtask tlc` enforces.
   #
   # The JRE is the runner image's Eclipse Temurin 21 (or, failing that,
   # Ubuntu's OpenJDK 21), under GPL-2.0-only WITH Classpath-exception-2.0. It runs only here, is never linked into ASPIS

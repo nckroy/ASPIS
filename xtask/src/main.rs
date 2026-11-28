@@ -29,8 +29,10 @@
 //!                                           grammar, in build/fuzz/dict
 //! cargo xtask tlc [--nightly]               the TLA+ specs in specs/, with
 //!                                           TLC, and trace validation of
-//!                                           ksched's donation (nightly:
-//!                                           the nightly model too)
+//!                                           ksched's donation and kipc's
+//!                                           endpoints and eventcounts
+//!                                           (nightly: the nightly models
+//!                                           too)
 //! cargo xtask grub                          GRUB 2.14 arm64-efi, in Docker
 //! cargo xtask fuzz <command>                the fuzz targets (fuzz/README.md)
 //! ```
@@ -554,6 +556,8 @@ fn test(host_only: bool) {
                 "-p",
                 "ksched",
                 "-p",
+                "kipc",
+                "-p",
                 "initfs",
                 "-p",
                 "glyph-atlas",
@@ -917,6 +921,8 @@ fn lint() {
         "-p",
         "ksched",
         "-p",
+        "kipc",
+        "-p",
         "initfs",
         "-p",
         "glyph-atlas",
@@ -984,14 +990,15 @@ fn lint() {
             .args(["--", "-D", "warnings"]),
     );
     // The crates the catalog and generated bindings run are no_std (ADR
-    // 0067, rule 11), and so is ksched, the kernel's: build them for a
-    // target without std, so a dependency that pulls std in fails here, not
-    // later. So is aspis-crypto, with and without alloc (ADR 0069, rule 2).
+    // 0067, rule 11), and so are ksched and kipc, the kernel's: build them
+    // for a target without std, so a dependency that pulls std in fails
+    // here, not later. So is aspis-crypto, with and without alloc (ADR 0069,
+    // rule 2).
     run_cmd(
         cargo()
             .args(["build", "--locked", "--target", "aarch64-unknown-none"])
             .args(["-p", "abnf", "-p", "idl-rt", "-p", "idl", "-p", "ksched"])
-            .args(["-p", "aspis-interfaces", "-p", "aspis-crypto"])
+            .args(["-p", "kipc", "-p", "aspis-interfaces", "-p", "aspis-crypto"])
             .args(["--features", "aspis-interfaces/alloc,aspis-crypto/alloc"])
             .env("CARGO_TARGET_DIR", build_dir().join("target-nostd")),
     );

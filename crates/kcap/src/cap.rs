@@ -12,14 +12,16 @@
 //! |---|---|---|
 //! | Untyped | tag, device (5), size bits (6-11), base (12-47, in place) | watermark |
 //! | CNode | tag, radix (5-10), guard size (11-16), pointer >> 6 (17-58) | guard |
-//! | Frame | tag, device (5), size code (6-7), rights (8-11), base >> 12 (16-51) | 0, or a binding's mapping: VA, with bit 0 set, write in bit 1, execute in bit 2 |
+//! | Frame | tag, device (5), size code (6-7), rights (8-11), base >> 12 (16-51) | 0; or a binding's mapping: VA, with bit 0 set, write in bit 1, execute in bit 2; or bit 3 alone, a thread's IPC buffer (C14) |
 //! | Address space | tag, rights (5-8), base (13-47, in place) | 0 |
 //! | Endpoint | tag, rights (5-8), pointer >> 6 (9-50), binding (51-52) | badge, 0 if unbadged |
-//! | Zombie | tag, zombie kind (5-7), radix (8-13), pointer >> 6 (14-55) | slots still to clear |
+//! | Zombie | tag, zombie kind (5-7), radix or size bits (8-13), pointer >> 6 (14-55) | slots still to clear; for an endpoint or an eventcount, 1 while waiters are left |
 //! | Thread | tag, rights (5-8), pointer >> 11 (9-45) | 0 |
 //! | Scheduling context | tag, size bits (5-8), binding (9-10), pointer >> 8 (11-50) | 0 |
 //! | Scheduling control | tag, core (5-12) | 0 |
 //! | Reply object | tag, rights (5-8), pointer >> 7 (9-49) | 0 |
+//! | Eventcount | tag, rights (5-8), pointer >> 6 (9-50), binding (51-53), wait set's size bits (54-57) | 0 |
+//! | Wait set | tag, rights (5-8), size bits (9-12), pointer >> 7 (13-53) | 0 |
 //!
 //! **Bindings** (C12). A copy that a thread keeps of an endpoint or a
 //! scheduling context presented to it records its role in its own encoding
@@ -29,7 +31,11 @@
 //! the object that holds the slot: its address rounded down to the thread's
 //! 2 KiB. A thread's root CNode and address space are plain copies: the
 //! kernel checks for them whenever it picks the thread to run, so they need
-//! no unbind step. C13b and C14 add the eventcount's roles.
+//! no unbind step. C14 adds a thread's bound eventcount (slot 6) and IPC
+//! buffer (slot 7, a frame's copy), and a wait-set entry's copy of its
+//! eventcount, which records its set's size so its unbind step finds the
+//! set by rounding its slot's address down (kernel specification K07).
+//! C13b adds the interrupt handler's eventcount.
 //!
 //! Physical and virtual addresses are below 2^48. Every other bit is zero,
 //! and [`Cap::decode`] refuses words that don't re-encode to themselves, so
@@ -37,8 +43,9 @@
 //! (ADR 0050, rule 1).
 
 use kmem::untyped::{
-    ADDRESS_SPACE_BITS, ENDPOINT_BITS, MAX_BITS, MAX_RADIX, MAX_SCHED_CONTEXT_BITS, MIN_BITS,
-    MIN_RADIX, MIN_SCHED_CONTEXT_BITS, REPLY_BITS, THREAD_BITS,
+    ADDRESS_SPACE_BITS, ENDPOINT_BITS, EVENTCOUNT_BITS, MAX_BITS, MAX_RADIX,
+    MAX_SCHED_CONTEXT_BITS, MAX_WAIT_SET_BITS, MIN_BITS, MIN_RADIX, MIN_SCHED_CONTEXT_BITS,
+    MIN_WAIT_SET_BITS, REPLY_BITS, THREAD_BITS,
 };
 use kmem::{BLOCK_1G, BLOCK_2M, PAGE_SIZE};
 
@@ -56,6 +63,8 @@ const TAG_THREAD: u64 = 7;
 const TAG_SCHED_CONTEXT: u64 = 8;
 const TAG_SCHED_CONTROL: u64 = 9;
 const TAG_REPLY: u64 = 10;
+const TAG_EVENTCOUNT: u64 = 11;
+const TAG_WAIT_SET: u64 = 12;
 
 /// Slots in a thread: slot 0 is the park slot; slots 1 to 7 hold its root
 /// CNode, address space, fault endpoint, timeout endpoint, scheduling
@@ -130,9 +139,10 @@ pub struct Mapping {
     pub exec: bool,
 }
 
-/// The role of a copy that a thread keeps (module docs). Each role fits one
+/// The role of a copy the kernel keeps (module docs). Each role fits one
 /// kind: the endpoints' roles an endpoint, the context's a scheduling
-/// context.
+/// context, the eventcount's roles an eventcount, the IPC buffer's a frame
+/// (C15: a memory object).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Binding {
     /// The thread's fault endpoint, in thread slot 3.
@@ -141,15 +151,29 @@ pub enum Binding {
     TimeoutEndpoint,
     /// The thread's scheduling context, in thread slot 5.
     Context,
+    /// The thread's bound eventcount, in thread slot 6 (C14; ADR 0053,
+    /// rule 5).
+    BoundEventcount,
+    /// The frame that backs the thread's IPC buffer, in thread slot 7 (C14;
+    /// kernel specification K29), as seL4's `tcbBuffer` holds a frame.
+    IpcBuffer,
+    /// A wait-set entry's copy of its eventcount, in one of the wait set's
+    /// slots (C14; ADR 0053, rule 4). Not a thread's.
+    WaitSetEntry,
 }
 
 impl Binding {
+    /// The role's code, in three bits. A frame records its one role in a
+    /// bit of its own instead.
     const fn code(b: Option<Binding>) -> u64 {
         match b {
             None => 0,
             Some(Binding::FaultEndpoint) => 1,
             Some(Binding::TimeoutEndpoint) => 2,
             Some(Binding::Context) => 3,
+            Some(Binding::BoundEventcount) => 4,
+            Some(Binding::IpcBuffer) => 5,
+            Some(Binding::WaitSetEntry) => 6,
         }
     }
 
@@ -158,16 +182,29 @@ impl Binding {
             1 => Some(Binding::FaultEndpoint),
             2 => Some(Binding::TimeoutEndpoint),
             3 => Some(Binding::Context),
+            4 => Some(Binding::BoundEventcount),
+            5 => Some(Binding::IpcBuffer),
+            6 => Some(Binding::WaitSetEntry),
             _ => None,
         }
     }
 
-    /// The thread slot that holds a copy in this role.
+    /// Whether a thread keeps copies in this role, in one of its slots.
+    pub const fn is_thread_role(self) -> bool {
+        !matches!(self, Binding::WaitSetEntry)
+    }
+
+    /// The thread slot that holds a copy in this role. A wait-set entry
+    /// isn't a thread's ([`Binding::is_thread_role`]): for it this is 0, the
+    /// park slot, which never holds a binding, so it names no binding slot.
     pub const fn thread_slot(self) -> u64 {
         match self {
             Binding::FaultEndpoint => 3,
             Binding::TimeoutEndpoint => 4,
             Binding::Context => 5,
+            Binding::BoundEventcount => 6,
+            Binding::IpcBuffer => 7,
+            Binding::WaitSetEntry => 0,
         }
     }
 
@@ -181,9 +218,21 @@ impl Binding {
     const fn fits_context(b: Option<Binding>) -> bool {
         matches!(b, None | Some(Binding::Context))
     }
+
+    const fn fits_eventcount(b: Option<Binding>) -> bool {
+        matches!(
+            b,
+            None | Some(Binding::BoundEventcount | Binding::WaitSetEntry)
+        )
+    }
+
+    const fn fits_frame(b: Option<Binding>) -> bool {
+        matches!(b, None | Some(Binding::IpcBuffer))
+    }
 }
 
-/// Which object a zombie is finishing: the kinds that have slots.
+/// Which object a zombie is finishing: the kinds that have slots, and the
+/// kinds that have queues of waiting threads (C14).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ZombieKind {
     /// A CNode of `2^radix` slots.
@@ -192,6 +241,34 @@ pub enum ZombieKind {
     AddressSpace,
     /// A thread: its eight slots (C12).
     Thread,
+    /// A wait set of `2^bits` bytes: the slots of its first half (C14).
+    WaitSet { bits: u8 },
+    /// An endpoint with its queue still to drain (C14): a queue zombie.
+    Endpoint,
+    /// An eventcount with its waiters still to release (C14): a queue
+    /// zombie.
+    Eventcount,
+}
+
+impl ZombieKind {
+    /// Whether this is a queue zombie: an endpoint or an eventcount, whose
+    /// object has no slots, only waiters. Its zombie has an empty slot
+    /// array, and each step of it releases one waiter (kernel
+    /// specification, "Derivation and revocation"; ADR 0052, rule 2).
+    pub const fn is_queue(self) -> bool {
+        matches!(self, ZombieKind::Endpoint | ZombieKind::Eventcount)
+    }
+}
+
+/// The capability slots of a wait set of `2^bits` bytes: its first half,
+/// `2^(bits - 6)` slots of 32 bytes. Slot 0 is the park slot; slot i holds
+/// entry i's eventcount (C14; kernel specification K07 and K33).
+pub const fn wait_set_slots(bits: u8) -> u64 {
+    if bits < MIN_WAIT_SET_BITS || bits > MAX_WAIT_SET_BITS {
+        0
+    } else {
+        1 << (bits - 6)
+    }
 }
 
 /// The kind of object a capability names, as identify reports it (ADR 0047,
@@ -209,6 +286,8 @@ pub enum Kind {
     SchedContext,
     SchedControl,
     Reply,
+    Eventcount,
+    WaitSet,
 }
 
 /// A capability, decoded.
@@ -233,13 +312,16 @@ pub enum Cap {
         guard: u64,
     },
     /// A frame. `mapping` is set only on a binding: the copy that a mapping
-    /// keeps in an address space's record (ADR 0049, rule 4).
+    /// keeps in an address space's record (ADR 0049, rule 4). `binding` is
+    /// set only on the copy a thread keeps of its IPC buffer's frame, in
+    /// thread slot 7 (C14; K29); a frame never has both.
     Frame {
         base: u64,
         size: FrameSize,
         device: bool,
         rights: Rights,
         mapping: Option<Mapping>,
+        binding: Option<Binding>,
     },
     /// An address space: its level-0 table, then its record.
     AddressSpace { base: u64, rights: Rights },
@@ -276,6 +358,20 @@ pub enum Cap {
     /// A reply object (C12; seL4 MCS). The grant right lets a reply carry
     /// capabilities (C14).
     Reply { ptr: u64, rights: Rights },
+    /// An eventcount (C14; ADR 0053). The write right advances it, the read
+    /// right reads and waits on it. `binding` is set only on a thread's
+    /// copy of its bound eventcount, or a wait-set entry's copy; an entry's
+    /// copy records its set's size bits in `set_bits`, which is 0 on every
+    /// other eventcount capability.
+    Eventcount {
+        ptr: u64,
+        rights: Rights,
+        binding: Option<Binding>,
+        set_bits: u8,
+    },
+    /// A wait set of `2^bits` bytes (C14; ADR 0053, rule 4; K33). The write
+    /// right adds and removes entries, the read right waits (K32).
+    WaitSet { ptr: u64, bits: u8, rights: Rights },
 }
 
 impl Cap {
@@ -315,6 +411,7 @@ impl Cap {
                 device,
                 rights,
                 mapping,
+                binding,
             } => {
                 let w1 = match mapping {
                     None => 0,
@@ -324,7 +421,7 @@ impl Cap {
                             | (m.exec as u64) << 2
                             | 1
                     }
-                };
+                } | (matches!(binding, Some(Binding::IpcBuffer)) as u64) << 3;
                 [
                     TAG_FRAME
                         | (device as u64) << 5
@@ -359,7 +456,7 @@ impl Cap {
             Cap::SchedContext { ptr, bits, binding } => [
                 TAG_SCHED_CONTEXT
                     | (bits as u64 & 15) << 5
-                    | Binding::code(binding) << 9
+                    | (Binding::code(binding) & 3) << 9
                     | ((ptr & ADDR_MASK) >> 8) << 11,
                 0,
             ],
@@ -368,11 +465,34 @@ impl Cap {
                 TAG_REPLY | (rights.bits() as u64) << 5 | ((ptr & ADDR_MASK) >> 7) << 9,
                 0,
             ],
+            Cap::Eventcount {
+                ptr,
+                rights,
+                binding,
+                set_bits,
+            } => [
+                TAG_EVENTCOUNT
+                    | (rights.bits() as u64) << 5
+                    | ((ptr & ADDR_MASK) >> 6) << 9
+                    | Binding::code(binding) << 51
+                    | (set_bits as u64 & 15) << 54,
+                0,
+            ],
+            Cap::WaitSet { ptr, bits, rights } => [
+                TAG_WAIT_SET
+                    | (rights.bits() as u64) << 5
+                    | (bits as u64 & 15) << 9
+                    | ((ptr & ADDR_MASK) >> 7) << 13,
+                0,
+            ],
             Cap::Zombie { kind, ptr, n } => {
                 let (code, radix) = match kind {
                     ZombieKind::CNode { radix } => (0, radix),
                     ZombieKind::AddressSpace => (1, 0),
                     ZombieKind::Thread => (2, 0),
+                    ZombieKind::Endpoint => (3, 0),
+                    ZombieKind::Eventcount => (4, 0),
+                    ZombieKind::WaitSet { bits } => (5, bits),
                 };
                 [
                     TAG_ZOMBIE
@@ -417,6 +537,11 @@ impl Cap {
                         exec: w1 & 4 != 0,
                     })
                 },
+                binding: if w1 & 8 == 0 {
+                    None
+                } else {
+                    Some(Binding::IpcBuffer)
+                },
             },
             TAG_ADDRESS_SPACE => Cap::AddressSpace {
                 base: w0 & ADDR_MASK & !mask(ADDRESS_SPACE_BITS as u32),
@@ -444,6 +569,17 @@ impl Cap {
                 ptr: ((w0 >> 9) & mask(41)) << 7,
                 rights: Rights::from_bits((w0 >> 5) as u8),
             },
+            TAG_EVENTCOUNT => Cap::Eventcount {
+                ptr: ((w0 >> 9) & mask(42)) << 6,
+                rights: Rights::from_bits((w0 >> 5) as u8),
+                binding: Binding::from_code((w0 >> 51) & 7),
+                set_bits: ((w0 >> 54) & 15) as u8,
+            },
+            TAG_WAIT_SET => Cap::WaitSet {
+                ptr: ((w0 >> 13) & mask(41)) << 7,
+                bits: ((w0 >> 9) & 15) as u8,
+                rights: Rights::from_bits((w0 >> 5) as u8),
+            },
             TAG_ZOMBIE => Cap::Zombie {
                 kind: match (w0 >> 5) & 7 {
                     0 => ZombieKind::CNode {
@@ -451,6 +587,11 @@ impl Cap {
                     },
                     1 => ZombieKind::AddressSpace,
                     2 => ZombieKind::Thread,
+                    3 => ZombieKind::Endpoint,
+                    4 => ZombieKind::Eventcount,
+                    5 => ZombieKind::WaitSet {
+                        bits: ((w0 >> 8) & 63) as u8,
+                    },
                     _ => return None,
                 },
                 ptr: ((w0 >> 14) & mask(42)) << 6,
@@ -491,9 +632,12 @@ impl Cap {
                 base,
                 size,
                 mapping,
+                binding,
                 ..
             } => {
                 aligned(base, size.bytes().trailing_zeros())
+                    && Binding::fits_frame(binding)
+                    && !(mapping.is_some() && binding.is_some())
                     && match mapping {
                         None => true,
                         Some(m) => {
@@ -515,6 +659,23 @@ impl Cap {
             }
             Cap::SchedControl { .. } => true,
             Cap::Reply { ptr, .. } => aligned(ptr, REPLY_BITS as u32),
+            Cap::Eventcount {
+                ptr,
+                binding,
+                set_bits,
+                ..
+            } => {
+                aligned(ptr, EVENTCOUNT_BITS as u32)
+                    && Binding::fits_eventcount(binding)
+                    && if matches!(binding, Some(Binding::WaitSetEntry)) {
+                        (MIN_WAIT_SET_BITS..=MAX_WAIT_SET_BITS).contains(&set_bits)
+                    } else {
+                        set_bits == 0
+                    }
+            }
+            Cap::WaitSet { ptr, bits, .. } => {
+                (MIN_WAIT_SET_BITS..=MAX_WAIT_SET_BITS).contains(&bits) && aligned(ptr, bits as u32)
+            }
             Cap::Zombie { kind, ptr, n } => match kind {
                 ZombieKind::CNode { radix } => {
                     (MIN_RADIX..=MAX_RADIX).contains(&radix)
@@ -525,6 +686,13 @@ impl Cap {
                     aligned(ptr, ADDRESS_SPACE_BITS as u32) && n <= RECORD_SLOTS
                 }
                 ZombieKind::Thread => aligned(ptr, THREAD_BITS as u32) && n <= THREAD_SLOTS,
+                ZombieKind::WaitSet { bits } => {
+                    (MIN_WAIT_SET_BITS..=MAX_WAIT_SET_BITS).contains(&bits)
+                        && aligned(ptr, bits as u32)
+                        && n <= wait_set_slots(bits)
+                }
+                ZombieKind::Endpoint => aligned(ptr, ENDPOINT_BITS as u32) && n <= 1,
+                ZombieKind::Eventcount => aligned(ptr, EVENTCOUNT_BITS as u32) && n <= 1,
             },
         }
     }
@@ -542,6 +710,8 @@ impl Cap {
             Cap::SchedContext { .. } => Kind::SchedContext,
             Cap::SchedControl { .. } => Kind::SchedControl,
             Cap::Reply { .. } => Kind::Reply,
+            Cap::Eventcount { .. } => Kind::Eventcount,
+            Cap::WaitSet { .. } => Kind::WaitSet,
         }
     }
 
@@ -554,7 +724,9 @@ impl Cap {
             | Cap::AddressSpace { rights, .. }
             | Cap::Endpoint { rights, .. }
             | Cap::Thread { rights, .. }
-            | Cap::Reply { rights, .. } => rights,
+            | Cap::Reply { rights, .. }
+            | Cap::Eventcount { rights, .. }
+            | Cap::WaitSet { rights, .. } => rights,
             _ => Rights::NONE,
         }
     }
@@ -569,12 +741,14 @@ impl Cap {
                 device,
                 rights,
                 mapping,
+                binding,
             } => Cap::Frame {
                 base,
                 size,
                 device,
                 rights: rights.mask(mask),
                 mapping,
+                binding,
             },
             Cap::AddressSpace { base, rights } => Cap::AddressSpace {
                 base,
@@ -599,6 +773,22 @@ impl Cap {
                 ptr,
                 rights: rights.mask(mask),
             },
+            Cap::Eventcount {
+                ptr,
+                rights,
+                binding,
+                set_bits,
+            } => Cap::Eventcount {
+                ptr,
+                rights: rights.mask(mask),
+                binding,
+                set_bits,
+            },
+            Cap::WaitSet { ptr, bits, rights } => Cap::WaitSet {
+                ptr,
+                bits,
+                rights: rights.mask(mask),
+            },
             other => other,
         }
     }
@@ -612,14 +802,19 @@ impl Cap {
     }
 
     /// Whether the capability is a binding the kernel keeps: a frame mapped
-    /// in an address space (C11), or a thread's copy of its fault endpoint,
-    /// timeout endpoint or scheduling context (C12). Deleting it, or making
-    /// it a zombie, runs its unbind hook first.
+    /// in an address space (C11); a thread's copy of its fault endpoint,
+    /// timeout endpoint or scheduling context (C12), of its bound
+    /// eventcount or its IPC buffer's frame (C14); or a wait-set entry's
+    /// copy of its eventcount (C14). Deleting it, or making it a zombie,
+    /// runs its unbind hook first.
     pub const fn is_binding(&self) -> bool {
         matches!(
             self,
             Cap::Frame {
                 mapping: Some(_),
+                ..
+            } | Cap::Frame {
+                binding: Some(_),
                 ..
             } | Cap::Endpoint {
                 binding: Some(_),
@@ -627,23 +822,78 @@ impl Cap {
             } | Cap::SchedContext {
                 binding: Some(_),
                 ..
+            } | Cap::Eventcount {
+                binding: Some(_),
+                ..
             }
         )
     }
 
-    /// The role of a thread's copy (module docs), if it is one.
+    /// The role of a copy the kernel keeps (module docs), if it is one. A
+    /// frame's mapping has no role: it is an address space's binding.
     pub const fn binding(&self) -> Option<Binding> {
         match *self {
-            Cap::Endpoint { binding, .. } | Cap::SchedContext { binding, .. } => binding,
+            Cap::Endpoint { binding, .. }
+            | Cap::SchedContext { binding, .. }
+            | Cap::Eventcount { binding, .. }
+            | Cap::Frame { binding, .. } => binding,
+            _ => None,
+        }
+    }
+
+    /// The same eventcount capability as a wait-set entry's copy, for a set
+    /// of `2^set_bits` bytes, or `None` if it isn't an eventcount or the
+    /// size is out of range (C14).
+    pub const fn as_wait_set_entry(self, set_bits: u8) -> Option<Cap> {
+        match self {
+            Cap::Eventcount { ptr, rights, .. }
+                if set_bits >= MIN_WAIT_SET_BITS && set_bits <= MAX_WAIT_SET_BITS =>
+            {
+                Some(Cap::Eventcount {
+                    ptr,
+                    rights,
+                    binding: Some(Binding::WaitSetEntry),
+                    set_bits,
+                })
+            }
             _ => None,
         }
     }
 
     /// The same capability as a thread's copy in role `role`, or `None` if
     /// the role doesn't fit its kind. Only an endpoint takes the endpoints'
-    /// roles, and only a scheduling context the context's.
+    /// roles, only a scheduling context the context's, only an eventcount
+    /// the bound eventcount's, and only an unmapped frame the IPC buffer's.
+    /// A wait-set entry's role needs its set's size: see
+    /// [`Cap::as_wait_set_entry`].
     pub const fn with_binding(self, role: Binding) -> Option<Cap> {
         match (self, role) {
+            (Cap::Eventcount { ptr, rights, .. }, Binding::BoundEventcount) => {
+                Some(Cap::Eventcount {
+                    ptr,
+                    rights,
+                    binding: Some(role),
+                    set_bits: 0,
+                })
+            }
+            (
+                Cap::Frame {
+                    base,
+                    size,
+                    device,
+                    rights,
+                    mapping: None,
+                    ..
+                },
+                Binding::IpcBuffer,
+            ) => Some(Cap::Frame {
+                base,
+                size,
+                device,
+                rights,
+                mapping: None,
+                binding: Some(role),
+            }),
             (
                 Cap::Endpoint {
                     ptr, rights, badge, ..
@@ -679,12 +929,17 @@ impl Cap {
             // Scheduling control names a core, not memory.
             Cap::SchedControl { .. } => None,
             Cap::Reply { ptr, .. } => Some((ptr, 1 << REPLY_BITS)),
+            Cap::Eventcount { ptr, .. } => Some((ptr, 1 << EVENTCOUNT_BITS)),
+            Cap::WaitSet { ptr, bits, .. } => Some((ptr, 1 << bits)),
             Cap::Zombie { kind, ptr, .. } => Some((
                 ptr,
                 match kind {
                     ZombieKind::CNode { radix } => 1 << (radix as u32 + SLOT_BITS),
                     ZombieKind::AddressSpace => 1 << ADDRESS_SPACE_BITS,
                     ZombieKind::Thread => 1 << THREAD_BITS,
+                    ZombieKind::WaitSet { bits } => 1 << bits,
+                    ZombieKind::Endpoint => 1 << ENDPOINT_BITS,
+                    ZombieKind::Eventcount => 1 << EVENTCOUNT_BITS,
                 },
             )),
         }
@@ -710,21 +965,33 @@ impl Cap {
                 | (Cap::Thread { .. }, Cap::Thread { .. })
                 | (Cap::SchedContext { .. }, Cap::SchedContext { .. })
                 | (Cap::Reply { .. }, Cap::Reply { .. })
+                | (Cap::Eventcount { .. }, Cap::Eventcount { .. })
+                | (Cap::WaitSet { .. }, Cap::WaitSet { .. })
         );
         same_kind && self.object() == other.object()
     }
 
-    /// Whether the object has slots of its own, and so becomes a zombie
-    /// when its last capability is deleted.
+    /// Whether the object has slots of its own: a CNode, an address space,
+    /// a thread or a wait set.
     pub const fn has_slots(&self) -> bool {
         matches!(
             self,
-            Cap::CNode { .. } | Cap::AddressSpace { .. } | Cap::Thread { .. }
+            Cap::CNode { .. } | Cap::AddressSpace { .. } | Cap::Thread { .. } | Cap::WaitSet { .. }
         )
     }
 
-    /// The zombie that finishes this capability's object, with every slot
-    /// still to clear, if the object has slots.
+    /// Whether the object may have a queue of waiting threads: an endpoint
+    /// or an eventcount (C14). Its last capability becomes a queue zombie,
+    /// which releases one waiter per step.
+    pub const fn has_queue(&self) -> bool {
+        matches!(self, Cap::Endpoint { .. } | Cap::Eventcount { .. })
+    }
+
+    /// The zombie that finishes this capability's object when its last
+    /// capability is deleted: for an object with slots, with every slot
+    /// still to clear; for an endpoint or an eventcount, a queue zombie
+    /// with its waiters still to release (n = 1, C14). `None` for other
+    /// kinds, whose objects finish at once.
     pub const fn zombie(&self) -> Option<Cap> {
         match *self {
             Cap::CNode { ptr, radix, .. } => Some(Cap::Zombie {
@@ -741,6 +1008,21 @@ impl Cap {
                 kind: ZombieKind::Thread,
                 ptr,
                 n: THREAD_SLOTS,
+            }),
+            Cap::WaitSet { ptr, bits, .. } => Some(Cap::Zombie {
+                kind: ZombieKind::WaitSet { bits },
+                ptr,
+                n: wait_set_slots(bits),
+            }),
+            Cap::Endpoint { ptr, .. } => Some(Cap::Zombie {
+                kind: ZombieKind::Endpoint,
+                ptr,
+                n: 1,
+            }),
+            Cap::Eventcount { ptr, .. } => Some(Cap::Zombie {
+                kind: ZombieKind::Eventcount,
+                ptr,
+                n: 1,
             }),
             _ => None,
         }
@@ -761,7 +1043,9 @@ pub const fn guard_ok(radix: u8, guard_size: u8, guard: u64) -> bool {
 /// many there are. A CNode's array is the CNode. An address space's is its
 /// record's slots: slot 0 is the park slot, and slots 1 to 126 are the
 /// binding slots its mappings use. A thread's is its first eight slots, of
-/// which slot 0 is the park slot ([`THREAD_SLOTS`]).
+/// which slot 0 is the park slot ([`THREAD_SLOTS`]). A wait set's is its
+/// first half, of which slot 0 is the park slot ([`wait_set_slots`]). An
+/// endpoint or an eventcount has none: its zombie is a queue zombie.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SlotArray {
     pub base: u64,
@@ -769,32 +1053,44 @@ pub struct SlotArray {
 }
 
 impl SlotArray {
-    /// The array of a zombie's object.
-    pub const fn of(kind: ZombieKind, ptr: u64) -> SlotArray {
+    /// The array of a zombie's object, or `None` for a queue zombie, whose
+    /// object has no slots: the deletion never reads an endpoint's or an
+    /// eventcount's words as slots.
+    pub const fn of(kind: ZombieKind, ptr: u64) -> Option<SlotArray> {
         match kind {
-            ZombieKind::CNode { radix } => SlotArray {
+            ZombieKind::CNode { radix } => Some(SlotArray {
                 base: ptr,
                 count: 1 << radix,
-            },
-            ZombieKind::AddressSpace => SlotArray {
-                base: ptr + RECORD_OFFSET + RECORD_HEADER,
-                count: RECORD_SLOTS,
-            },
-            ZombieKind::Thread => SlotArray {
-                base: ptr,
-                count: THREAD_SLOTS,
-            },
+            }),
+            ZombieKind::AddressSpace => Some(SlotArray::of_address_space(ptr)),
+            ZombieKind::Thread => Some(SlotArray::of_thread(ptr)),
+            ZombieKind::WaitSet { bits } => Some(SlotArray::of_wait_set(ptr, bits)),
+            ZombieKind::Endpoint | ZombieKind::Eventcount => None,
         }
     }
 
     /// The array of a thread at `ptr`.
     pub const fn of_thread(ptr: u64) -> SlotArray {
-        SlotArray::of(ZombieKind::Thread, ptr)
+        SlotArray {
+            base: ptr,
+            count: THREAD_SLOTS,
+        }
     }
 
     /// The array of an address space at `base`.
     pub const fn of_address_space(base: u64) -> SlotArray {
-        SlotArray::of(ZombieKind::AddressSpace, base)
+        SlotArray {
+            base: base + RECORD_OFFSET + RECORD_HEADER,
+            count: RECORD_SLOTS,
+        }
+    }
+
+    /// The array of a wait set of `2^bits` bytes at `ptr` (C14).
+    pub const fn of_wait_set(ptr: u64, bits: u8) -> SlotArray {
+        SlotArray {
+            base: ptr,
+            count: wait_set_slots(bits),
+        }
     }
 
     /// Slot `i`.

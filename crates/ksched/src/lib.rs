@@ -30,11 +30,12 @@
 //! - [`tree`]: an intrusive red-black tree, optionally augmented, for the
 //!   release, deadline and walk queues (ADR 0052, rule 2; K25).
 //! - [`worklist`]: a core's list of pending interrupt work (K24).
-//! - [`batch`]: bounded batches of interrupt work over several sources
-//!   (ADR 0052, rule 2; K24).
+//! - [`batch`]: bounded batches of interrupt work over several sources,
+//!   each unit with its cost (ADR 0052, rule 2; K24).
 //! - [`donation`]: scheduling-context donation along chains of calls, and
-//!   taking a context back (ADR 0051, rule 3), the protocol that
-//!   `specs/SchedDonation.tla` models (ADR 0068, rule 10).
+//!   taking a context back (ADR 0051, rule 3), with C14's queued sends and
+//!   faults: the protocol that `specs/SchedDonation.tla` models (ADR 0068,
+//!   rule 10).
 //! - [`smp`]: the kernel's CLH lock, remote-call state and PSCI (ADR 0052).
 
 #![no_std]

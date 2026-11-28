@@ -31,9 +31,10 @@ pub enum DeriveError {
 /// before it deletes it, so unmapping reaches the copy too (kernel
 /// specification K42).
 ///
-/// A thread's copy of an endpoint or a scheduling context (C12) copies the
-/// same way: the copy is the plain capability, without its role, and a child
-/// of the thread's copy.
+/// A thread's copy of an endpoint or a scheduling context (C12), of an
+/// eventcount or of its IPC buffer's frame (C14), and a wait-set entry's
+/// copy of its eventcount (C14), copy the same way: the copy is the plain
+/// capability, without its role, and a child of the kept copy.
 pub const fn derive(cap: &Cap, has_children: bool) -> Result<Cap, DeriveError> {
     match *cap {
         Cap::Null => Err(DeriveError::Empty),
@@ -44,14 +45,28 @@ pub const fn derive(cap: &Cap, has_children: bool) -> Result<Cap, DeriveError> {
             size,
             device,
             rights,
-            mapping: Some(_),
-        } => Ok(Cap::Frame {
+            mapping,
+            binding,
+        } if mapping.is_some() || binding.is_some() => Ok(Cap::Frame {
             base,
             size,
             device,
             rights,
             mapping: None,
+            binding: None,
         }),
+        Cap::Eventcount {
+            ptr,
+            rights,
+            binding: Some(_),
+            ..
+        } => Ok(Cap::Eventcount {
+            ptr,
+            rights,
+            binding: None,
+            set_bits: 0,
+        }),
+
         Cap::Endpoint {
             ptr,
             rights,

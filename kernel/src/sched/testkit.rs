@@ -71,6 +71,8 @@ pub fn make_room() {
 pub struct Spec {
     pub program: Program,
     pub args: [u64; 3],
+    /// x3 to x7, for the programs that take more arguments (C14).
+    pub more: [u64; 5],
     pub priority: u8,
     pub budget_us: u64,
     pub period_us: u64,
@@ -86,6 +88,7 @@ impl Spec {
         Spec {
             program,
             args: [0; 3],
+            more: [0; 5],
             priority: 10,
             budget_us: 200,
             period_us: 1_000,
@@ -163,6 +166,7 @@ pub fn spawn_in(sc: &mut Scratch, s: SlotRef, spec: Spec) -> User {
         ..UserContext::default()
     };
     regs.x[..3].copy_from_slice(&spec.args);
+    regs.x[3..8].copy_from_slice(&spec.more);
     thread::write_registers(t, &regs).unwrap();
     thread::resume(t).unwrap();
     User {
@@ -207,7 +211,7 @@ pub fn finish(sc: Scratch) {
             "a context is still in core {k}'s release tree"
         );
         assert_eq!(c.deadline_root, 0, "a deadline is still queued on core {k}");
-        assert!(c.work.is_empty(), "a walk is still on core {k}'s work list");
+        assert!(c.work.is_empty(), "work is still on core {k}'s work list");
         assert_eq!(c.stats.idle_with_work, 0, "core {k} idled with work left");
         if k != this_core().index {
             assert_eq!(
