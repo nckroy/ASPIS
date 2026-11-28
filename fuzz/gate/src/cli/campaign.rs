@@ -43,9 +43,6 @@ use fuzz_gate::{
 
 use crate::{binary, committed, fail, fuzz_build, output, root, selected};
 
-/// libFuzzer's exit status when SIGINT stops it.
-const INTERRUPTED: i32 = 72;
-
 /// What one run is asked for.
 pub struct RunOpts {
     /// Seconds of fuzzing, after the corpus load.
@@ -189,7 +186,9 @@ pub struct Outcome {
 /// on time, and the run left no finding: fork mode would otherwise carry
 /// on past timeouts and OOMs, so they are made to stop it
 /// (`-ignore_timeouts=0 -ignore_ooms=0`), and any new file in the
-/// artifacts directory fails the run.
+/// artifacts directory fails the run. In fork mode, a job's log that the
+/// parent prints fails it too, whatever the exit status, unless it began
+/// after the stop and is a stopped job's ([`harness::ended_cleanly`]).
 pub fn run_target(t: &Target, opts: &RunOpts) -> Outcome {
     let bin = binary(t.name);
     if !bin.is_file() {
@@ -215,7 +214,9 @@ pub fn run_target(t: &Target, opts: &RunOpts) -> Outcome {
     let before = listing(&artifacts);
 
     // The backstop: room for a corpus load as long as the run, and ten
-    // minutes more. The harness stops the run first.
+    // minutes more. The harness stops the run first, unless in fork mode
+    // its SIGINT lands while only a merge subprocess runs
+    // (harness::INNER_LOG).
     let backstop = u64::from(opts.time) * 2 + 600;
     let mut cmd = Command::new("/usr/bin/time");
     cmd.arg("-p")
@@ -268,7 +269,15 @@ pub fn run_target(t: &Target, opts: &RunOpts) -> Outcome {
     let group = child.id();
     let done = Arc::new(AtomicBool::new(false));
     let interrupted = Arc::new(AtomicBool::new(false));
-    let mut started: Option<(Instant, u64)> = None;
+    let mut started: Option<Instant> = None;
+    // Whether a fork-mode parent has started printing a job's log, whose
+    // lines are that job's, not the run's (harness::own_lines), and
+    // whether it started before the stop (harness::InnerLog). The timer
+    // sets `interrupted` before it sends the SIGINT, and the flag is read
+    // only after the line is, so an inner log the SIGINT caused always
+    // reads as after the stop. A finding's may too, so one after the stop
+    // is clean only if it is a stopped job's (harness::inner_log_is_stop).
+    let mut inner = harness::InnerLog::Absent;
     let mut text = String::new();
     for line in BufReader::new(child.stderr.take().unwrap()).lines() {
         let line = line.unwrap_or_default();
@@ -276,9 +285,14 @@ pub fn run_target(t: &Target, opts: &RunOpts) -> Outcome {
         if !(line.contains("\tNEW ") || line.contains("\tREDUCE ")) {
             eprintln!("  {line}");
         }
-        if started.is_none() && harness::fuzzing_starts(&line) {
-            let execs = harness::status_line(&line).map_or(0, |s| s.execs);
-            started = Some((Instant::now(), execs));
+        if inner == harness::InnerLog::Absent
+            && let Some(at) = harness::InnerLog::starts(&line, interrupted.load(Ordering::SeqCst))
+        {
+            inner = at;
+        }
+        if started.is_none() && inner == harness::InnerLog::Absent && harness::fuzzing_starts(&line)
+        {
+            started = Some(Instant::now());
             let (done, interrupted) = (done.clone(), interrupted.clone());
             let secs = u64::from(opts.time);
             thread::spawn(move || {
@@ -296,8 +310,15 @@ pub fn run_target(t: &Target, opts: &RunOpts) -> Outcome {
     }
     let exit = child.wait().unwrap();
     done.store(true, Ordering::SeqCst);
-    let fuzz_s = started.map_or(0.0, |(at, _)| at.elapsed().as_secs_f64());
-    let stopped = interrupted.load(Ordering::SeqCst) && exit.code() == Some(INTERRUPTED);
+    let fuzz_s = started.map_or(0.0, |at| at.elapsed().as_secs_f64());
+    let fork = opts.jobs > 1;
+    let clean = harness::ended_cleanly(
+        exit.code(),
+        interrupted.load(Ordering::SeqCst),
+        fork,
+        inner,
+        &text,
+    );
 
     let status = harness::last_status(&text);
     let (cpu_s, wall_s) = harness::time_p(&text).unwrap_or((0.0, 0.0));
@@ -314,11 +335,11 @@ pub fn run_target(t: &Target, opts: &RunOpts) -> Outcome {
         workers: opts.jobs,
         wall_s,
         fuzz_s,
-        fuzz_execs: status.execs.saturating_sub(started.map_or(0, |(_, e)| e)),
+        fuzz_execs: harness::fuzz_execs(&text),
         cpu_s,
         status,
         artifacts: new.len() as u64,
-        clean: exit.success() || stopped,
+        clean,
     };
     record(t, &r);
     let passed = !r.finding();
@@ -347,6 +368,13 @@ pub fn run_target(t: &Target, opts: &RunOpts) -> Outcome {
     }
     for a in &new {
         eprintln!("xtask fuzz: finding: {}", artifacts.join(a).display());
+    }
+    if fork && harness::inner_log_is_finding(inner, &text) {
+        eprintln!(
+            "xtask fuzz: finding: a job ended on a finding; its log follows \"{}\" in {}",
+            harness::INNER_LOG,
+            log_path.display()
+        );
     }
     Outcome { passed, fuzz_s }
 }

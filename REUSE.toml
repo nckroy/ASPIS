@@ -11,11 +11,12 @@ path = "Cargo.lock"
 SPDX-FileCopyrightText = "2026 Nicole Roy"
 SPDX-License-Identifier = "MPL-2.0"
 
-# The fuzz workspace's lock file, for the same reason; and the committed
+# The fuzz workspace's lock file, for the same reason; the committed
 # fuzz seeds and regressions, which are raw inputs and can't carry a
-# comment (ADR 0068, rule 3).
+# comment (ADR 0068, rule 3); and the harness's test data, an excerpt of
+# a libFuzzer log, read as libFuzzer wrote it.
 [[annotations]]
-path = ["fuzz/Cargo.lock", "fuzz/seeds/**", "fuzz/regressions/**"]
+path = ["fuzz/Cargo.lock", "fuzz/seeds/**", "fuzz/regressions/**", "fuzz/gate/tests/data/**"]
 SPDX-FileCopyrightText = "2026 Nicole Roy"
 SPDX-License-Identifier = "MPL-2.0"
 

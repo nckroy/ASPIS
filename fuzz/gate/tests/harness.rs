@@ -7,7 +7,7 @@
 
 use fuzz_gate::{
     TARGETS, dict,
-    harness::{self, RunRecord, Status},
+    harness::{self, InnerLog, RunRecord, Status},
 };
 
 /// A normal-mode run of kargs-parse, abridged.
@@ -60,6 +60,369 @@ fn status_lines() {
     );
     assert_eq!(harness::status_line("INFO: Seed: 7"), None);
     assert_eq!(harness::status_line("#12 no coverage here"), None);
+}
+
+/// A real fork-mode run, stopped by the harness's SIGINT: idl-front-end,
+/// `-fork=2`, 2,300 s, on aarch64 macOS. Abridged: most of the parent's
+/// status lines are left out, and so are the inner log's `NEW` and
+/// `REDUCE` lines, which the console copy it was taken from drops. After
+/// its last status line, the parent prints one job's whole log.
+const FORK_INTERRUPTED: &str = include_str!("data/fork-interrupted.log");
+
+#[test]
+fn a_fork_mode_run_reports_the_parents_figures() {
+    let parent = Status {
+        execs: 550_972,
+        cov: 7690,
+        ft: 26_849,
+        corpus: 2397,
+        ..Status::default()
+    };
+    assert_eq!(harness::last_status(FORK_INTERRUPTED), parent);
+    // The parent counts only its jobs' executions, all after its corpus
+    // load.
+    assert_eq!(harness::fuzz_execs(FORK_INTERRUPTED), 550_972);
+    // The inner log is left out, and /usr/bin/time's lines after it are
+    // still read.
+    let own: Vec<&str> = harness::own_lines(FORK_INTERRUPTED).collect();
+    assert_eq!(
+        own.last(),
+        Some(
+            &"#550972: cov: 7690 ft: 26849 corp: 2397 exec/s: 71 oom/timeout/crash: 0/0/0 time: 2366s job: 95 dft_time: 0"
+        )
+    );
+    assert!(!own.iter().any(|l| l.contains("INITED")));
+    let (cpu, wall) = harness::time_p(FORK_INTERRUPTED).unwrap();
+    assert!((cpu - 4648.52).abs() < 1e-6 && (wall - 2366.12).abs() < 1e-9);
+}
+
+/// A fork-mode run with `-ignore_crashes=1`, in the formats and control
+/// flow of libFuzzer's `FuzzerFork.cpp` (abridged: no `NEW` lines). The
+/// parent prints a job's status line before it counts that job. Jobs 1
+/// and 2 crash: the parent counts each and prints only its `ERROR:` lines,
+/// and goes on. Jobs 3 and 4 exit 0. After job 4 the run is over its time
+/// budget, so the parent stops its jobs and exits with job 4's exit code,
+/// 0. With crashes ignored it never prints an inner log. Its last status
+/// line carries the crashes counted before job 4.
+const FORK_CRASHES: &str = "INFO: -fork=2: fuzzing in separate process(s)
+INFO: -fork=2: 70 seed inputs, starting to fuzz in /tmp/libFuzzerTemp.FuzzWithFork7.dir
+#152147: cov: 266 ft: 608 corp: 70 exec/s: 76073 oom/timeout/crash: 0/0/0 time: 2s job: 1 dft_time: 0
+==4101== ERROR: libFuzzer: deadly signal
+#310072: cov: 270 ft: 900 corp: 120 exec/s: 80000 oom/timeout/crash: 0/0/1 time: 4s job: 2 dft_time: 0
+==4102== ERROR: libFuzzer: deadly signal
+#420311: cov: 275 ft: 1209 corp: 253 exec/s: 82597 oom/timeout/crash: 0/0/2 time: 6s job: 3 dft_time: 0
+#530118: cov: 276 ft: 1250 corp: 260 exec/s: 80000 oom/timeout/crash: 0/0/2 time: 8s job: 4 dft_time: 0
+INFO: fuzzed for 8 seconds, wrapping up soon
+INFO: exiting: 0 time: 8s
+real 8.12
+user 14.57
+sys 1.60
+";
+
+/// A fork-mode run that ends on a finding, with `-ignore_ooms=1
+/// -ignore_timeouts=1 -ignore_crashes=0`, abridged to its first and last
+/// status lines. The parent counted the OOMs and timeouts of jobs 1 to 5
+/// and went on. Then job 6 crashed: its status line, printed before the
+/// parent counts it, shows no crash. The parent printed job 6's whole log,
+/// with its own status and `stat::` lines, and exited with its exit code.
+/// This is the Linux shape. On macOS the parent compares and exits with a
+/// job's raw wait status, so it would count no OOM or timeout here, and
+/// it would print `INFO: exiting: 19712` (77 << 8) and exit 0, the low
+/// byte; the tests below take the run's exit status from their case.
+const FORK_FINDING: &str = "INFO: -fork=2: fuzzing in separate process(s)
+INFO: -fork=2: 70 seed inputs, starting to fuzz in /tmp/libFuzzerTemp.FuzzWithFork8.dir
+#152147: cov: 266 ft: 608 corp: 70 exec/s: 76073 oom/timeout/crash: 0/0/0 time: 1s job: 1 dft_time: 0
+#810072: cov: 275 ft: 1209 corp: 253 exec/s: 82597 oom/timeout/crash: 2/3/0 time: 6s job: 6 dft_time: 0
+INFO: log from the inner process:
+INFO: Seed: 9
+INFO: seed corpus: files: 9 min: 1b max: 40b total: 120b rss: 27Mb
+#10\tINITED cov: 250 ft: 400 corp: 9/120b exec/s: 0 rss: 27Mb
+#4096\tpulse  cov: 251 ft: 410 corp: 12/200b lim: 40 exec/s: 4096 rss: 28Mb
+==4106== ERROR: libFuzzer: deadly signal
+SUMMARY: libFuzzer: deadly signal
+stat::number_of_executed_units: 900000
+stat::average_exec_per_sec:     4096
+INFO: exiting: 77 time: 6s
+real 6.20
+user 10.60
+sys 1.60
+";
+
+#[test]
+fn a_fork_mode_parent_reports_its_counts() {
+    assert_eq!(
+        harness::last_status(FORK_CRASHES),
+        Status {
+            execs: 530_118,
+            cov: 276,
+            ft: 1250,
+            corpus: 260,
+            crashes: 2,
+            ..Status::default()
+        }
+    );
+    assert_eq!(harness::fuzz_execs(FORK_CRASHES), 530_118);
+    let (cpu, wall) = harness::time_p(FORK_CRASHES).unwrap();
+    assert!((cpu - 16.17).abs() < 1e-9 && (wall - 8.12).abs() < 1e-9);
+    // The inner job's lines, its stat:: count among them, are left out.
+    assert_eq!(
+        harness::last_status(FORK_FINDING),
+        Status {
+            execs: 810_072,
+            cov: 275,
+            ft: 1209,
+            corpus: 253,
+            ooms: 2,
+            timeouts: 3,
+            crashes: 0,
+        }
+    );
+    assert_eq!(harness::fuzz_execs(FORK_FINDING), 810_072);
+    let (cpu, wall) = harness::time_p(FORK_FINDING).unwrap();
+    assert!((cpu - 12.2).abs() < 1e-9 && (wall - 6.2).abs() < 1e-9);
+}
+
+/// What `run`'s stderr loop makes of a log: the first inner log's start,
+/// with the harness's flag to stop the run set from line `stop` on (or
+/// never).
+fn inner_log(log: &str, stop: Option<usize>) -> InnerLog {
+    log.lines()
+        .enumerate()
+        .find_map(|(i, l)| InnerLog::starts(l, stop.is_some_and(|s| i >= s)))
+        .unwrap_or_default()
+}
+
+/// The line of `log` that starts with `prefix`.
+fn line_of(log: &str, prefix: &str) -> usize {
+    log.lines().position(|l| l.starts_with(prefix)).unwrap()
+}
+
+#[test]
+fn a_fork_mode_inner_log_before_the_stop_is_a_finding() {
+    let log = FORK_FINDING;
+    // macOS: job 6 crashed, the parent printed its log and exited with
+    // its raw wait status, whose low byte is 0. The harness hadn't
+    // stopped the run, and no new artifact need be written: the inner
+    // log alone makes it unclean.
+    let inner = inner_log(log, None);
+    assert_eq!(inner, InnerLog::BeforeStop);
+    assert!(harness::inner_log_is_finding(inner, log));
+    assert!(!harness::ended_cleanly(Some(0), false, true, inner, log));
+    // The harness's timer may fire while the parent waits for its other
+    // jobs: the inner log was read before the flag was set, so it is
+    // still a finding, even when the run then exits 72 or 0.
+    let stop = Some(log.lines().count() - 3);
+    assert_eq!(inner_log(log, stop), InnerLog::BeforeStop);
+    assert!(!harness::ended_cleanly(Some(0), true, true, inner, log));
+    assert!(!harness::ended_cleanly(
+        Some(harness::INTERRUPTED),
+        true,
+        true,
+        inner,
+        log
+    ));
+    // Linux: the same finding exits 77, unclean by its exit status alone.
+    assert!(!harness::ended_cleanly(Some(77), false, true, inner, log));
+    assert!(!harness::ended_cleanly(
+        Some(77),
+        false,
+        true,
+        InnerLog::Absent,
+        ""
+    ));
+    // A stopped job's log that began before the harness's flag was set
+    // was no SIGINT of the harness's: it is a finding too.
+    let unasked = inner_log(FORK_INTERRUPTED, None);
+    assert_eq!(unasked, InnerLog::BeforeStop);
+    assert!(harness::inner_log_is_stop(FORK_INTERRUPTED));
+    assert!(!harness::ended_cleanly(
+        Some(0),
+        false,
+        true,
+        unasked,
+        FORK_INTERRUPTED
+    ));
+}
+
+#[test]
+fn a_fork_mode_finding_read_after_the_stop_is_a_finding() {
+    let log = FORK_FINDING;
+    // Job 6 crashed just before the time box. The parent merged first,
+    // and the harness read the inner log's first line only after its
+    // timer set the flag. The log is a finding's, not a stopped job's, so
+    // the run is unclean, on macOS with exit 0 and no new artifact.
+    let stop = line_of(log, harness::INNER_LOG);
+    let inner = inner_log(log, Some(stop));
+    assert_eq!(inner, InnerLog::AfterStop);
+    assert!(!harness::inner_log_is_stop(log));
+    assert!(harness::inner_log_is_finding(inner, log));
+    assert!(!harness::ended_cleanly(Some(0), true, true, inner, log));
+    let stop = line_of(log, "#810072:");
+    assert_eq!(inner_log(log, Some(stop)), InnerLog::AfterStop);
+    assert!(!harness::ended_cleanly(Some(0), true, true, inner, log));
+    // A timeout's and an OOM's logs are findings' too.
+    for report in [
+        "==4106== ERROR: libFuzzer: timeout after 10 seconds",
+        "==4106== ERROR: libFuzzer: out-of-memory (used: 2100Mb; exceeds: 2048Mb)",
+    ] {
+        let log = format!(
+            "#9: cov: 1 ft: 1 corp: 1 exec/s: 1 oom/timeout/crash: 0/0/0 time: 1s job: 1 dft_time: 0\n{}\n#4096\tpulse  cov: 251 ft: 410 corp: 12/200b lim: 40 exec/s: 4096 rss: 28Mb\n{report}\nINFO: exiting: 0 time: 6s\n",
+            harness::INNER_LOG
+        );
+        assert!(!harness::inner_log_is_stop(&log));
+        assert!(!harness::ended_cleanly(
+            Some(0),
+            true,
+            true,
+            InnerLog::AfterStop,
+            &log
+        ));
+    }
+    // A log with a finding's report is a finding's, even if it also has
+    // the interrupt line.
+    let both = format!(
+        "{}\n==4106== ERROR: libFuzzer: deadly signal\n==4106== libFuzzer: run interrupted; exiting\n",
+        harness::INNER_LOG
+    );
+    assert!(!harness::inner_log_is_stop(&both));
+    // No inner log is no stopped job's.
+    assert!(!harness::inner_log_is_stop(FORK));
+    assert!(!harness::inner_log_is_stop(
+        "==96053== libFuzzer: run interrupted; exiting\n"
+    ));
+}
+
+#[test]
+fn a_fork_mode_inner_log_after_the_stop_is_clean() {
+    let log = FORK_INTERRUPTED;
+    // The real macOS run, stopped by the harness: the flag was set before
+    // the SIGINT, so before the stopped job's log began, and that log
+    // ends in the job's "run interrupted" line. The parent exited with
+    // the job's raw status, 18432 (72 << 8), so 0.
+    let stop = line_of(log, harness::INNER_LOG);
+    let inner = inner_log(log, Some(stop));
+    assert_eq!(inner, InnerLog::AfterStop);
+    assert!(harness::inner_log_is_stop(log));
+    assert!(!harness::inner_log_is_finding(inner, log));
+    assert!(harness::ended_cleanly(Some(0), true, true, inner, log));
+    // The flag set well before the inner log, as when the parent was
+    // merging when the SIGINT came.
+    let stop = line_of(log, "#550972:");
+    assert_eq!(inner_log(log, Some(stop)), InnerLog::AfterStop);
+    // Linux, or a SIGINT while no job or merge subprocess ran: no inner
+    // log, exit 72.
+    assert!(harness::ended_cleanly(
+        Some(harness::INTERRUPTED),
+        true,
+        true,
+        InnerLog::Absent,
+        ""
+    ));
+    // A run that ran out its backstop or exits 0 by itself, with no inner
+    // log, is clean; 72 without the harness's stop isn't.
+    assert_eq!(inner_log(FORK, None), InnerLog::Absent);
+    assert_eq!(inner_log(FORK_CRASHES, None), InnerLog::Absent);
+    assert!(!harness::inner_log_is_finding(InnerLog::Absent, FORK));
+    assert!(harness::ended_cleanly(
+        Some(0),
+        false,
+        true,
+        InnerLog::Absent,
+        FORK_CRASHES
+    ));
+    assert!(!harness::ended_cleanly(
+        Some(harness::INTERRUPTED),
+        false,
+        true,
+        InnerLog::Absent,
+        FORK
+    ));
+    // Killed by a signal: no exit code.
+    assert!(!harness::ended_cleanly(
+        None,
+        true,
+        true,
+        InnerLog::Absent,
+        ""
+    ));
+}
+
+#[test]
+fn a_normal_mode_run_ends_by_its_exit_status() {
+    assert_eq!(inner_log(NORMAL, None), InnerLog::Absent);
+    assert!(harness::ended_cleanly(
+        Some(0),
+        false,
+        false,
+        InnerLog::Absent,
+        NORMAL
+    ));
+    assert!(harness::ended_cleanly(
+        Some(harness::INTERRUPTED),
+        true,
+        false,
+        InnerLog::Absent,
+        NORMAL
+    ));
+    for code in [Some(1), Some(70), Some(71), Some(77), None] {
+        assert!(!harness::ended_cleanly(
+            code,
+            true,
+            false,
+            InnerLog::Absent,
+            NORMAL
+        ));
+    }
+    assert!(!harness::ended_cleanly(
+        Some(harness::INTERRUPTED),
+        false,
+        false,
+        InnerLog::Absent,
+        NORMAL
+    ));
+    // In normal mode an inner-log line, which only a target could print,
+    // changes nothing, before the stop or after it.
+    for inner in [InnerLog::BeforeStop, InnerLog::AfterStop] {
+        assert!(harness::ended_cleanly(
+            Some(0),
+            false,
+            false,
+            inner,
+            FORK_FINDING
+        ));
+    }
+    // Only the marker line starts an inner log.
+    assert_eq!(InnerLog::starts("INFO: Seed: 7", false), None);
+    assert_eq!(
+        InnerLog::starts("INFO: log from the inner process:", true),
+        Some(InnerLog::AfterStop)
+    );
+}
+
+#[test]
+fn executions_after_the_corpus_load() {
+    // Normal mode: the INITED line's count is the corpus load's.
+    assert_eq!(harness::fuzz_execs(NORMAL), 203_850 - 190);
+    assert_eq!(
+        harness::fuzzing_start("#190\tINITED cov: 268 ft: 1171 corp: 172/45Kb exec/s: 0 rss: 27Mb"),
+        Some(190)
+    );
+    // Fork mode's start line has no count; the parent counts none of
+    // its load.
+    assert_eq!(
+        harness::fuzzing_start(
+            "INFO: -fork=2: 70 seed inputs, starting to fuzz in /tmp/libFuzzerTemp.FuzzWithFork7.dir"
+        ),
+        Some(0)
+    );
+    assert_eq!(harness::fuzzing_start("INFO: Seed: 7"), None);
+    // A run that never finished its load counts every execution.
+    assert_eq!(
+        harness::fuzz_execs("#40\tNEW cov: 1 ft: 1 corp: 1/1b\n"),
+        40
+    );
+    // Normal mode has no inner log, so every line is its own.
+    assert_eq!(harness::own_lines(NORMAL).count(), NORMAL.lines().count());
 }
 
 #[test]
