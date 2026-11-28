@@ -15,11 +15,17 @@
 //! The operations:
 //!
 //! - **Stall** a thread that runs on the target, before the requester
-//!   changes it, as seL4's `remoteTCBStall` does. Any change to a thread
-//!   current on another core stalls it first ([`stall`]): suspending it,
-//!   writing or reading its registers, changing its priority, its spaces,
-//!   its endpoints or its context, configuring its context, taking a
-//!   donated context back from it, and destroying it. The target charges
+//!   changes it, as seL4's `remoteTCBStall` does. Every operation that
+//!   changes a thread current on another core through its capability
+//!   stalls it first ([`stall`]): suspending it, writing or reading its
+//!   registers, changing its priority, its spaces, its endpoints or its
+//!   context, configuring its context, binding or unbinding its
+//!   eventcount, and registering or unregistering its IPC buffer. So do
+//!   taking a donated context back from it, by revocation too, and
+//!   destroying it. A revocation's unbind steps for its endpoint, eventcount
+//!   and buffer copies (slots 3, 4, 6 and 7) don't stall it: they change
+//!   only kernel records a thread at EL0 never reads, and an entry spinning
+//!   for the lock sees them once it takes the lock. The target charges
 //!   the thread's time to its context, as when it stops for any reason
 //!   and puts it back in its run queue. A system
 //!   call the thread was entering is made to run again: its PC goes back to
@@ -31,6 +37,8 @@
 //!   lost the space (`crate::mm::space`).
 //! - **Probe** (test builds): records the target's registers, so the tests
 //!   check each core's setup.
+//! - **Advance an eventcount** (test builds): as the target's interrupt
+//!   would, so a test puts an eventcount on another core's work list.
 
 use crate::sched::object::Tcb;
 use crate::sched::percore::{self, ENTERING_SVC, this_core};
@@ -46,6 +54,8 @@ const DROP_SPACE: u64 = 2;
 const PROBE: u64 = 3;
 #[cfg(aspis_test_build)]
 const LOG: u64 = 4;
+#[cfg(aspis_test_build)]
+const ADVANCE_IRQ: u64 = 5;
 
 /// The panic path: every core that spins in the kernel, or idles, stops
 /// from now on. Set before the stop SGI is sent.
@@ -152,6 +162,10 @@ fn serve_op(op: u64, arg: u64) {
         PROBE => probe(),
         #[cfg(aspis_test_build)]
         LOG => crate::klog!(Info, "smp", "a record from core {}", this_core().index),
+        #[cfg(aspis_test_build)]
+        ADVANCE_IRQ => {
+            let _ = crate::ipc::eventcount::advance_for_interrupt(kipc::Ec(arg));
+        }
         _ => panic!("unknown remote call {op}"),
     }
 }
@@ -210,6 +224,15 @@ pub fn probe_core(k: usize) -> percore::Probe {
     percore::core(k).probe = percore::Probe::default();
     request(1 << k, PROBE, 0);
     percore::core(k).probe
+}
+
+/// Has core `k` advance the eventcount at `e` as its interrupt would, so a
+/// wake left pending goes on `k`'s work list (test builds; K24). The
+/// caller holds the kernel lock, so `k` runs none of that work until the
+/// caller lets the lock go.
+#[cfg(aspis_test_build)]
+pub fn advance_on(k: usize, e: kipc::Ec) {
+    request(1 << k, ADVANCE_IRQ, e.0);
 }
 
 /// Has core `k` write a log record (test builds).

@@ -9,18 +9,20 @@
 (* replies become a walk.  The walk then goes one step at a time, at the   *)
 (* kernel's preemption points and batches, interleaved with every other    *)
 (* action.  The properties are the kernel specification's "Model           *)
-(* checking" bullets for C12; specs/README.md maps each to its operator.   *)
+(* checking" bullets for C12, and C14's queued sends and faults            *)
+(* (WithQueue); specs/README.md maps each to its operator.                 *)
 (***************************************************************************)
 EXTENDS SchedDonationCore
 
 TB(st, r, x) == TakeBackStart(st, r, x)
 
 Cancel(t) ==
-    /\ s.talive[t] /\ s.ts[t] \in {"call", "recv", "other", "fault"} /\ Free(t)
+    /\ s.talive[t] /\ s.ts[t] \in {"call", "recv", "other", "fault", "send"} /\ Free(t)
     /\ s' = EndAnyWait(s, t, "canceled", TB)
 
 Deadline(t) ==
-    /\ s.talive[t] /\ s.ts[t] \in {"call", "recv", "other"} /\ Free(t)
+    /\ s.talive[t] /\ s.ts[t] \in {"call", "recv", "other", "send"}
+    /\ s.flt[t] = "none" /\ Free(t)
     /\ s' = EndAnyWait(s, t, "timedout", TB)
 
 WalkStep(w) ==
@@ -55,6 +57,10 @@ Next ==
          \/ \E b \in BOOLEAN: SetTep(t, b)
     \/ \E c \in SCs: UnbindSC(c) \/ DestroySC(c) \/ \E t \in Threads: BindSC(c, t)
     \/ \E r \in Replies: DestroyReply(r)
+    \/ \E t \in Threads:
+         \/ SendWait(t) \/ FaultWait(t) \/ \E x \in WakeResults: Wake(t, x)
+         \/ \E v \in Threads: DeliverCall(t, v) \/ DeliverSend(t, v)
+
     \/ \E w \in s.walks: WalkStep(w)
 
 \* Walks progress: every reply on a walk is eventually stepped.
@@ -120,12 +126,13 @@ ServingWellFormed ==
          s.rst[r] \in {"pending", "stale"} /\ s.rsc[r] # Nil /\ s.rserver[r] # Nil
            => s.serving[s.rserver[r]] = r
 
-\* A thread waits on its own wait's object.
+\* A thread waits on its own wait's object; a delivered fault is a call.
 WaitsWellFormed ==
     \A t \in Threads:
       /\ s.ts[t] \in {"recv", "call"} <=> s.wr[t] # Nil
       /\ s.ts[t] = "recv" => s.rst[s.wr[t]] = "recv" /\ s.rserver[s.wr[t]] = t
       /\ (s.ts[t] = "fault") <=> (s.fk[t] # "none")
+      /\ s.flt[t] # "none" => s.ts[t] = "call"
 
 \* A thread owed a walk step is stranded or still in its onward call.
 OwedAreStranded ==
@@ -144,9 +151,10 @@ Invariants ==
 
 \* When a donating call ends, other than by its caller's or context's
 \* destruction or the context's unbinding, the context comes back in the
-\* same step: to the caller, whose call ends "replied", "canceled" or
-\* "timed out", or to a caller below it in the chain, whose own call ended
-\* in that step (a cut lower down, which also ends this call).
+\* same step: to the caller, whose call ends "replied", "canceled", "timed
+\* out" or "destroyed" (K30), or with no result if it was a delivered
+\* fault's (C14), or to a caller below it in the chain, whose own call
+\* ended in that step (a cut lower down, which also ends this call).
 CallersAtOrBelow(st, c, r) ==
     {st.rcaller[st.stack[c][i]] : i \in 1..IndexOf(st.stack[c], r)}
 
@@ -159,7 +167,17 @@ ContextBackAtOnce ==
           /\ s'.talive[t] /\ s'.scalive[c] /\ s'.home[c] # Nil)
            => /\ s'.holder[c] \in CallersAtOrBelow(s, c, r)
               /\ s'.holder[c] = t =>
-                   s'.res[t] \in {"replied", "canceled", "timedout"}]_s
+                   IF s.flt[t] = "none"
+                   THEN s'.res[t] \in {"replied", "canceled", "timedout", "destroyed"}
+                   ELSE s'.res[t] = "none"]_s
+
+\* C14: a delivered fault's call, however it ends, ends with no result:
+\* the thread resumes, and re-executes or goes on, and its registers are
+\* its own.
+FaultResumesSilently ==
+    [][\A t \in Threads:
+         (s.ts[t] = "call" /\ s.flt[t] # "none" /\ s'.ts[t] # "call" /\ s'.talive[t])
+           => s'.res[t] = "none" /\ s'.flt[t] = "none"]_s
 
 \* A context-withdrawn fault is sent only at the walk step for a server's
 \* donated call, which ends its serving; so each stranded server gets at

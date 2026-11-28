@@ -2,16 +2,18 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! Random capability spaces: a seeded generator makes objects, copies,
-//! mints, moves (nesting CNodes, cycles included) and mappings, and
-//! interleaves deletes and revokes, some left partway as a preemption would
-//! leave them. The tree is checked after every step. At the end, revoking
-//! the pieces finishes everything, each object exactly once.
+//! mints, moves (nesting CNodes, cycles included), mappings and wait-set
+//! entries, and interleaves deletes and revokes, some left partway as a
+//! preemption would leave them. Endpoints and eventcounts get waiters, so
+//! their deletion drains queue zombies (C14). The tree is checked after
+//! every step. At the end, revoking the pieces finishes everything, each
+//! object exactly once, and releases every waiter exactly once.
 
 mod common;
 
 use common::{Lcg, Mode, World, budget, ram, root, sl};
 use kcap::SlotRef;
-use kcap::cap::{Cap, Mapping};
+use kcap::cap::{Cap, Mapping, SlotArray};
 use kcap::delete;
 use kcap::mdb;
 use kcap::ops::{self, Error, MintData};
@@ -70,6 +72,7 @@ fn run(seed: u64, steps: usize) {
     let base_live = w.log.live.len();
     let mut made = 0;
     let mut bound = 0;
+    let mut waiters = 0;
     for step in 0..steps {
         let slots = reachable(&w);
         let full: Vec<SlotRef> = slots.iter().copied().filter(|&s| !w.empty(s)).collect();
@@ -88,18 +91,30 @@ fn run(seed: u64, steps: usize) {
                 let (Some(ut), Some(dst)) = (pick(&mut rng, &uts), pick(&mut rng, &empty)) else {
                     continue;
                 };
-                let ty = match rng.below(7) {
+                let ty = match rng.below(9) {
                     0 | 1 => ObjectType::Endpoint,
                     2 => ObjectType::CNode(1 + rng.below(3) as u8),
                     3 => ObjectType::AddressSpace,
                     4 | 5 => ObjectType::Frame4K,
+                    6 => ObjectType::Eventcount,
+                    7 => ObjectType::WaitSet(7 + rng.below(3) as u8),
                     _ => ObjectType::Untyped(12 + rng.below(3) as u8),
                 };
                 let Some((cn, idx)) = home(&w, dst) else {
                     continue;
                 };
                 match w.retype_into(ut, ty, cn, idx, 1) {
-                    Ok(()) => made += 1,
+                    Ok(()) => {
+                        made += 1;
+                        // Threads queued on an endpoint or an eventcount,
+                        // which its deletion releases one by one.
+                        let c = w.cap(dst);
+                        if c.has_queue() {
+                            let k = rng.below(5);
+                            w.log.waiters.insert(c.object().unwrap().0, k);
+                            waiters += k;
+                        }
+                    }
                     Err(Error::Retype(_)) | Err(Error::NotDerivable) => {}
                     Err(e) => panic!("step {step}: retype {ty:?}: {e:?}"),
                 }
@@ -131,8 +146,35 @@ fn run(seed: u64, steps: usize) {
                     Err(e) => panic!("step {step}: move: {e:?}"),
                 }
             }
+            // Add a wait-set entry: a copy of an eventcount in one of the
+            // set's entry slots (C14).
+            62..=65 => {
+                let ecs: Vec<SlotRef> = full
+                    .iter()
+                    .copied()
+                    .filter(|&s| matches!(w.cap(s), Cap::Eventcount { .. }))
+                    .collect();
+                let sets: Vec<(u64, u8)> = full
+                    .iter()
+                    .filter_map(|&s| match w.cap(s) {
+                        Cap::WaitSet { ptr, bits, .. } => Some((ptr, bits)),
+                        _ => None,
+                    })
+                    .collect();
+                let (Some(e), Some((ptr, bits))) = (pick(&mut rng, &ecs), pick(&mut rng, &sets))
+                else {
+                    continue;
+                };
+                let a = SlotArray::of_wait_set(ptr, bits);
+                let dst = a.slot(1 + rng.below(a.count - 1));
+                match ops::bind_entry(&mut w.mem, e, dst, bits) {
+                    Ok(_) => bound += 1,
+                    Err(Error::DestNotEmpty) => {}
+                    Err(e) => panic!("step {step}: entry: {e:?}"),
+                }
+            }
             // Map a frame into an address space.
-            62..=71 => {
+            66..=71 => {
                 let frames: Vec<SlotRef> = full
                     .iter()
                     .copied()
@@ -213,8 +255,10 @@ fn run(seed: u64, steps: usize) {
         assert_eq!(w.cap(sl(40)).object().unwrap().0, base);
         w.delete(sl(40));
     }
-    // Every binding made was unbound exactly once.
+    // Every binding made was unbound exactly once, and every waiter
+    // released exactly once.
     assert_eq!(w.log.unbound.len(), bound);
+    assert_eq!(w.log.drained, waiters);
 }
 
 #[test]

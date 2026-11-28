@@ -7,7 +7,7 @@
 
 use super::Lcg;
 use super::store::{Host, c, project, r, t};
-use ksched::donation::{self, RState, TState};
+use ksched::donation::{self, RState, Res, TState};
 
 /// One of the spec's actions, with its parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +30,16 @@ pub enum Op {
     DestroyThread(usize),
     DestroyReply(usize),
     DestroySc(usize),
+    // C14's, with endpoint queues (`Flags::queue`).
+    SendWait(usize),
+    FaultWait(usize),
+    DeliverCall(usize, usize),
+    DeliverSend(usize, usize),
+    Wake(usize, Res),
 }
+
+/// The results a wake may carry: the spec's `WakeResults`.
+pub const WAKE_RESULTS: [Res; 3] = [Res::Replied, Res::Destroyed, Res::None];
 
 /// The spec's constants that switch actions on.
 #[derive(Clone, Copy, Debug)]
@@ -42,6 +51,9 @@ pub struct Flags {
     pub refine: bool,
     /// Whether walk steps are among the choices (false: drained at once).
     pub walks: bool,
+    /// The spec's `WithQueue`: queued sends and faults, their delivery and
+    /// wakes (C14). Without it, a fault is replied to in one step.
+    pub queue: bool,
 }
 
 /// The spec's `ReplyApplies`.
@@ -112,6 +124,10 @@ pub fn enabled(h: &mut Host, f: Flags) -> Vec<Op> {
             if tr.tep {
                 ops.push(Op::BudgetOut(ti));
             }
+            if f.queue {
+                ops.push(Op::SendWait(ti));
+                ops.push(Op::FaultWait(ti));
+            }
         }
         if !alive {
             continue;
@@ -120,11 +136,39 @@ pub fn enabled(h: &mut Host, f: Flags) -> Vec<Op> {
         if tr.state != TState::Ready && free {
             ops.push(Op::Cancel(ti));
         }
-        if matches!(tr.state, TState::Call(_) | TState::Recv(_) | TState::Other) && free {
+        if matches!(
+            tr.state,
+            TState::Call(_) | TState::Recv(_) | TState::Other | TState::Send
+        ) && tr.fault.is_none()
+            && free
+        {
             ops.push(Op::Deadline(ti));
         }
-        if matches!(tr.state, TState::Fault(_)) {
+        if matches!(tr.state, TState::Fault(_)) && !f.queue {
             ops.push(Op::FaultReplied(ti));
+        }
+        if f.queue && free {
+            let queued = matches!(tr.state, TState::Send | TState::Fault(_));
+            for vi in 1..=nt {
+                let receiving = vi != ti
+                    && h.talive[vi]
+                    && !tw[vi]
+                    && matches!(h.threads[vi].state, TState::Recv(_));
+                if queued && receiving {
+                    ops.push(Op::DeliverCall(ti, vi));
+                }
+                if tr.state == TState::Send && receiving {
+                    ops.push(Op::DeliverSend(ti, vi));
+                }
+            }
+            if matches!(
+                tr.state,
+                TState::Other | TState::Send | TState::Fault(_) | TState::Recv(_)
+            ) {
+                for x in WAKE_RESULTS {
+                    ops.push(Op::Wake(ti, x));
+                }
+            }
         }
         if f.suspend {
             ops.push(if tr.suspended {
@@ -196,6 +240,11 @@ pub fn apply(h: &mut Host, op: Op) {
         Op::DestroyThread(a) => h.destroy_thread(a),
         Op::DestroyReply(a) => h.destroy_reply(a),
         Op::DestroySc(a) => h.destroy_sc(a),
+        Op::SendWait(a) => donation::send_wait(h, t(a)),
+        Op::FaultWait(a) => donation::fault_wait(h, t(a)),
+        Op::DeliverCall(a, b) => drop(donation::deliver(h, t(a), t(b))),
+        Op::DeliverSend(a, b) => drop(donation::deliver_send(h, t(a), t(b))),
+        Op::Wake(a, x) => drop(donation::wake(h, t(a), x)),
     }
 }
 
@@ -218,8 +267,9 @@ pub fn pick(h: &mut Host, rng: &mut Lcg, f: Flags) -> Option<Op> {
     let calls: Vec<Op> = ops
         .iter()
         .copied()
-        .filter(|o| matches!(o, Op::Call(..)))
+        .filter(|o| matches!(o, Op::Call(..) | Op::DeliverCall(..)))
         .collect();
+
     if !calls.is_empty() && rng.chance(35) {
         return Some(calls[rng.below(calls.len() as u64) as usize]);
     }

@@ -263,6 +263,7 @@ fn new_cap(ty: ObjectType, pa: u64, device: bool) -> Option<Cap> {
         device,
         rights: Rights::ALL,
         mapping: None,
+        binding: None,
     };
     Some(match ty {
         ObjectType::Untyped(bits) => Cap::Untyped {
@@ -301,6 +302,17 @@ fn new_cap(ty: ObjectType, pa: u64, device: bool) -> Option<Cap> {
         },
         ObjectType::Reply => Cap::Reply {
             ptr: pa,
+            rights: Rights::ALL,
+        },
+        ObjectType::Eventcount => Cap::Eventcount {
+            ptr: pa,
+            rights: Rights::ALL,
+            binding: None,
+            set_bits: 0,
+        },
+        ObjectType::WaitSet(bits) => Cap::WaitSet {
+            ptr: pa,
+            bits,
             rights: Rights::ALL,
         },
         ObjectType::PageTable => return None,
@@ -528,6 +540,7 @@ pub fn bind_mapping<M: Mem>(
         device,
         rights: dr,
         mapping: Some(mapping),
+        binding: None,
     };
     if !binding.is_valid() {
         return Err(Error::BadMapping);
@@ -551,10 +564,34 @@ pub fn bind_copy<M: Mem>(
     dst: SlotRef,
     role: Binding,
 ) -> Result<Cap, Error> {
+    bind_as(mem, src, dst, |c| c.with_binding(role))
+}
+
+/// Keeps a copy of the eventcount capability in `src` in the empty slot
+/// `dst` of a wait set of `2^set_bits` bytes, as an entry's binding, a child
+/// of `src` (C14; ADR 0053, rule 4). The kernel checks the read right and
+/// that `dst` is an entry's slot of the set first. Returns the binding.
+pub fn bind_entry<M: Mem>(
+    mem: &mut M,
+    src: SlotRef,
+    dst: SlotRef,
+    set_bits: u8,
+) -> Result<Cap, Error> {
+    bind_as(mem, src, dst, |c| c.as_wait_set_entry(set_bits))
+}
+
+/// Derives the capability in `src`, gives the copy its role with `role`,
+/// and inserts it into `dst` as a child of `src`.
+fn bind_as<M: Mem>(
+    mem: &mut M,
+    src: SlotRef,
+    dst: SlotRef,
+    role: impl Fn(Cap) -> Option<Cap>,
+) -> Result<Cap, Error> {
     check_dest(mem, src, dst)?;
     let cap = slot::cap(mem, src);
     let derived = derive(&cap, mdb::has_children(mem, src))?;
-    let binding = derived.with_binding(role).ok_or(Error::WrongKind)?;
+    let binding = role(derived).ok_or(Error::WrongKind)?;
     check_depth(mem, src)?;
     insert_derived(mem, src, dst, binding)?;
     Ok(binding)

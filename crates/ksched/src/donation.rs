@@ -46,11 +46,35 @@
 //! never read, so a walk outlives a destroyed context, and a new context at
 //! the same address can't be confused with it, since its numbers are later.
 //!
+//! **Queued sends and faults** (C14). A send or call that finds no receiver
+//! waits queued on the endpoint ([`TState::Send`]); a fault raised with a
+//! fault endpoint, and a timeout or context-withdrawn fault, waits queued
+//! on its endpoint ([`TState::Fault`]). A receive delivers either
+//! ([`deliver`], [`deliver_send`]): a queued call, or a fault on the fault
+//! endpoint, donates as a call does; a timeout or context-withdrawn fault
+//! is delivered as a plain call, donating nothing (ADR 0051, rule 1; ADR
+//! 0054, rule 6). A delivered fault is a call on the handler's reply object
+//! whose caller has [`ThreadRec::fault`] set: a reply, a cancel, or the
+//! destruction of its reply object or of the server it donated to, ends it
+//! with no result, so the thread resumes and re-executes (or, for a timeout
+//! fault, goes on); a canceled or destroyed one leaves its reply object
+//! invalid, so the handler's reply fails with "no caller" (K50), or, while
+//! the take-back's walk of a donated one is still to pass it, with "not the
+//! holder", since the handler has lost the context. The kernel's
+//! IPC (crate `kipc`) keeps the endpoint's queue around these transitions;
+//! this module never sees a queue.
+//!
+//! **Destroyed objects** (K30). A call ends "object destroyed" when its
+//! reply object is destroyed, or the server it donated to; so does a
+//! receive whose reply object is destroyed. The runtime then reports the
+//! call as indeterminate.
+//!
 //! **What the kernel supplies** through [`Store`]: each object's donation
 //! fields, the walk tree's links, the sequence counter, and the effects
-//! this module can't do itself: ending a wait it doesn't model (a test
-//! sleep, C15's page wait), queuing and withdrawing faults on endpoints
-//! (C14), requeuing threads, and keeping walks on a core's work list.
+//! this module can't do itself: ending a wait it doesn't model (an
+//! endpoint's queue, an eventcount's tree, a test sleep, C15's page wait),
+//! queuing and withdrawing faults on endpoints, requeuing threads, keeping
+//! walks on a core's work list, and the cost of ending a wait.
 
 use crate::NIL;
 use crate::tree::{self, Links, TreeStore};
@@ -65,13 +89,17 @@ pub struct Reply(pub u64);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Sc(pub u64);
 
-/// The faults this protocol sends, on the timeout endpoint.
+/// The faults a thread sends: on its timeout endpoint, the two this
+/// protocol raises; on its fault endpoint, every other (C14).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FaultKind {
     /// The budget ran out (ADR 0051, rule 1).
     Timeout,
     /// The context was taken back (ADR 0056, rule 3).
     Withdrawn,
+    /// A fault on the fault endpoint (ADR 0056, rule 1): delivered as a
+    /// call, which donates.
+    Endpoint,
 }
 
 /// A thread's state, as far as donation sees it.
@@ -82,16 +110,21 @@ pub enum TState {
     Ready,
     /// Waiting to receive, with this reply object.
     Recv(Reply),
-    /// Waiting for the reply to its call.
+    /// Waiting for the reply to its call: a call delivered, or a fault
+    /// delivered ([`ThreadRec::fault`]).
     Call(Reply),
-    /// Sending a fault on its timeout endpoint, and waiting for its reply.
+    /// A send or call queued on an endpoint, not yet delivered (C14).
+    Send,
+    /// A fault queued on its endpoint, not yet delivered (C14): on the
+    /// fault endpoint, or the timeout endpoint.
     Fault(FaultKind),
     /// A wait the kernel keeps: a test sleep, and from C14 and C15, the
-    /// waits on eventcounts, pages and memory.
+    /// waits on eventcounts, wait sets, pages and memory.
     Other,
 }
 
-/// How a thread's last wait ended, held until it runs (K20).
+/// How a thread's last wait ended, held until it runs (K20). `None` writes
+/// no result: a restart, or a fault's resume.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Res {
     #[default]
@@ -99,13 +132,18 @@ pub enum Res {
     Replied,
     Canceled,
     TimedOut,
+    /// The wait's object was destroyed (K30): its reply object, the server
+    /// its call donated to, or from C14, its endpoint, eventcount or wait
+    /// set.
+    Destroyed,
 }
 
-/// How a cancel ends a wait.
+/// How a cancel, a deadline or a destruction ends a wait.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum End {
     Canceled,
     TimedOut,
+    Destroyed,
 }
 
 impl End {
@@ -113,6 +151,7 @@ impl End {
         match self {
             End::Canceled => Res::Canceled,
             End::TimedOut => Res::TimedOut,
+            End::Destroyed => Res::Destroyed,
         }
     }
 }
@@ -131,6 +170,9 @@ pub struct ThreadRec {
     /// Whether it has a timeout endpoint (thread slot 4).
     pub tep: bool,
     pub suspended: bool,
+    /// The fault whose delivered call it waits in, if its [`TState::Call`]
+    /// is a fault's (C14).
+    pub fault: Option<FaultKind>,
 }
 
 /// A reply object's state.
@@ -205,6 +247,11 @@ pub enum Step {
     DestroyThread(Tcb),
     DestroyReply(Reply),
     DestroySc(Sc),
+    SendWait(Tcb),
+    FaultWait(Tcb),
+    DeliverCall(Tcb, Tcb),
+    DeliverSend(Tcb, Tcb),
+    Wake(Tcb, Res),
 }
 
 /// The memory and effects the protocol runs on (module docs).
@@ -223,14 +270,26 @@ pub trait Store {
     /// The next sequence number: one more than the last, never reused.
     fn next_seq(&mut self) -> u64;
 
-    /// Ends `t`'s [`TState::Other`] wait in the kernel: its deadline, its
-    /// test sleep, from C15 its page wait.
+    /// Takes `t` out of what the kernel keeps for its wait, before the wait
+    /// ends: for [`TState::Other`], its eventcount's or wait set's trees,
+    /// its test sleep, from C15 its page wait; for [`TState::Send`] and
+    /// [`TState::Recv`], the endpoint's queue and a bound eventcount's tree
+    /// (C14). It does nothing for a thread that is in none of them, so a
+    /// wait the kernel has already taken out ends the same way.
     fn cancel_other(&mut self, t: Tcb);
-    /// Withdraws `t`'s fault from its endpoint's queue (C14), or lets a
-    /// delivered one stand (K50).
+    /// Withdraws `t`'s queued fault from its endpoint's queue (K50). It
+    /// never sees a delivered fault: that is a call, and ends as one. It
+    /// does nothing if the kernel has already taken the fault out.
     fn withdraw_fault(&mut self, t: Tcb, kind: FaultKind);
     /// `t` now sends `kind` on its timeout endpoint, carrying `badge`.
     fn send_fault(&mut self, t: Tcb, kind: FaultKind, badge: u64);
+    /// The units of work that ending `t`'s wait takes, as the kernel counts
+    /// them for its preemption points and batches (K23, K24): 1, or for a
+    /// wait on a wait set, the nodes it unlinks (C14).
+    fn wait_cost(&self, _t: Tcb) -> u32 {
+        1
+    }
+
     /// `t`'s state, result or context changed: the kernel requeues it, and
     /// drops its deadline if it no longer waits.
     fn changed(&mut self, t: Tcb);
@@ -459,11 +518,19 @@ pub fn is_cursor<S: Store>(s: &S, r: Reply) -> bool {
 // ---------------------------------------------------------------------------
 // Small effects, as the spec's operators.
 
+/// The spec's `EndWait`, on a record: the wait ends with `res`, unless it
+/// is a delivered fault's call, which ends with no result, so the thread
+/// resumes (C14).
+fn ended(tr: &mut ThreadRec, res: Res) {
+    tr.state = TState::Ready;
+    tr.result = if tr.fault.is_some() { Res::None } else { res };
+    tr.fault = None;
+}
+
 /// The spec's `EndWait`.
 fn end_wait<S: Store>(s: &mut S, t: Tcb, res: Res) {
     let mut tr = s.thread(t);
-    tr.state = TState::Ready;
-    tr.result = res;
+    ended(&mut tr, res);
     s.set_thread(t, tr);
 }
 
@@ -476,6 +543,7 @@ fn cancel_holder_wait<S: Store>(s: &mut S, t: Tcb) {
     match s.thread(t).state {
         TState::Ready => {}
         TState::Recv(q) => {
+            s.cancel_other(t);
             let mut qr = s.reply(q);
             qr.state = RState::Idle;
             qr.server = None;
@@ -493,7 +561,7 @@ fn cancel_holder_wait<S: Store>(s: &mut S, t: Tcb) {
             s.withdraw_fault(t, k);
             end_wait(s, t, Res::None);
         }
-        TState::Other => {
+        TState::Send | TState::Other => {
             s.cancel_other(t);
             end_wait(s, t, Res::Canceled);
         }
@@ -543,8 +611,7 @@ fn take_back<S: Store>(s: &mut S, r: Reply, end: End) {
     s.set_sc(c, cr);
     let mut t = s.thread(caller);
     t.sc = Some(c);
-    t.state = TState::Ready;
-    t.result = end.res();
+    ended(&mut t, end.res());
     s.set_thread(caller, t);
     s.changed(caller);
 }
@@ -624,6 +691,7 @@ fn end_any_wait<S: Store>(s: &mut S, t: Tcb, end: End) {
             }
         }
         TState::Recv(q) => {
+            s.cancel_other(t);
             let mut qr = s.reply(q);
             qr.state = RState::Idle;
             qr.server = None;
@@ -634,7 +702,7 @@ fn end_any_wait<S: Store>(s: &mut S, t: Tcb, end: End) {
             s.withdraw_fault(t, k);
             end_wait(s, t, Res::None);
         }
-        TState::Other => {
+        TState::Send | TState::Other => {
             s.cancel_other(t);
             end_wait(s, t, end.res());
         }
@@ -642,7 +710,10 @@ fn end_any_wait<S: Store>(s: &mut S, t: Tcb, end: End) {
     s.changed(t);
 }
 
-fn may_reply<S: Store>(s: &mut S, t: Tcb, r: Reply) -> Result<(), Error> {
+/// Whether `t` may reply on `r`, and if not, why: the check of `reply`,
+/// which changes nothing, for an operation that must check before it acts
+/// (C14's reply and receive).
+pub fn may_reply<S: Store>(s: &mut S, t: Tcb, r: Reply) -> Result<(), Error> {
     let rec = s.reply(r);
     match rec.state {
         RState::Pending => match rec.sc {
@@ -751,12 +822,29 @@ pub fn call<S: Store>(s: &mut S, cl: Tcb, v: Tcb) -> Result<Delivered, Error> {
     let TState::Recv(r) = s.thread(v).state else {
         return Err(Error::NotReceiving);
     };
-    let Some(c) = s.thread(cl).sc else {
+    if s.thread(cl).sc.is_none() {
         return Err(Error::NoContext);
-    };
+    }
+    let out = call_effect(s, cl, v, r, true, None);
+    s.observe(Step::Call(cl, v));
+    Ok(out)
+}
+
+/// The spec's `CallEffect` and `DeliverEffect`: `cl`'s call, or its fault
+/// `fault`, is delivered to `v`, which receives with `r`. It donates `cl`'s
+/// context if `may_donate`, `cl` holds one and `v` holds none.
+fn call_effect<S: Store>(
+    s: &mut S,
+    cl: Tcb,
+    v: Tcb,
+    r: Reply,
+    may_donate: bool,
+    fault: Option<FaultKind>,
+) -> Delivered {
     let mut ct = s.thread(cl);
     ct.state = TState::Call(r);
     ct.result = Res::None;
+    ct.fault = fault;
     let mut vt = s.thread(v);
     vt.state = TState::Ready;
     vt.result = Res::None;
@@ -765,7 +853,11 @@ pub fn call<S: Store>(s: &mut S, cl: Tcb, v: Tcb) -> Result<Delivered, Error> {
         caller: Some(cl),
         ..ReplyRec::default()
     };
-    let out = if vt.sc.is_none() {
+    let donated = match ct.sc {
+        Some(c) if may_donate && vt.sc.is_none() => Some(c),
+        _ => None,
+    };
+    let out = if let Some(c) = donated {
         let seq = s.next_seq();
         let mut cr = s.sc(c);
         rec.server = Some(v);
@@ -792,8 +884,99 @@ pub fn call<S: Store>(s: &mut S, cl: Tcb, v: Tcb) -> Result<Delivered, Error> {
     s.set_thread(v, vt);
     s.changed(cl);
     s.changed(v);
-    s.observe(Step::Call(cl, v));
+    out
+}
+
+/// `DeliverCall(cl, v)`: a receive by `v` delivers `cl`'s queued call or
+/// queued fault (C14). `cl` waits in the call on `v`'s reply object, as if
+/// it had called `v` now. A call, or a fault on the fault endpoint, donates
+/// `cl`'s context if it holds one and `v` holds none; a timeout or
+/// context-withdrawn fault donates nothing (ADR 0051, rule 1). A delivered
+/// fault records its kind in [`ThreadRec::fault`]. The kernel's IPC has
+/// taken `cl` out of the endpoint's queue and carries the message.
+pub fn deliver<S: Store>(s: &mut S, cl: Tcb, v: Tcb) -> Result<Delivered, Error> {
+    let (may_donate, fault) = match s.thread(cl).state {
+        TState::Send => (true, None),
+        TState::Fault(k) => (k == FaultKind::Endpoint, Some(k)),
+        _ => return Err(Error::NotWaiting),
+    };
+    let TState::Recv(r) = s.thread(v).state else {
+        return Err(Error::NotReceiving);
+    };
+    let out = call_effect(s, cl, v, r, may_donate, fault);
+    s.observe(Step::DeliverCall(cl, v));
     Ok(out)
+}
+
+/// `DeliverSend(t, v)`: a receive by `v` delivers `t`'s queued plain send
+/// (C14). Both waits end; `v`'s reply object goes back to idle, unused, as
+/// seL4's `reply_unlink` leaves it. The kernel's IPC has taken `t` out of
+/// the endpoint's queue and carries the message.
+pub fn deliver_send<S: Store>(s: &mut S, t: Tcb, v: Tcb) -> Result<(), Error> {
+    if s.thread(t).state != TState::Send {
+        return Err(Error::NotWaiting);
+    }
+    let TState::Recv(r) = s.thread(v).state else {
+        return Err(Error::NotReceiving);
+    };
+    end_wait(s, t, Res::Replied);
+    set_idle(s, r);
+    end_wait(s, v, Res::Replied);
+    s.changed(t);
+    s.changed(v);
+    s.observe(Step::DeliverSend(t, v));
+    Ok(())
+}
+
+/// `SendWait(t)`: `t`, running, sends or calls on an endpoint with no
+/// receiver waiting, and waits queued (C14). Whether it is a call is the
+/// kernel's IPC's to keep: it chooses [`deliver`] or [`deliver_send`].
+pub fn send_wait<S: Store>(s: &mut S, t: Tcb) {
+    let mut tr = s.thread(t);
+    tr.state = TState::Send;
+    tr.result = Res::None;
+    s.set_thread(t, tr);
+    s.changed(t);
+    s.observe(Step::SendWait(t));
+}
+
+/// `FaultWait(t)`: `t`, running, raised a fault and has a fault endpoint:
+/// it waits, sending the fault, queued on that endpoint (ADR 0056, rule 1;
+/// C14). The kernel writes the fault record and queues it. The timeout and
+/// context-withdrawn faults are [`budget_out`]'s and the walk's.
+pub fn fault_wait<S: Store>(s: &mut S, t: Tcb) {
+    let mut tr = s.thread(t);
+    tr.state = TState::Fault(FaultKind::Endpoint);
+    s.set_thread(t, tr);
+    s.changed(t);
+    s.observe(Step::FaultWait(t));
+}
+
+/// `Wake(t, res)`: the kernel ends `t`'s wait on an endpoint, an eventcount
+/// or a wait set, which it has already taken `t` out of (C14): a send or
+/// receive whose message came, or whose endpoint was destroyed; an
+/// eventcount wait whose target was reached; a sender whose badge was
+/// released, with no result, so it restarts its call. A queued fault is
+/// withdrawn, and ends with no result, so the thread goes on as its
+/// fault's kind allows (it re-executes a faulting instruction). A
+/// receive's reply object goes back to idle. A call can't be woken: it ends
+/// by its reply, a cancel or a destruction.
+pub fn wake<S: Store>(s: &mut S, t: Tcb, res: Res) -> Result<(), Error> {
+    match s.thread(t).state {
+        TState::Ready | TState::Call(_) => return Err(Error::NotWaiting),
+        TState::Fault(k) => {
+            s.withdraw_fault(t, k);
+            end_wait(s, t, Res::None);
+        }
+        TState::Recv(r) => {
+            set_idle(s, r);
+            end_wait(s, t, res);
+        }
+        TState::Send | TState::Other => end_wait(s, t, res),
+    }
+    s.changed(t);
+    s.observe(Step::Wake(t, res));
+    Ok(())
 }
 
 /// `Reply(t, r)`: `t`, running, replies on `r`. A donating call can be
@@ -824,7 +1007,8 @@ pub fn reply_recv<S: Store>(s: &mut S, t: Tcb, r: Reply) -> Result<(), Error> {
 
 /// `Cancel(t)`: ends `t`'s wait with "canceled", taking back the context of
 /// a donated call at once (ADR 0051, rule 3). A fault send is withdrawn,
-/// and the thread raises it again when it re-executes.
+/// and the thread goes on as its fault's kind allows: a faulting
+/// instruction faults again when it re-executes, if its cause remains.
 pub fn cancel<S: Store>(s: &mut S, t: Tcb) -> Result<(), Error> {
     if s.thread(t).state == TState::Ready {
         return Err(Error::NotWaiting);
@@ -835,14 +1019,111 @@ pub fn cancel<S: Store>(s: &mut S, t: Tcb) -> Result<(), Error> {
 }
 
 /// `Deadline(t)`: `t`'s deadline passed: as a cancel, with "timed out".
-/// Fault sends have no deadline.
+/// Faults have no deadline, queued or delivered.
 pub fn deadline<S: Store>(s: &mut S, t: Tcb) -> Result<(), Error> {
-    if matches!(s.thread(t).state, TState::Ready | TState::Fault(_)) {
+    let tr = s.thread(t);
+    if matches!(tr.state, TState::Ready | TState::Fault(_)) || tr.fault.is_some() {
         return Err(Error::NotWaiting);
     }
     end_any_wait(s, t, End::TimedOut);
     s.observe(Step::Deadline(t));
     Ok(())
+}
+
+/// The units ending `t`'s wait takes, for a batch that must know a unit's
+/// cost before it runs it (K24): its own wait's, and for a live donated
+/// call, whose end is a take-back, the holder's wait's too, since the cut
+/// cancels it (K17). C14's wait-set waits cost more than one.
+pub fn end_cost<S: Store>(s: &mut S, t: Tcb) -> u32 {
+    let mut cost = s.wait_cost(t);
+    if let TState::Call(q) = s.thread(t).state
+        && is_live(s, q)
+        && let Some(c) = s.reply(q).sc
+        && let Some(h) = s.sc(c).holder
+    {
+        cost = cost.saturating_add(s.wait_cost(h));
+    }
+    cost
+}
+
+/// The units the walk step at cursor `q` takes: one, and the cost of the
+/// server's onward call it ends, if any.
+pub fn step_cost<S: Store>(s: &mut S, q: Reply) -> u32 {
+    let rec = s.reply(q);
+    match (rec.server, rec.next) {
+        (Some(srv), Some(n)) if s.thread(srv).state == TState::Call(n) => {
+            1u32.saturating_add(s.wait_cost(srv))
+        }
+        _ => 1,
+    }
+}
+
+/// The holder whose wait a take-back at `r` would end: `r`'s context's
+/// holder, if `r` is a live donating reply.
+fn cut_holder<S: Store>(s: &mut S, r: Reply) -> Option<Tcb> {
+    if !is_live(s, r) {
+        return None;
+    }
+    let c = s.reply(r).sc?;
+    s.sc(c).holder
+}
+
+/// The units destroying thread `t` takes ([`destroy_thread`]), for the
+/// deletion step that makes its zombie (K23): the wait of the holder that
+/// the take-back of the call it serves ends, and its own wait's end, as
+/// [`end_cost`] counts it, each counted once. At least 1. Call it before
+/// [`destroy_thread`]; nothing may change between the two.
+pub fn destroy_cost<S: Store>(s: &mut S, t: Tcb) -> u32 {
+    let tr = s.thread(t);
+    let mut cost = 0u32;
+    let cut = tr.serving.and_then(|q| cut_holder(s, q));
+    if let Some(h) = cut {
+        cost = cost.saturating_add(s.wait_cost(h));
+    }
+    // The cut ended `t`'s wait if `t` held the context.
+    if tr.state != TState::Ready && cut != Some(t) {
+        cost = cost.saturating_add(s.wait_cost(t));
+        if let TState::Call(q) = tr.state
+            && let Some(h) = cut_holder(s, q)
+            && Some(h) != cut
+        {
+            cost = cost.saturating_add(s.wait_cost(h));
+        }
+    }
+    cost.max(1)
+}
+
+/// The units destroying reply object `r` takes ([`destroy_reply`]), for
+/// the deletion step that finishes it (K23): a live reply's take-back ends
+/// its context's holder's wait, a donating reply's walk step ends its
+/// server's onward call ([`step_cost`]), and a receive with it ends. At
+/// least 1. Call it before [`destroy_reply`].
+pub fn destroy_reply_cost<S: Store>(s: &mut S, r: Reply) -> u32 {
+    let rec = s.reply(r);
+    let cost = match rec.state {
+        RState::Pending if rec.sc.is_some() => {
+            let cut = cut_holder(s, r).map_or(0, |h| s.wait_cost(h));
+            cut.saturating_add(step_cost(s, r))
+        }
+        RState::Recv => rec.server.map_or(0, |v| s.wait_cost(v)),
+        _ => 0,
+    };
+    cost.max(1)
+}
+
+/// The units unbinding context `c` takes ([`unbind_sc`], or the unbind of
+/// [`destroy_sc`]), for the deletion step that runs it (K23): a donated
+/// context is taken back first, which ends its holder's wait. At least 1.
+pub fn unbind_cost<S: Store>(s: &mut S, c: Sc) -> u32 {
+    let cr = s.sc(c);
+    let cost = match (cr.home, cr.top) {
+        (Some(h), Some(_)) => match s.thread(h).state {
+            TState::Call(r1) => cut_holder(s, r1).map_or(0, |x| s.wait_cost(x)),
+            _ => 0,
+        },
+        _ => 0,
+    };
+    cost.max(1)
 }
 
 /// `WalkStep`: one unit of the walk whose cursor is `q`. Returns the next
@@ -883,7 +1164,10 @@ pub fn budget_out<S: Store>(s: &mut S, t: Tcb) -> bool {
     true
 }
 
-/// `FaultReplied(t)`: the handler replied to `t`'s fault: it resumes.
+/// `FaultReplied(t)`: the handler replied to `t`'s fault: it resumes. The
+/// delivery and the reply as one step, for a model without endpoint queues
+/// (the spec with `WithQueue` false) and C12's tests. With queues, a fault
+/// is delivered ([`deliver`]) and replied to as a call ([`reply`]).
 pub fn fault_replied<S: Store>(s: &mut S, t: Tcb) -> Result<(), Error> {
     if !matches!(s.thread(t).state, TState::Fault(_)) {
         return Err(Error::NotWaiting);
@@ -914,7 +1198,8 @@ pub fn set_suspended<S: Store>(s: &mut S, t: Tcb, on: bool) {
 /// `SetTep(t, b)`: setting or removing `t`'s timeout endpoint (K08). A
 /// fault queued on the endpoint it loses is withdrawn (K50): a timeout
 /// fault becomes a wait for the refill, a context-withdrawn fault a silent
-/// strand.
+/// strand. A fault queued on the fault endpoint ([`FaultKind::Endpoint`])
+/// isn't the timeout endpoint's, and stays.
 pub fn set_tep<S: Store>(s: &mut S, t: Tcb, on: bool) {
     let mut tr = s.thread(t);
     if tr.tep == on {
@@ -922,7 +1207,8 @@ pub fn set_tep<S: Store>(s: &mut S, t: Tcb, on: bool) {
     }
     tr.tep = on;
     s.set_thread(t, tr);
-    if let (false, TState::Fault(k)) = (on, tr.state) {
+    if let (false, TState::Fault(k @ (FaultKind::Timeout | FaultKind::Withdrawn))) = (on, tr.state)
+    {
         s.withdraw_fault(t, k);
         end_wait(s, t, Res::None);
     }
@@ -1002,12 +1288,13 @@ pub fn unbind_sc<S: Store>(s: &mut S, c: Sc) -> Result<(), Error> {
 }
 
 /// `DestroyThread(t)`: the donated call it serves is taken back for its
-/// caller, its own wait ends, and its home context is unbound. The kernel
-/// calls this when the thread's object becomes a zombie, then forgets it.
+/// caller, whose call ends "object destroyed" (K30), its own wait ends, and
+/// its home context is unbound. The kernel calls this when the thread's
+/// object becomes a zombie, then forgets it.
 pub fn destroy_thread<S: Store>(s: &mut S, t: Tcb) {
     if let Some(q) = s.thread(t).serving {
         if is_live(s, q) {
-            take_back(s, q, End::Canceled);
+            take_back(s, q, End::Destroyed);
         }
         let mut qr = s.reply(q);
         qr.server = None;
@@ -1037,18 +1324,19 @@ pub fn destroy_thread<S: Store>(s: &mut S, t: Tcb) {
 
 /// `DestroyReply(r)`. A live donating reply is a cut at `r`, and `r`'s
 /// own step follows at once. A stale one takes its step at once, and its
-/// caller's wait on it ends. The kernel calls this from the reply object's
-/// finish.
+/// caller's wait on it ends. A call waiting on `r`, and a receive with it,
+/// end "object destroyed" (K30). The kernel calls this from the reply
+/// object's finish.
 pub fn destroy_reply<S: Store>(s: &mut S, r: Reply) {
     let rec = s.reply(r);
     match rec.state {
         RState::Pending if rec.sc.is_some() && is_live(s, r) => {
-            take_back(s, r, End::Canceled);
+            take_back(s, r, End::Destroyed);
             step(s, r);
         }
         RState::Pending if rec.sc.is_some() => {
             if let Some(cl) = rec.caller {
-                end_wait(s, cl, Res::Canceled);
+                end_wait(s, cl, Res::Destroyed);
                 s.changed(cl);
             }
             if is_cursor(s, r) {
@@ -1075,16 +1363,19 @@ pub fn destroy_reply<S: Store>(s: &mut S, r: Reply) {
         }
         RState::Pending => {
             if let Some(cl) = rec.caller {
-                end_wait(s, cl, Res::Canceled);
+                end_wait(s, cl, Res::Destroyed);
                 s.changed(cl);
             }
         }
         RState::Recv => {
             if let Some(v) = rec.server {
-                end_wait(s, v, Res::Canceled);
+                // Out of the endpoint's queue first (C14).
+                s.cancel_other(v);
+                end_wait(s, v, Res::Destroyed);
                 s.changed(v);
             }
         }
+
         RState::Idle | RState::Invalid => {}
     }
     set_idle(s, r);
@@ -1126,6 +1417,8 @@ pub enum Violation {
     /// A stale reply's segment doesn't end at the walk the tree finds for
     /// it.
     Segment,
+    /// A thread records a delivered fault, but isn't waiting in a call.
+    Fault,
 }
 
 /// Checks the spec's invariants over the objects given. O(n log n): for
@@ -1187,6 +1480,9 @@ pub fn check<S: Store>(
     }
     for &t in threads {
         let tr = s.thread(t);
+        if tr.fault.is_some() && !matches!(tr.state, TState::Call(_)) {
+            return Err(Violation::Fault);
+        }
         if let Some(c) = tr.sc
             && s.sc(c).holder != Some(t)
         {

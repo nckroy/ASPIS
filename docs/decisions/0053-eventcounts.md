@@ -4,7 +4,7 @@
 # 0053. Eventcounts
 
 - **Status:** Accepted
-- **Date:** 2026-11-25
+- **Date:** 2026-11-25, updated 2026-11-27
 
 ## Context
 
@@ -43,6 +43,7 @@ Claude drafted this record from that discussion.
    - Binding needs the write right on the thread and the read right on the eventcount ([0049](0049-capability-spaces-rights-and-revocation.md), rule 2). A thread has at most one bound eventcount, and the binding holds a copy of the eventcount's capability ([0049](0049-capability-spaces-rights-and-revocation.md), rule 4).
    - While it is bound, the thread's receive on an endpoint, including the receive half of reply and receive ([0054](0054-ipc-endpoints.md), rule 2), also returns when the count has passed the value the thread last saw. It says which happened, and for an advance it returns the count. So no advance is missed between receives.
    - If an advance and a message are both pending, the receive reports the advance first, as seL4 reports a bound notification's signal first. The message stays queued for the next receive.
+   - A receiving thread that holds no scheduling context, a passive server, neither waits on its bound eventcount nor has its advance reported: woken, it would have no context to run on, and its clients would wait behind it. Its last-seen value stays, so the advance is reported at its first receive made while it holds a context, or as soon as one is bound to it while it receives, and none is missed. A passive server that must hear advances keeps a context of its own ([0047](0047-the-kernel-follows-sel4.md), rule 3).
    - The [kernel specification](../design/kernel-specification.md#threads-bound-to-an-eventcount) says how the last-seen value is kept.
 6. **A thread can also wait on a word in user memory**, for futex-style locks.
    - **Wait** takes the word's address, the value the caller expects and an optional deadline. If the word still holds that value, the thread sleeps until it is woken. Otherwise the call returns at once. **Wake** takes the address and how many waiters to wake. Words are 32 or 64 bits, aligned to their size.

@@ -1,0 +1,47 @@
+# SPDX-FileCopyrightText: 2026 Nicole Roy
+# SPDX-License-Identifier: MPL-2.0
+
+[package]
+name = "kipc"
+description = "The ASPIS kernel's IPC and eventcount logic (ADRs 0053 and 0054), tested on the host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+# Tests are declared below, not discovered: iCloud's conflict copies, such
+# as "tests/msg 2.rs", would otherwise be built as test targets. Declare
+# each new file in tests/ here.
+autotests = false
+
+[dependencies]
+kcap.workspace = true
+ksched.workspace = true
+
+[lints]
+workspace = true
+
+[[test]]
+name = "msg"
+path = "tests/msg.rs"
+
+[[test]]
+name = "endpoint"
+path = "tests/endpoint.rs"
+
+[[test]]
+name = "eventcount"
+path = "tests/eventcount.rs"
+
+[[test]]
+name = "random"
+path = "tests/random.rs"
+
+[[test]]
+name = "endpoint_traces"
+path = "tests/endpoint_traces.rs"
+
+[[test]]
+name = "eventcount_traces"
+path = "tests/eventcount_traces.rs"

@@ -666,8 +666,9 @@ crate::kernel_smp_test!(donation_runs_the_server_on_the_callers_core, {
     let mut sc = scratch();
     let s = space(&mut sc);
     let r = sc.make(ObjectType::Reply);
+    let ep = sc.make(ObjectType::Endpoint);
     let mut spec = Spec::of(Program::Serve);
-    spec.args = [sc.addr_of(r), 1_000, 0];
+    spec.args = [sc.addr_of(ep), 1_000, sc.addr_of(r)];
     let srv = spawn_in(&mut sc, s, spec);
     watch(0, srv.tcb);
     assert!(
@@ -676,7 +677,7 @@ crate::kernel_smp_test!(donation_runs_the_server_on_the_callers_core, {
     );
     thread::unbind_context(srv.thread).unwrap();
     let mut spec = Spec::of(Program::CallReport).on(k);
-    spec.args = [sc.addr_of(srv.thread), 0, 41];
+    spec.args = [sc.addr_of(ep), 0, 41];
     let cl = spawn_in(&mut sc, s, spec);
     watch(0, cl.tcb);
     assert!(run_until(w0_done, ms(5_000)), "the call didn't end");
@@ -698,14 +699,15 @@ crate::kernel_smp_test!(taking_a_context_back_from_another_core, {
     let mut sc = scratch();
     let s = space(&mut sc);
     let r = sc.make(ObjectType::Reply);
+    let ep = sc.make(ObjectType::Endpoint);
     let mut spec = Spec::of(Program::Serve);
-    spec.args = [sc.addr_of(r), u64::MAX, 0];
+    spec.args = [sc.addr_of(ep), u64::MAX, sc.addr_of(r)];
     let srv = spawn_in(&mut sc, s, spec);
     watch(0, srv.tcb);
     assert!(run_until(w0_receiving, ms(2_000)));
     thread::unbind_context(srv.thread).unwrap();
     let mut spec = Spec::of(Program::CallReport).on(k);
-    spec.args = [sc.addr_of(srv.thread), 0, 7];
+    spec.args = [sc.addr_of(ep), 0, 7];
     spec.budget_us = 900;
     let cl = spawn_in(&mut sc, s, spec);
     watch(0, srv.tcb);
@@ -720,9 +722,10 @@ crate::kernel_smp_test!(taking_a_context_back_from_another_core, {
     assert!(srv.tcb.sc().is_none(), "the server kept the context");
     watch(0, cl.tcb);
     assert!(run_until(w0_done, ms(2_000)));
+    // The call had been delivered, and says so (K30).
     assert_eq!(
         report::values_of(cl.tcb.0).next(),
-        Some(Ended::Canceled as u64)
+        Some(kipc::msg::Status::Canceled.word(true))
     );
     assert!(
         (0..MAX_CORES)

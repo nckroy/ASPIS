@@ -82,13 +82,13 @@ These come from the project brief and aren't re-decided here:
 | [0044](0044-stub-undoes-grubs-command-line.md) | The stub undoes GRUB's rewriting of the command line | Superseded by [0041](0041-boot-abi.md) | 2026-11-25 |
 | [0045](0045-linking-the-kernel-and-stub-on-stable-rust.md) | Linking the kernel and the stub on stable Rust | Superseded by [0035](0035-toolchain-image-linkage-and-esp-layout.md) | 2026-11-25 |
 | [0046](0046-fallback-fonts-for-wgl4-symbols.md) | Fallback Noto fonts for the WGL4 symbols Noto Sans Mono lacks | Accepted | 2026-11-25 |
-| [0047](0047-the-kernel-follows-sel4.md) | The kernel follows seL4's design, with ASPIS's own objects where the records need them | Accepted | 2026-11-25, updated 2026-11-26 |
+| [0047](0047-the-kernel-follows-sel4.md) | The kernel follows seL4's design, with ASPIS's own objects where the records need them | Accepted | 2026-11-25, updated 2026-11-27 |
 | [0048](0048-kernel-memory-and-address-spaces.md) | Kernel memory: untyped memory, 4 KiB pages, and no access to user addresses | Accepted | 2026-11-25 |
 | [0049](0049-capability-spaces-rights-and-revocation.md) | Capability spaces, rights, badges and revocation | Accepted | 2026-11-25, updated 2026-11-26 |
 | [0050](0050-ids-for-kernel-objects.md) | User-space servers name the kernel objects they present | Accepted | 2026-11-25 |
 | [0051](0051-scheduling-timers-and-deadlines.md) | Scheduling, the timer and deadlines | Accepted | 2026-11-25, updated 2026-11-26 |
 | [0052](0052-smp-bring-up-and-the-kernel-lock.md) | SMP: PSCI bring-up and one kernel lock | Accepted | 2026-11-25 |
-| [0053](0053-eventcounts.md) | Eventcounts | Accepted | 2026-11-25 |
+| [0053](0053-eventcounts.md) | Eventcounts | Accepted | 2026-11-25, updated 2026-11-27 |
 | [0054](0054-ipc-endpoints.md) | IPC: synchronous endpoints with deadlines and cancellation | Accepted | 2026-11-25 |
 | [0055](0055-interrupt-objects.md) | Interrupt objects for user-space drivers | Accepted | 2026-11-25 |
 | [0056](0056-faults-and-page-fetch-deadlines.md) | Typed faults, and the deadline for fetching a page | Accepted | 2026-11-25 |

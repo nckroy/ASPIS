@@ -10,8 +10,9 @@
 //! invariants.
 //!
 //! The universe is the trace model's constants (specs/SchedDonationTrace.cfg):
-//! four threads, three replies, two contexts, every action enabled. Two
-//! contexts make non-donating calls, and their replies and cancels, reachable.
+//! four threads, three replies, two contexts, every action enabled, C14's
+//! queued sends and faults included. Two contexts make non-donating calls,
+//! and their replies and cancels, reachable.
 
 mod common;
 
@@ -32,7 +33,9 @@ fn traces(count: u64, steps: usize) -> Vec<Vec<String>> {
         suspend: true,
         refine: false,
         walks: true,
+        queue: true,
     };
+
     let mut out = vec![];
     for seed in 0..count {
         let mut rng = Lcg(0x7ace + seed);

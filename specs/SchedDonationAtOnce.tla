@@ -20,11 +20,12 @@ TB(st, r, x) ==
     IN RunWalk(st1, seg)
 
 Cancel(t) ==
-    /\ s.talive[t] /\ s.ts[t] \in {"call", "recv", "other", "fault"}
+    /\ s.talive[t] /\ s.ts[t] \in {"call", "recv", "other", "fault", "send"}
     /\ s' = EndAnyWait(s, t, "canceled", TB)
 
 Deadline(t) ==
-    /\ s.talive[t] /\ s.ts[t] \in {"call", "recv", "other"}
+    /\ s.talive[t] /\ s.ts[t] \in {"call", "recv", "other", "send"}
+    /\ s.flt[t] = "none"
     /\ s' = EndAnyWait(s, t, "timedout", TB)
 
 UnbindSC(c) ==
@@ -52,6 +53,9 @@ Next ==
          \/ \E b \in BOOLEAN: SetTep(t, b)
     \/ \E c \in SCs: UnbindSC(c) \/ DestroySC(c) \/ \E t \in Threads: BindSC(c, t)
     \/ \E r \in Replies: DestroyReply(r)
+    \/ \E t \in Threads:
+         \/ SendWait(t) \/ FaultWait(t) \/ \E x \in WakeResults: Wake(t, x)
+         \/ \E v \in Threads: DeliverCall(t, v) \/ DeliverSend(t, v)
 
 Spec == Init /\ [][Next]_s
 

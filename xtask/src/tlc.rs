@@ -13,10 +13,12 @@
 //! - **Where it runs.** The specs are copied into `build/tla/run/` and
 //!   checked there, so TLC's state files never land in `specs/`.
 //! - **What it runs.** The per-change models, each with its own `.cfg`
-//!   beside `SchedDonation.tla`, then trace validation: the `donation_traces`
-//!   test of `crates/ksched` writes seeded traces of the Rust, and
-//!   `SchedDonationTrace.tla` checks them step by step. `--nightly` adds the
-//!   nightly model and longer traces.
+//!   beside its spec, then trace validation: the `donation_traces` test of
+//!   `crates/ksched`, and the `endpoint_traces` and `eventcount_traces`
+//!   tests of `crates/kipc` (C14), write seeded traces of the Rust, and
+//!   `SchedDonationTrace.tla`, `IpcEndpointTrace.tla` and
+//!   `EventcountTrace.tla` check them step by step. `--nightly` adds the
+//!   nightly models and longer traces.
 //! - **Its budget.** One budget for everything: 10 minutes per change, 60
 //!   nightly. A run past it is killed, and fails. TLC uses at most
 //!   min(4, cores / 2) workers, never `auto`, at low priority (`nice -n 10`),
@@ -36,14 +38,72 @@ const JAR_URL: &str = "https://github.com/tlaplus/tlaplus/releases/download/v1.7
 const JAR_SHA256: &str = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88";
 
 /// The per-change models: (spec, config). Each config is `specs/<config>.cfg`.
-const CI_MODELS: [(&str, &str); 5] = [
+const CI_MODELS: [(&str, &str); 13] = [
     ("SchedDonation", "SchedDonation"),
     ("SchedDonation", "SchedDonationTwo"),
     ("SchedDonation", "SchedDonationRefine"),
     ("SchedDonation", "SchedDonationDestroy"),
     ("SchedDonation", "SchedDonationSuspend"),
+    // C14's queued sends and faults.
+    ("SchedDonation", "SchedDonationQueue"),
+    // C14's endpoints and eventcounts.
+    ("IpcEndpoint", "IpcEndpoint"),
+    ("IpcEndpoint", "IpcEndpointDestroy"),
+    ("IpcEndpoint", "IpcEndpointLife"),
+    ("Eventcount", "Eventcount"),
+    ("Eventcount", "EventcountSets"),
+    ("Eventcount", "EventcountSetsLife"),
+    ("Eventcount", "EventcountBound"),
 ];
-const NIGHTLY_MODELS: [(&str, &str); 1] = [("SchedDonation", "SchedDonation.nightly")];
+const NIGHTLY_MODELS: [(&str, &str); 6] = [
+    ("SchedDonation", "SchedDonation.nightly"),
+    ("SchedDonation", "SchedDonationQueue.nightly"),
+    ("SchedDonation", "SchedDonationRefine.nightly"),
+    ("IpcEndpoint", "IpcEndpoint.nightly"),
+    ("Eventcount", "EventcountSets.nightly"),
+    ("Eventcount", "EventcountBound.nightly"),
+];
+
+/// A trace validation: the crate and test that write the traces, the
+/// environment variables that set where and how many, and the module the
+/// traces are written as, which the trace spec of the same name without
+/// its final `s` extends.
+struct Traced {
+    krate: &'static str,
+    test: &'static str,
+    out: &'static str,
+    count: &'static str,
+    steps: &'static str,
+    module: &'static str,
+}
+
+const TRACED: [Traced; 3] = [
+    Traced {
+        krate: "ksched",
+        test: "donation_traces",
+        out: "KSCHED_TRACE_OUT",
+        count: "KSCHED_TRACES",
+        steps: "KSCHED_TRACE_STEPS",
+        module: "SchedDonationTraces",
+    },
+    Traced {
+        krate: "kipc",
+        test: "endpoint_traces",
+        out: "KIPC_TRACE_OUT_EP",
+        count: "KIPC_TRACES",
+        steps: "KIPC_TRACE_STEPS",
+        module: "IpcEndpointTraces",
+    },
+    Traced {
+        krate: "kipc",
+        test: "eventcount_traces",
+        out: "KIPC_TRACE_OUT_EC",
+        count: "KIPC_TRACES",
+        steps: "KIPC_TRACE_STEPS",
+        module: "EventcountTraces",
+    },
+];
+
 /// The traces of the Rust that trace validation checks, per change and
 /// nightly; nightly's are longer.
 const TRACES: u64 = 100;
@@ -275,54 +335,9 @@ pub fn check(nightly: bool) {
     }
 
     // Trace validation: traces of the Rust, then TLC over them.
-    let t0 = Instant::now();
-    let traces = dir.join("SchedDonationTraces.tla");
-    let mut test = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-    test.current_dir(root())
-        .args(["test", "--locked", "--quiet", "-p", "ksched", "--test"])
-        .arg("donation_traces")
-        .env("KSCHED_TRACE_OUT", &traces)
-        .env("KSCHED_TRACES", TRACES.to_string());
-    if nightly {
-        test.env("KSCHED_TRACE_STEPS", "200");
-    }
-    let log = dir.join("traces-build.log");
-    if !run_until(test, &log, deadline) || !traces.exists() {
-        eprintln!("{}", fs::read_to_string(&log).unwrap_or_default());
-        failed.push("writing traces".into());
-    } else {
-        let log = dir.join("SchedDonationTrace.log");
-        // Deadlock checking stays on: a step the spec doesn't allow
-        // deadlocks.
-        let ran = run_until(
-            tlc(
-                &java,
-                &jar,
-                &dir,
-                "SchedDonationTrace",
-                "SchedDonationTrace",
-                false,
-            ),
-            &log,
-            deadline,
-        );
-        // TLC passes a model with no initial state, so the run must have
-        // started every trace, and visited at least one state of each.
-        let counted = state_counts(&log);
-        let ok = ran && counted.is_some_and(|(init, found)| init == TRACES && found >= TRACES);
-        if ran && !ok {
-            eprintln!(
-                "xtask: trace validation checked {counted:?} (initial, distinct) states, not {TRACES} traces"
-            );
-        }
-        eprintln!(
-            "xtask: TLC trace validation: {} in {:.0?}\n{}",
-            if ok { "passed" } else { "FAILED" },
-            t0.elapsed(),
-            summary(&log)
-        );
-        if !ok {
-            failed.push("trace validation".into());
+    for tr in &TRACED {
+        if let Err(why) = validate(&java, &jar, &dir, tr, nightly, deadline) {
+            failed.push(why);
         }
     }
     if failed.is_empty() {
@@ -333,5 +348,58 @@ pub fn check(nightly: bool) {
         );
     } else {
         fail(format!("TLC failed: {}", failed.join(", ")));
+    }
+}
+
+/// Writes `tr`'s traces and checks them with its trace spec. Returns what
+/// failed, if anything.
+fn validate(
+    java: &Path,
+    jar: &Path,
+    dir: &Path,
+    tr: &Traced,
+    nightly: bool,
+    deadline: Instant,
+) -> Result<(), String> {
+    let t0 = Instant::now();
+    let spec = tr.module.trim_end_matches('s');
+    let traces = dir.join(format!("{}.tla", tr.module));
+    let mut test = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+    test.current_dir(root())
+        .args([
+            "test", "--locked", "--quiet", "-p", tr.krate, "--test", tr.test,
+        ])
+        .env(tr.out, &traces)
+        .env(tr.count, TRACES.to_string());
+    if nightly {
+        test.env(tr.steps, "200");
+    }
+    let log = dir.join(format!("{}-build.log", tr.test));
+    if !run_until(test, &log, deadline) || !traces.exists() {
+        eprintln!("{}", fs::read_to_string(&log).unwrap_or_default());
+        return Err(format!("writing {}", tr.module));
+    }
+    let log = dir.join(format!("{spec}.log"));
+    // Deadlock checking stays on: a step the spec doesn't allow deadlocks.
+    let ran = run_until(tlc(java, jar, dir, spec, spec, false), &log, deadline);
+    // TLC passes a model with no initial state, so the run must have
+    // started every trace, and visited at least one state of each.
+    let counted = state_counts(&log);
+    let ok = ran && counted.is_some_and(|(init, found)| init == TRACES && found >= TRACES);
+    if ran && !ok {
+        eprintln!(
+            "xtask: trace validation of {spec} checked {counted:?} (initial, distinct) states, not {TRACES} traces"
+        );
+    }
+    eprintln!(
+        "xtask: TLC trace validation of {spec}: {} in {:.0?}\n{}",
+        if ok { "passed" } else { "FAILED" },
+        t0.elapsed(),
+        summary(&log)
+    );
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("trace validation of {spec}"))
     }
 }
