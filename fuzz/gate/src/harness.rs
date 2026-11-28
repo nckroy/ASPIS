@@ -96,7 +96,12 @@ pub fn valid_name(name: &str) -> bool {
 
 /// What libFuzzer's last status line says: executions, coverage
 /// (`cov`), features (`ft`), corpus size, and in fork mode the counts of
-/// OOMs, timeouts and crashes.
+/// OOMs, timeouts and crashes. In fork mode these are the parent's
+/// figures, over all its jobs ([`own_lines`]). The parent prints a job's
+/// status line before it counts that job's crash, timeout or OOM, and
+/// counts a timeout or an OOM only when it ignores them. So under the
+/// `-ignore_*=0` flags `run` passes, the counts stay 0, even on a
+/// finding.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Status {
     pub execs: u64,
@@ -149,14 +154,154 @@ pub fn status_line(line: &str) -> Option<Status> {
     Some(s)
 }
 
-/// The last status in a libFuzzer log. In normal mode, `Done N runs`
-/// gives the final count of executions, and so does
-/// `stat::number_of_executed_units: N` when the harness stopped the run
-/// (it counts the run's own executions, and is 0 in a fork-mode parent,
-/// so it only ever raises the count).
+/// The line after which libFuzzer's fork-mode parent prints the whole log
+/// of one job, when that job ended with a nonzero status it doesn't
+/// ignore (`FuzzWithFork` in libFuzzer's `FuzzerFork.cpp`). That is a
+/// finding on any system. On macOS it is also what the harness's stop
+/// usually gives: there libFuzzer reads a job's raw wait status, so a job
+/// that SIGINT stopped looks like a crash to it. The harness sends its
+/// SIGINT to libFuzzer's whole process group, but the parent ignores
+/// SIGINT while any job or merge subprocess runs. If the SIGINT lands
+/// while none runs, the parent stops itself, exits 72 and prints no
+/// inner log. If it lands while only a merge subprocess runs, it stops
+/// just that merge, which the parent retries, and the run goes on to the
+/// `-max_total_time` backstop, clean but past its time box. The harness
+/// tells a finding's inner log from a stop's by when it begins
+/// ([`InnerLog`]) and by what it says ([`inner_log_is_stop`]).
+///
+/// The parent prints the log of only the first failing job to exit. So
+/// two findings leave no inner log the harness can see, and rest on a
+/// new artifact: a job that ended on one just before the stop, when the
+/// SIGINT stops the parent before it prints that job's log; and a job
+/// still in its crash handler at the stop, when a job the SIGINT stopped
+/// exits first and the parent prints the stopped job's log instead.
+pub const INNER_LOG: &str = "INFO: log from the inner process:";
+
+/// The end of the line a libFuzzer process prints when SIGINT stops it,
+/// after its `==PID== ` (`InterruptCallback` in `FuzzerLoop.cpp`).
+pub const RUN_INTERRUPTED: &str = "libFuzzer: run interrupted; exiting";
+
+/// libFuzzer's exit status when SIGINT stops it: the harness's stop,
+/// in normal mode, and in fork mode on Linux.
+pub const INTERRUPTED: i32 = 72;
+
+/// A libFuzzer log's own lines: all of them in normal mode, and in fork
+/// mode the parent's, up to [`INNER_LOG`]. The inner log's status and
+/// `stat::` lines are one job's, from its own start. After the inner log,
+/// the parent prints only its `INFO: exiting:` line, and `/usr/bin/time`
+/// its own lines, which [`time_p`] reads from the whole log.
+pub fn own_lines(log: &str) -> impl Iterator<Item = &str> {
+    log.lines().take_while(|l| l.trim_end() != INNER_LOG)
+}
+
+/// Whether a fork-mode log has an inner log ([`INNER_LOG`]), and if so,
+/// whether it began before or after the harness stopped the run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InnerLog {
+    /// None: the parent printed no job's log. Always so in normal mode.
+    #[default]
+    Absent,
+    /// Its first line was read before the harness set its flag to stop
+    /// the run, which it sets before it sends the SIGINT. No SIGINT of
+    /// the harness's caused it, so a job ended on a finding.
+    BeforeStop,
+    /// Its first line was read once the flag was set. Any inner log the
+    /// SIGINT causes is printed after the SIGINT, so it is read after the
+    /// flag and lands here: on macOS, the stopped job's log. But so may a
+    /// finding's: the parent prints a job's log only after it has merged
+    /// that job's new inputs, and any earlier job's, and the harness may
+    /// read the line some time after the parent wrote it. What the log
+    /// says tells the two apart ([`inner_log_is_stop`]). A finding whose
+    /// job exits after a job the stop interrupted has no log here: the
+    /// parent prints the stopped job's, which reads as the stop, so only
+    /// a new artifact records that finding ([`INNER_LOG`]).
+    AfterStop,
+}
+
+impl InnerLog {
+    /// The inner log's start if `line` is [`INNER_LOG`], given whether the
+    /// harness's flag to stop the run was already set when the line was
+    /// read; `None` for any other line.
+    pub fn starts(line: &str, interrupted: bool) -> Option<InnerLog> {
+        (line.trim_end() == INNER_LOG).then_some(if interrupted {
+            InnerLog::AfterStop
+        } else {
+            InnerLog::BeforeStop
+        })
+    }
+}
+
+/// Whether a log's inner log ([`INNER_LOG`]) is a stopped job's: one of
+/// its lines ends in [`RUN_INTERRUPTED`], and none is libFuzzer's report
+/// of a finding, `ERROR: libFuzzer: …` (a deadly signal, a timeout, an
+/// out-of-memory and the like) or `SUMMARY: libFuzzer: …`. False for a
+/// log with no inner log.
+pub fn inner_log_is_stop(log: &str) -> bool {
+    let mut lines = log.lines().skip_while(|l| l.trim_end() != INNER_LOG);
+    if lines.next().is_none() {
+        return false;
+    }
+    let mut stopped = false;
+    for l in lines.map(str::trim_end) {
+        if l.contains("ERROR: libFuzzer") || l.contains("SUMMARY: libFuzzer") {
+            return false;
+        }
+        stopped |= l.ends_with(RUN_INTERRUPTED);
+    }
+    stopped
+}
+
+/// Whether a fork-mode log's inner log is a finding: it began before the
+/// harness's stop, or after it but isn't a stopped job's
+/// ([`inner_log_is_stop`]). An inner log before the stop is a finding
+/// even when it reads as a stop, since no SIGINT of the harness's caused
+/// it.
+pub fn inner_log_is_finding(inner: InnerLog, log: &str) -> bool {
+    match inner {
+        InnerLog::Absent => false,
+        InnerLog::BeforeStop => true,
+        InnerLog::AfterStop => !inner_log_is_stop(log),
+    }
+}
+
+/// Whether a run ended cleanly. libFuzzer exited 0, or exited 72
+/// ([`INTERRUPTED`]) when the harness had stopped it (`interrupted`);
+/// and, in fork mode, the parent's inner log, if it printed one, is no
+/// finding ([`inner_log_is_finding`]).
+///
+/// The inner log matters because on macOS libFuzzer's fork-mode parent
+/// takes a job's raw wait status as its exit code and ends with
+/// `exit(ExitCode)` (`FuzzerFork.cpp`, `FuzzerUtilDarwin.cpp`). The low
+/// byte of that status is 0 whenever the job exited with one of
+/// libFuzzer's own codes, so a run that ends on a crash, timeout or OOM
+/// exits 0, as a stop does. An inner log before the stop is a finding
+/// whatever the exit status, and so is one after it that reports a
+/// finding rather than the stop. A stopped job's log after the stop is
+/// the macOS stop, and stays clean. On Linux a finding exits nonzero, so
+/// the exit status alone already records it. In normal mode `inner` and
+/// `log` play no part.
+pub fn ended_cleanly(
+    exit: Option<i32>,
+    interrupted: bool,
+    fork: bool,
+    inner: InnerLog,
+    log: &str,
+) -> bool {
+    let exited = exit == Some(0) || (interrupted && exit == Some(INTERRUPTED));
+    exited && !(fork && inner_log_is_finding(inner, log))
+}
+
+/// The last status in a libFuzzer log's own lines ([`own_lines`]). In
+/// normal mode, `Done N runs` gives the final count of executions, and so
+/// does `stat::number_of_executed_units: N` when the harness stopped the
+/// run (it counts the run's own executions, and is 0 in a fork-mode
+/// parent, so it only ever raises the count). In fork mode, the last of
+/// the parent's lines (`#N: cov: C ft: F corp: K exec/s: E
+/// oom/timeout/crash: O/T/C time: Ts job: J dft_time: D`) gives every
+/// figure: N is the executions of all the jobs it has merged.
 pub fn last_status(log: &str) -> Status {
     let mut last = Status::default();
-    for line in log.lines() {
+    for line in own_lines(log) {
         if let Some(s) = status_line(line) {
             last = s;
         } else if let Some(n) = line
@@ -178,10 +323,29 @@ pub fn last_status(log: &str) -> Status {
 /// Whether a libFuzzer line ends the corpus load, so fuzzing starts:
 /// `INITED` in normal mode, and `starting to fuzz` in fork mode. A run's
 /// time box counts from this line, not from the process's start, so a
-/// growing corpus doesn't eat into the fuzzing.
+/// growing corpus doesn't eat into the fuzzing. Only a log's own lines
+/// count ([`own_lines`]): an inner log's `INITED` is one job's.
 pub fn fuzzing_starts(line: &str) -> bool {
     (line.starts_with('#') && line.split_whitespace().nth(1) == Some("INITED"))
         || line.contains(", starting to fuzz in ")
+}
+
+/// For a line where fuzzing starts ([`fuzzing_starts`]), the executions
+/// so far: the corpus load's, from normal mode's `INITED` line. Fork
+/// mode's line has no count, and 0 is right: the parent loads the corpus
+/// in a merge it doesn't count, so all the executions it counts come
+/// after the load. Other lines give `None`.
+pub fn fuzzing_start(line: &str) -> Option<u64> {
+    fuzzing_starts(line).then(|| status_line(line).map_or(0, |s| s.execs))
+}
+
+/// The executions after the corpus load: the last status's
+/// ([`last_status`]), less those at the first of the log's own lines
+/// where fuzzing starts ([`fuzzing_start`]). A run that never got that
+/// far counts them all.
+pub fn fuzz_execs(log: &str) -> u64 {
+    let start = own_lines(log).find_map(fuzzing_start).unwrap_or(0);
+    last_status(log).execs.saturating_sub(start)
 }
 
 /// The CPU seconds `/usr/bin/time -p` reports (user plus sys), which
@@ -288,18 +452,22 @@ pub struct RunRecord {
     /// Wall seconds from [`fuzzing_starts`] to the end: the time spent
     /// fuzzing, after the corpus load.
     pub fuzz_s: f64,
-    /// Executions after the corpus load (in normal mode; in fork mode,
-    /// all of them).
+    /// Executions after the corpus load ([`fuzz_execs`]). In fork mode
+    /// that is all the parent counts, since its corpus load isn't
+    /// counted.
     pub fuzz_execs: u64,
     /// User plus sys seconds, measured: the gate's CPU time.
     pub cpu_s: f64,
     pub status: Status,
     /// Finding files the run wrote.
     pub artifacts: u64,
-    /// Whether libFuzzer ended cleanly: it exited 0, or it stopped when
-    /// the harness interrupted it at the end of its time. A crash on an
-    /// input whose artifact is already on disk writes no new file, and an
-    /// in-process run prints no crash count, so this is what records it.
+    /// Whether libFuzzer ended cleanly ([`ended_cleanly`]): it exited 0,
+    /// or it stopped when the harness interrupted it at the end of its
+    /// time, and in fork mode printed no job's log but a stopped job's
+    /// after that. A crash on
+    /// an input whose artifact is already on disk writes no new file, and
+    /// an in-process run prints no crash count, so this is what records
+    /// it.
     pub clean: bool,
 }
 

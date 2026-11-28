@@ -1,0 +1,46 @@
+WARNING: Failed to find function "__sanitizer_acquire_crash_state". Reason dlsym(RTLD_DEFAULT, __sanitizer_acquire_crash_state): symbol not found.
+WARNING: Failed to find function "__sanitizer_print_stack_trace". Reason dlsym(RTLD_DEFAULT, __sanitizer_print_stack_trace): symbol not found.
+WARNING: Failed to find function "__sanitizer_set_death_callback". Reason dlsym(RTLD_DEFAULT, __sanitizer_set_death_callback): symbol not found.
+Dictionary: 162 entries
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1795818556
+INFO: Loaded 1 modules   (59075 inline 8-bit counters): 59075 [0x1006bc5d8, 0x1006cac9b), 
+INFO: Loaded 1 PC tables (59075 PCs): 59075 [0x1006caca0,0x1007b18d0), 
+INFO: -fork=2: fuzzing in separate process(s)
+INFO: -fork=2: 2103 seed inputs, starting to fuzz in /tmp/libFuzzerTemp.FuzzWithFork51802.dir
+#46: cov: 7641 ft: 25673 corp: 2103 exec/s: 23 oom/timeout/crash: 0/0/0 time: 68s job: 1 dft_time: 0
+#168: cov: 7641 ft: 25673 corp: 2103 exec/s: 40 oom/timeout/crash: 0/0/0 time: 69s job: 2 dft_time: 0
+#838: cov: 7641 ft: 25673 corp: 2103 exec/s: 167 oom/timeout/crash: 0/0/0 time: 72s job: 3 dft_time: 0
+#514760: cov: 7688 ft: 26802 corp: 2372 exec/s: 100 oom/timeout/crash: 0/0/0 time: 2195s job: 90 dft_time: 0
+#528902: cov: 7689 ft: 26815 corp: 2378 exec/s: 153 oom/timeout/crash: 0/0/0 time: 2239s job: 91 dft_time: 0
+#539459: cov: 7689 ft: 26820 corp: 2381 exec/s: 113 oom/timeout/crash: 0/0/0 time: 2288s job: 92 dft_time: 0
+#548746: cov: 7689 ft: 26842 corp: 2392 exec/s: 98 oom/timeout/crash: 0/0/0 time: 2333s job: 93 dft_time: 0
+#550972: cov: 7690 ft: 26849 corp: 2397 exec/s: 71 oom/timeout/crash: 0/0/0 time: 2366s job: 95 dft_time: 0
+INFO: log from the inner process:
+WARNING: Failed to find function "__sanitizer_acquire_crash_state". Reason dlsym(RTLD_DEFAULT, __sanitizer_acquire_crash_state): symbol not found.
+WARNING: Failed to find function "__sanitizer_print_stack_trace". Reason dlsym(RTLD_DEFAULT, __sanitizer_print_stack_trace): symbol not found.
+WARNING: Failed to find function "__sanitizer_set_death_callback". Reason dlsym(RTLD_DEFAULT, __sanitizer_set_death_callback): symbol not found.
+Dictionary: 162 entries
+INFO: Running with entropic power schedule (0xFF, 100).
+INFO: Seed: 1795818556
+INFO: Loaded 1 modules   (59075 inline 8-bit counters): 59075 [0x1029945d8, 0x1029a2c9b), 
+INFO: Loaded 1 PC tables (59075 PCs): 59075 [0x1029a2ca0,0x102a898d0), 
+INFO:        0 files found in /tmp/libFuzzerTemp.FuzzWithFork51802.dir/C95
+INFO: seed corpus: files: 48 min: 43b max: 1048577b total: 6149011b rss: 29Mb
+#49	INITED cov: 3415 ft: 9682 corp: 48/6004Kb exec/s: 24 rss: 80Mb
+#64	pulse  cov: 3423 ft: 9997 corp: 58/7734Kb lim: 1048577 exec/s: 32 rss: 81Mb
+#128	pulse  cov: 3446 ft: 10222 corp: 85/10496Kb lim: 1048577 exec/s: 32 rss: 84Mb
+#256	pulse  cov: 3474 ft: 10506 corp: 123/14517Kb lim: 1048577 exec/s: 36 rss: 84Mb
+#512	pulse  cov: 3501 ft: 10671 corp: 168/15470Kb lim: 1048577 exec/s: 51 rss: 85Mb
+#1024	pulse  cov: 3538 ft: 10933 corp: 226/21Mb lim: 1048577 exec/s: 60 rss: 90Mb
+#2048	pulse  cov: 3592 ft: 11309 corp: 322/28Mb lim: 1048577 exec/s: 70 rss: 104Mb
+==96053== libFuzzer: run interrupted; exiting
+stat::number_of_executed_units: 2226
+stat::average_exec_per_sec:     71
+stat::new_units_added:          350
+stat::slowest_unit_time_sec:    0
+stat::peak_rss_mb:              105
+INFO: exiting: 18432 time: 2366s
+real 2366.12
+user 4597.44
+sys 51.08
