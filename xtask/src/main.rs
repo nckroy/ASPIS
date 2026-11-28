@@ -498,7 +498,11 @@ fn check_production() {
 /// ChaCha20 takes NEON at compile time; forcing its software backend too
 /// covers the rest of its code.) curve25519-dalek is forced to `serial`,
 /// the backend `aarch64-unknown-none` uses, so an x86_64 host doesn't run
-/// its AVX2 backend instead.
+/// its AVX2 backend instead. The fuzz build uses the same cfgs less
+/// ChaCha20's, the backends `aarch64-unknown-none` ships on an aarch64
+/// host (on x86_64, ChaCha20 still picks AVX2 or SSE2 at run time)
+/// (`fuzz_gate::harness::CRYPTO_SHIPPED_BACKENDS`; the fuzz workspace's
+/// `tests/targets.rs` checks that the two agree).
 const CRYPTO_SOFT_BACKENDS: &str = "--cfg sha2_backend=\"soft\" --cfg keccak_backend=\"soft\" \
      --cfg aes_backend=\"soft\" --cfg polyval_backend=\"soft\" \
      --cfg chacha20_backend=\"soft\" --cfg poly1305_backend=\"soft\" \
@@ -815,10 +819,12 @@ fn check_crypto_families() {
 }
 
 /// The manifests allowed to turn on aspis-crypto's `quic` feature, and so
-/// reach AES-128 (ADR 0003, rule 4; ADR 0069, rule 2). None does yet: C29's
-/// QUIC is the first that should, and the fuzz workspace's manifests join
-/// when C71 wraps aspis-crypto's fuzz entry points (rule 8).
-const CRYPTO_QUIC_USERS: &[&str] = &[];
+/// reach AES-128 (ADR 0003, rule 4; ADR 0069, rule 2). The fuzz harness,
+/// `fuzz/gate`, builds aspis-crypto with it, so the `crypto-` targets
+/// open AES-128-GCM and the differential compares AES-128-GCM and the AES
+/// masks with libcrux (rule 8); the fuzz workspace is its own build, so
+/// the feature reaches no product crate. C29's QUIC joins when it needs it.
+const CRYPTO_QUIC_USERS: &[&str] = &["fuzz/gate/Cargo.toml"];
 
 /// Fails if a manifest outside [`CRYPTO_QUIC_USERS`] turns on aspis-crypto's
 /// `quic` feature. Cargo merges features across a build, so naming `quic`

@@ -8,7 +8,8 @@
 //! alone, and the AES-128 key is one ADR 0003, rule 4 admits only for
 //! QUIC v1's Initial packets. A crate that doesn't name the feature can't
 //! reach them when built on its own, and `cargo xtask lint` keeps `quic`
-//! to the QUIC code it lists (ADR 0069, rule 2).
+//! to the manifests it lists: the fuzz harness, and later C29's QUIC
+//! (ADR 0069, rule 2).
 //!
 //! QUIC hides each packet's number, and some bits of its first octet,
 //! under a 5-octet mask. The mask comes from a 16-octet sample of the

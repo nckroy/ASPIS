@@ -34,8 +34,8 @@ jobs:
 
   # Every fuzz target for 10 minutes of fuzzing, on the corpus the last
   # night saved (docs/design/call-language.md, "Nightly"), in a matrix of
-  # two shards: `--shard i/2` runs every second target from the i-th, 6
-  # and 5 of the 11. The harness merges each target's corpus after its
+  # two shards: `--shard i/2` runs every second target from the i-th, 7
+  # and 7 of the 14. The harness merges each target's corpus after its
   # run, and each shard saves its own targets' corpora under its own
   # cache key, for the next night and for every pull request's replay,
   # which restores both. `--budget 4200` caps a shard's fuzzing at 70

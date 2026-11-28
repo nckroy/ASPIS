@@ -202,7 +202,7 @@ fn signatures() -> Vec<Vec<u8>> {
 }
 
 /// A big-endian `u16` context length and the context, as `fuzz::verify`
-/// reads them.
+/// and the differential's selectors 19 and 20 read them.
 fn ctx_field(ctx: &[u8]) -> Vec<u8> {
     let mut out = u16::try_from(ctx.len()).unwrap().to_be_bytes().to_vec();
     out.extend_from_slice(ctx);
@@ -603,13 +603,12 @@ fn differential_inputs() -> Vec<Vec<u8>> {
         ));
     }
     // The composite: RFC 10073's key, with Appendix E's message and
-    // context, under a hedge and under the refused all-zero one.
-    let (t, m, ctx) = rfc10073();
-    let sk = base64(t.get("sk").as_str());
-    let len = [u8::try_from(ctx.len()).unwrap()];
-    for rnd in [[0x66; 32], [0; 32]] {
-        out.push(with(20, &[&sk, &rnd, &len, &ctx, &m]));
-        out.push(with(20, &[&sk, &rnd, &[0], &m]));
+    // context, under hedges that flip a bit of either half for the
+    // laxness check, and under the refused all-zero one; and contexts of
+    // 255, 256 and 300 octets, the last two refused whatever the hedge.
+    let (sk, m) = (composite_key(), rfc10073().1);
+    for (rnd, ctx) in composite_inputs() {
+        out.push(with(20, &[&sk, &rnd, &ctx_field(&ctx), &m]));
     }
     // RFC 9001's AES-128-GCM payloads and AES-128 header protection,
     // which are skipped without `quic`.
@@ -629,6 +628,29 @@ fn differential_inputs() -> Vec<Vec<u8>> {
                 &[&field(&t, "key"), &field(&t, "iv"), &len, &header, &payload],
             ));
             out.push(with(22, &[&field(&t, "hp"), &field(&t, "sample")]));
+        }
+    }
+    out
+}
+
+/// RFC 10073's composite private key.
+fn composite_key() -> Vec<u8> {
+    base64(rfc10073().0.get("sk").as_str())
+}
+
+/// The composite's hedges and contexts for the differential: Appendix
+/// E's context and none, under rnd of 0x66 octets (whose first four are
+/// even, so the laxness check flips a bit of the ML-DSA-65 half), of 0x67
+/// (odd: the Ed25519 half) and of zeros; and contexts of 255, 256 and 300
+/// octets.
+fn composite_inputs() -> Vec<([u8; 32], Vec<u8>)> {
+    let ctx = rfc10073().2;
+    let mut out = Vec::new();
+    for rnd in [[0x66; 32], [0x67; 32], [0; 32]] {
+        out.push((rnd, ctx.clone()));
+        out.push((rnd, Vec::new()));
+        for n in [255, 256, 300] {
+            out.push((rnd, vec![7; n]));
         }
     }
     out
@@ -881,5 +903,107 @@ fn quic_selectors_skipped() {
     }
     for d in differential_inputs() {
         fuzz::differential(&Loud, &d);
+    }
+}
+
+/// The X25519 public key is compared with the oracle's X25519(k, 9): an
+/// oracle that is wrong only for u = 9 makes the target panic on an
+/// exchange with any other u.
+#[test]
+#[should_panic(expected = "X25519 public key differs from the oracle")]
+fn differential_detects_a_wrong_x25519_public_key() {
+    struct Flip;
+    impl Oracle for Flip {
+        fn x25519(&self, k: &[u8; 32], u: &[u8; 32]) -> Option<[u8; 32]> {
+            let mut out = Raw.x25519(k, u)?;
+            if u[0] == 9 && u[1..] == [0; 31] {
+                out[0] ^= 1;
+            }
+            Some(out)
+        }
+    }
+    let t = &rfc(RFC7748)[0];
+    let u = field(t, "inputUCoordinate");
+    assert_ne!(u[0], 9);
+    fuzz::differential(&Flip, &with(12, &[&field(t, "inputScalar"), &u]));
+}
+
+/// The composite's input with one of [`composite_inputs`]' hedges, no
+/// context and Appendix E's message.
+fn composite_input(rnd: [u8; 32]) -> Vec<u8> {
+    with(
+        20,
+        &[&composite_key(), &rnd, &ctx_field(b""), &rfc10073().1],
+    )
+}
+
+/// The laxness check needs both halves: an oracle whose Ed25519 accepts
+/// anything expects the composite to accept a signature whose Ed25519
+/// half has a bit flipped (rnd of 0x67 octets picks that half), and the
+/// composite's verifier, which refuses it, makes the target panic.
+#[test]
+#[should_panic(expected = "composite verification differs from the oracle")]
+fn differential_detects_a_lax_ed25519_half() {
+    struct Lax;
+    impl Oracle for Lax {
+        fn ml_dsa_65_verify(
+            &self,
+            pk: &[u8; 1952],
+            m: &[u8],
+            ctx: &[u8],
+            sig: &[u8; 3309],
+        ) -> Option<bool> {
+            Raw.ml_dsa_65_verify(pk, m, ctx, sig)
+        }
+        fn ed25519_verify(&self, _pk: &[u8; 32], _m: &[u8], _sig: &[u8; 64]) -> Option<bool> {
+            Some(true)
+        }
+    }
+    fuzz::differential(&Lax, &composite_input([0x67; 32]));
+}
+
+/// As [`differential_detects_a_lax_ed25519_half`], for the ML-DSA-65
+/// half (rnd of 0x66 octets).
+#[test]
+#[should_panic(expected = "composite verification differs from the oracle")]
+fn differential_detects_a_lax_ml_dsa_half() {
+    struct Lax;
+    impl Oracle for Lax {
+        fn ml_dsa_65_verify(
+            &self,
+            _pk: &[u8; 1952],
+            _m: &[u8],
+            _ctx: &[u8],
+            _sig: &[u8; 3309],
+        ) -> Option<bool> {
+            Some(true)
+        }
+        fn ed25519_verify(&self, pk: &[u8; 32], m: &[u8], sig: &[u8; 64]) -> Option<bool> {
+            Raw.ed25519_verify(pk, m, sig)
+        }
+    }
+    fuzz::differential(&Lax, &composite_input([0x66; 32]));
+}
+
+/// `aead_open` gives `Length` exactly for input shorter than a tag, and
+/// `Verification` for any longer input that doesn't open, with `open`
+/// and `open_in_place` agreeing.
+#[test]
+fn aead_open_refusals_follow_the_length() {
+    let aeads: &[u8] = if cfg!(feature = "quic") {
+        &[0, 1, 2]
+    } else {
+        &[0, 1]
+    };
+    for &which in aeads {
+        for n in 0..40 {
+            let r = fuzz::aead_open(&with(which, &[&[0; 12], &[0], &vec![0x5a; n]]));
+            let want = if n < 16 {
+                Error::Length
+            } else {
+                Error::Verification
+            };
+            assert_eq!(r, Err(want), "AEAD {which}, {n} octets");
+        }
     }
 }

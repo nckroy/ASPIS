@@ -501,8 +501,34 @@ fn a_change_selects_its_targets() {
         idl3
     );
     assert_eq!(names(&["tools/idlc/src/main.rs"]), idl3);
-    // The front end hashes each canonical form with aspis-crypto's SHA3-256.
-    assert_eq!(names(&["crates/crypto/src/hash.rs"]), ["idl-front-end"]);
+    // C08's crate selects its three targets, and the front end, which
+    // hashes each canonical form with aspis-crypto's SHA3-256; so do its
+    // vectors, which the crypto targets' seeds are made from.
+    let crypto = [
+        "idl-front-end",
+        "crypto-decode",
+        "crypto-aead",
+        "crypto-differential",
+    ];
+    assert_eq!(names(&["crates/crypto/src/hash.rs"]), crypto);
+    assert_eq!(names(&["crates/crypto/tests/data/rfc8032.json"]), crypto);
+    assert_eq!(names(&["crates/crypto/Cargo.toml"]), crypto);
+    // The root manifest pins aspis-crypto's primitives, their versions and
+    // features, in `[workspace.dependencies]`; a crate's own manifest
+    // isn't the root one.
+    assert_eq!(names(&["Cargo.toml"]), crypto);
+    assert_eq!(
+        names(&["crates/kargs/Cargo.toml"]),
+        ["kargs-parse", "kargs-grub"]
+    );
+    assert_eq!(
+        names(&["fuzz/fuzz_targets/crypto-aead.rs"]),
+        ["crypto-aead"]
+    );
+    // The product lock alone selects none: the fuzz workspace resolves
+    // aspis-crypto's dependencies in its own lock (`tests/targets.rs`,
+    // `shared_registry_crates_keep_one_version_set`, makes it follow).
+    assert!(names(&["Cargo.lock"]).is_empty());
     let abnf3 = ["abnf-grammar", "abnf-match", "abnf-vectors"];
     let with = |more: &[&'static str]| -> Vec<&'static str> {
         abnf3.iter().chain(more).copied().collect()
@@ -525,6 +551,7 @@ fn a_change_selects_its_targets() {
     assert_eq!(names(&["fuzz/gate/src/lib.rs"]), all);
     assert_eq!(names(&["fuzz/Cargo.lock"]), all);
     assert_eq!(names(&["rust-toolchain.toml"]), all);
+    assert_eq!(names(&[".cargo/config.toml"]), all);
     assert_eq!(names(&["xtask/src/fuzz.rs"]), all);
     assert!(names(&["xtask/src/main.rs"]).is_empty());
     assert_eq!(
@@ -565,10 +592,11 @@ fn dictionary_entries() {
     ]);
     assert_eq!(d, "\"a\"\n\"b\"\n");
     // Every target's dictionary renders, and each but abnf-generated's
-    // has entries.
+    // and crypto-aead's has entries.
     for t in TARGETS {
         let d = dict::render((t.dict)());
-        assert_eq!(d.is_empty(), t.name == "abnf-generated", "{}", t.name);
+        let none = ["abnf-generated", "crypto-aead"].contains(&t.name);
+        assert_eq!(d.is_empty(), none, "{}", t.name);
         assert!(
             d.lines().all(|l| l.starts_with('"') && l.ends_with('"')),
             "{}",
@@ -699,6 +727,9 @@ fn coverage_is_counted_on_the_parsers() {
         dirs("idl-generated"),
         ["crates/idl-rt/src", "crates/idl/src"]
     );
+    for name in ["crypto-decode", "crypto-aead", "crypto-differential"] {
+        assert_eq!(dirs(name), ["crates/crypto/src"], "{name}");
+    }
     // The extra paths select a target, but aren't counted in its coverage.
     for t in TARGETS {
         for p in t.extra_paths {

@@ -350,3 +350,60 @@ pub fn idl_decode() -> Vec<Vec<u8>> {
     }
     d
 }
+
+/// Big-endian `u16`s, as the crypto entries read lengths.
+fn u16s(values: &[u16]) -> Vec<Vec<u8>> {
+    values.iter().map(|v| v.to_be_bytes().to_vec()).collect()
+}
+
+/// `crypto-decode`: each algorithm's TLS codepoint (2 octets, big-endian),
+/// OID content octets and JOSE name; the deprecated `EdDSA`; the
+/// composite's prefix and label; the Ed25519 identity, its non-canonical
+/// encoding and ℓ; the context lengths at and past the limit; and
+/// big-endian integers.
+pub fn crypto_decode() -> Vec<Vec<u8>> {
+    use crate::crypto_targets::{ED25519_IDENTITY, ED25519_L, ED25519_NON_CANONICAL};
+    let mut d = Vec::new();
+    for &alg in aspis_crypto::algorithm::Algorithm::ALL {
+        if let Some(cp) = alg.tls() {
+            d.push(
+                crate::crypto_targets::tls_parts(cp)
+                    .1
+                    .to_be_bytes()
+                    .to_vec(),
+            );
+        }
+        if let Some(oid) = alg.oid_der() {
+            d.push(oid.to_vec());
+        }
+        if let Some(j) = alg.jose() {
+            d.push(crate::crypto_targets::jose_parts(j).1.as_bytes().to_vec());
+        }
+    }
+    d.push(b"EdDSA".to_vec());
+    d.push(aspis_crypto::composite::PREFIX.to_vec());
+    d.push(aspis_crypto::composite::LABEL.to_vec());
+    d.extend([ED25519_IDENTITY, ED25519_NON_CANONICAL, ED25519_L].map(|b| b.to_vec()));
+    d.extend(u16s(&[255, 256, 300]));
+    d.extend(be_integers());
+    d
+}
+
+/// `crypto-aead`: none. A tag that verifies can't come from a dictionary;
+/// the accept path comes from the sealed seeds.
+pub fn crypto_aead() -> Vec<Vec<u8>> {
+    none()
+}
+
+/// `crypto-differential`: the composite's prefix and label; the context
+/// lengths at and past the limit, SHAKE256's longest output and HKDF's
+/// (255 × HashLen) as `u16`s; and big-endian integers.
+pub fn crypto_differential() -> Vec<Vec<u8>> {
+    let mut d = vec![
+        aspis_crypto::composite::PREFIX.to_vec(),
+        aspis_crypto::composite::LABEL.to_vec(),
+    ];
+    d.extend(u16s(&[255, 256, 300, 1024, 8160, 12240]));
+    d.extend(be_integers());
+    d
+}

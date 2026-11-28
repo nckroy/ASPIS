@@ -347,7 +347,8 @@ pub fn build() {
     // 1. The pinned tools.
     check_tools();
 
-    // 2. The product lock holds no fuzz engine (ADR 0068, rule 3).
+    // 2. The product lock holds no fuzz engine, and no oracle crate (ADR
+    //    0068, rule 3).
     let lock = fs::read_to_string(root().join("Cargo.lock")).unwrap();
     let found = harness::engine_crates_in(&lock);
     if !found.is_empty() {
@@ -374,12 +375,15 @@ pub fn build() {
 
     // 5. Every target, with no sanitizer, and never -O: the oracle needs
     //    the debug assertions and overflow checks (ADR 0068, rule 2).
+    //    RUSTFLAGS is set, never inherited: the backends that
+    //    aarch64-unknown-none ships, not the host CPU's, and nothing else
+    //    (cargo-fuzz adds its own flags before these).
     run_cmd(
         cargo()
             .args(["fuzz", "build", "-s", "none", "--fuzz-dir", "fuzz"])
             .arg("--target-dir")
             .arg(fuzz_build().join("target"))
-            .env_remove("RUSTFLAGS"),
+            .env("RUSTFLAGS", harness::CRYPTO_SHIPPED_BACKENDS),
     );
 
     // 6. cargo-fuzz's targets are the table's, and the probes.

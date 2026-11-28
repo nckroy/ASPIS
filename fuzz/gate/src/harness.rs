@@ -20,6 +20,49 @@ pub const ENGINE_CRATES: &[&str] = &[
     "cargo-fuzz",
 ];
 
+/// The RUSTFLAGS of the fuzz build: the cfgs that make RustCrypto's and
+/// dalek's crates use the backends `aarch64-unknown-none` builds, so the
+/// `crypto-` targets fuzz the code `no_std` user space ships (the kernel
+/// runs no cryptography: ADR 0069, rule 2). That target can't detect CPU
+/// features at run time, so there SHA-2, SHA-3, AES and POLYVAL run in
+/// software, and curve25519-dalek runs `serial`; a host build would
+/// detect the CPU and run its SHA, AES, PMULL or AVX2 code instead.
+/// Poly1305's only other backend is x86's AVX2. ChaCha20 picks NEON at
+/// compile time on any aarch64 target, `aarch64-unknown-none` included,
+/// so it is left to choose. That holds on an aarch64 host only, as CI's
+/// fuzz runners are: on x86_64, ChaCha20 detects the CPU at run time and
+/// runs its AVX2 or SSE2 code, which ASPIS doesn't ship. These are
+/// xtask's `CRYPTO_SOFT_BACKENDS`, which aspis-crypto's known answers also
+/// run under, less ChaCha20's (`tests/targets.rs` checks it).
+pub const CRYPTO_SHIPPED_BACKENDS: &str = "--cfg sha2_backend=\"soft\" --cfg keccak_backend=\"soft\" \
+     --cfg aes_backend=\"soft\" --cfg polyval_backend=\"soft\" \
+     --cfg poly1305_backend=\"soft\" --cfg curve25519_dalek_backend=\"serial\"";
+
+/// The differential oracle's crates: libcrux, and the family's internal
+/// crates its ten crates bring (ADR 0069, rule 8). They are the fuzz
+/// workspace's only, like the engine, so none may appear in the product
+/// `Cargo.lock` either (ADR 0068, rule 3); `tests/targets.rs` checks that
+/// this list is every `libcrux` crate in `fuzz/Cargo.lock`.
+pub const ORACLE_CRATES: &[&str] = &[
+    "libcrux-aes",
+    "libcrux-chacha20poly1305",
+    "libcrux-curve25519",
+    "libcrux-ed25519",
+    "libcrux-hacl-rs",
+    "libcrux-hkdf",
+    "libcrux-hmac",
+    "libcrux-intrinsics",
+    "libcrux-macros",
+    "libcrux-ml-dsa",
+    "libcrux-ml-kem",
+    "libcrux-platform",
+    "libcrux-poly1305",
+    "libcrux-secrets",
+    "libcrux-sha2",
+    "libcrux-sha3",
+    "libcrux-traits",
+];
+
 /// A tool's pinned version from `fuzz/Cargo.toml`'s
 /// `[workspace.metadata.aspis]` table, such as `cargo-fuzz = "0.13.2"`.
 pub fn pin<'a>(manifest: &'a str, tool: &str) -> Option<&'a str> {
@@ -49,10 +92,12 @@ pub fn version_of<'a>(output: &'a str, tool: &str) -> Option<&'a str> {
         .map(str::trim)
 }
 
-/// The engine crates a `Cargo.lock` names.
+/// The engine crates ([`ENGINE_CRATES`]) and oracle crates
+/// ([`ORACLE_CRATES`]) a `Cargo.lock` names.
 pub fn engine_crates_in(lock: &str) -> Vec<&'static str> {
     ENGINE_CRATES
         .iter()
+        .chain(ORACLE_CRATES)
         .copied()
         .filter(|c| {
             lock.lines()
@@ -382,7 +427,9 @@ fn under(path: &str, prefix: &str) -> bool {
 /// The paths whose change selects every target: the fuzz workspace's
 /// manifest and lock, the harness and the allocator, the toolchain pin
 /// (which changes codegen, overflow checks and libFuzzer's
-/// instrumentation), and the xtask command that runs the harness.
+/// instrumentation), the xtask command that runs the harness, and the
+/// repository's cargo configuration, whose `[env]` keeps libcrux to its
+/// portable code in every fuzz build.
 pub const SELECTS_ALL: &[&str] = &[
     "fuzz/Cargo.toml",
     "fuzz/Cargo.lock",
@@ -390,6 +437,7 @@ pub const SELECTS_ALL: &[&str] = &[
     "fuzz/alloc",
     "rust-toolchain.toml",
     "xtask/src/fuzz.rs",
+    ".cargo/config.toml",
 ];
 
 /// The reference matcher every target with a grammar is judged against.
@@ -825,6 +873,9 @@ mod tests {
         let lock = "[[package]]\nname = \"abnf\"\n\n[[package]]\nname = \"libfuzzer-sys\"\n";
         assert_eq!(engine_crates_in(lock), ["libfuzzer-sys"]);
         assert!(engine_crates_in("[[package]]\nname = \"arbitrary-ish\"\n").is_empty());
+        // The differential oracle's crates count as the engine's do.
+        let lock = "[[package]]\nname = \"sha2\"\n\n[[package]]\nname = \"libcrux-sha2\"\n";
+        assert_eq!(engine_crates_in(lock), ["libcrux-sha2"]);
     }
 
     #[test]

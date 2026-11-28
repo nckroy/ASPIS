@@ -9,8 +9,10 @@
 //! `build/fuzz/`: `cargo fuzz coverage` writes under `fuzz/`, which is in
 //! iCloud in the real checkout.
 //!
-//! 1. `cargo fuzz build -s none` with `RUSTFLAGS=-Cinstrument-coverage`,
-//!    into `build/fuzz/target-coverage/`;
+//! 1. `cargo fuzz build -s none` with `RUSTFLAGS=-Cinstrument-coverage`
+//!    and the fuzz build's backends
+//!    ([`harness::CRYPTO_SHIPPED_BACKENDS`]), into
+//!    `build/fuzz/target-coverage/`;
 //! 2. each target's binary once over its seeds, regressions and corpus
 //!    (`-runs=0`), writing `build/fuzz/coverage/<t>/raw/*.profraw`;
 //! 3. `llvm-profdata merge -sparse`, from the pinned `llvm-tools`
@@ -71,7 +73,10 @@ fn build() {
             .args(["fuzz", "build", "-s", "none", "--fuzz-dir", "fuzz"])
             .arg("--target-dir")
             .arg(target_dir())
-            .env("RUSTFLAGS", "-Cinstrument-coverage"),
+            .env(
+                "RUSTFLAGS",
+                format!("-Cinstrument-coverage {}", harness::CRYPTO_SHIPPED_BACKENDS),
+            ),
     );
 }
 

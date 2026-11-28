@@ -41,8 +41,9 @@
 //! Every family is a default feature but `quic`, and AES-128 is reachable
 //! only through `quic`. A crate that doesn't name it can't reach AES-128
 //! when built on its own; cargo unifies features across a build, so
-//! `cargo xtask lint` keeps `quic` to the QUIC code it lists, where ADR
-//! 0003, rule 4 admits AES-128 (rule 2).
+//! `cargo xtask lint` keeps `quic` to the manifests it lists: the fuzz
+//! harness, and later C29's QUIC, where ADR 0003, rule 4 admits AES-128
+//! (rule 2).
 //!
 //! Two modules are built whatever the families: [`algorithm`], the
 //! algorithms' identifiers (rule 6), and [`fuzz`], the entry points C71's

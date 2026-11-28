@@ -7,3 +7,17 @@ xtask = "run --quiet --package xtask --"
 # The kernel is a static, position-independent ELF (ADR 0035, rule 2).
 [target.aarch64-unknown-none]
 rustflags = ["-C", "relocation-model=pie"]
+
+# libcrux, the fuzz workspace's differential oracle (ADR 0069, rule 8),
+# turns on its `simd128` backends on every aarch64 build and `simd256` on
+# every x86_64 build, from its build scripts, and then picks NEON, AES-NI
+# or AVX2 at run time. These keep it to its portable code on every
+# machine, so the oracle runs the same code wherever a finding is
+# replayed, and its x86 `unsafe` trampolines aren't built
+# (docs/design/call-language.md, "Engine and tools"). Every cargo run over
+# the fuzz workspace starts in this directory, so it reads them;
+# `fuzz_gate::crypto_oracle` refuses to build without them. The product
+# workspace has no libcrux, and nothing in it reads them.
+[env]
+LIBCRUX_DISABLE_SIMD128 = { value = "1", force = true }
+LIBCRUX_DISABLE_SIMD256 = { value = "1", force = true }
