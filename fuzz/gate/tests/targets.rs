@@ -7,11 +7,11 @@
 
 mod common;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use common::{committed, root, tracked};
 use fuzz_gate::{
-    PROBES, TARGETS, harness,
+    PROBES, TARGETS, crypto_repo, harness,
     idl_repo::{self, INTERFACES},
     idl_targets::{self, Class},
     repo,
@@ -164,6 +164,102 @@ fn every_grammar_is_embedded() {
 fn the_product_lock_holds_no_fuzz_engine() {
     let lock = std::fs::read_to_string(root().join("Cargo.lock")).unwrap();
     assert_eq!(harness::engine_crates_in(&lock), Vec::<&str>::new());
+}
+
+/// Each registry package of a `Cargo.lock`: its name and its versions.
+fn registry_versions(lock: &str) -> BTreeMap<String, BTreeSet<String>> {
+    let mut out: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for package in lock.split("[[package]]").skip(1) {
+        let value = |key: &str| {
+            package.lines().find_map(|l| {
+                l.trim()
+                    .strip_prefix(key)
+                    .and_then(|v| v.strip_prefix(" = "))
+                    .map(|v| v.trim_matches('"').to_string())
+            })
+        };
+        if value("source").is_some_and(|s| s.starts_with("registry+")) {
+            let (name, version) = (value("name").unwrap(), value("version").unwrap());
+            out.entry(name).or_default().insert(version);
+        }
+    }
+    out
+}
+
+/// Versions of crates the product lock also has that only the fuzz lock
+/// may hold, each with the crate that needs it there: none. A version a
+/// fuzz-only crate needs, which no `cargo update --precise` can bring to
+/// the product's, would go here with its reason.
+const FUZZ_ONLY_VERSIONS: &[(&str, &str)] = &[];
+
+/// The fuzz workspace builds the product crates it fuzzes, so the
+/// third-party crates both locks name must be the ones the product ships
+/// (ADR 0068, rule 3): every version of a shared crate in `Cargo.lock`
+/// is in `fuzz/Cargo.lock`, and the fuzz lock has no other version of it
+/// unless [`FUZZ_ONLY_VERSIONS`] allows it. A bump in the product lock
+/// alone leaves the fuzz lock valid, so this fails until `fuzz/Cargo.lock`
+/// follows.
+#[test]
+fn shared_registry_crates_keep_one_version_set() {
+    let read = |p: &str| std::fs::read_to_string(root().join(p)).unwrap();
+    let product = registry_versions(&read("Cargo.lock"));
+    let fuzz = registry_versions(&read("fuzz/Cargo.lock"));
+    let mut wrong = Vec::new();
+    for (name, versions) in &product {
+        let Some(theirs) = fuzz.get(name) else {
+            continue;
+        };
+        for v in versions.difference(theirs) {
+            wrong.push(format!("{name} {v}: in Cargo.lock, not in fuzz/Cargo.lock"));
+        }
+        for v in theirs.difference(versions) {
+            if !FUZZ_ONLY_VERSIONS.contains(&(name.as_str(), v.as_str())) {
+                wrong.push(format!("{name} {v}: in fuzz/Cargo.lock only"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+    // The parse found the crates the two share.
+    assert!(product.contains_key("sha2") && fuzz.contains_key("sha2"));
+}
+
+/// [`harness::ORACLE_CRATES`] is every libcrux crate in the fuzz lock, so
+/// the product-lock check catches any of them.
+#[test]
+fn oracle_crates_are_every_libcrux_crate() {
+    let lock = std::fs::read_to_string(root().join("fuzz/Cargo.lock")).unwrap();
+    let libcrux: BTreeSet<String> = registry_versions(&lock)
+        .into_keys()
+        .filter(|n| n.starts_with("libcrux"))
+        .collect();
+    let listed: BTreeSet<String> = harness::ORACLE_CRATES
+        .iter()
+        .map(|c| c.to_string())
+        .collect();
+    assert_eq!(listed, libcrux);
+}
+
+/// `crypto_repo::VECTOR_FILES` is every tracked JSON file of
+/// aspis-crypto's vectors, byte for byte.
+#[test]
+fn every_crypto_vector_file_is_embedded() {
+    let tracked: BTreeSet<String> = tracked(&["crates/crypto/tests/data"])
+        .into_iter()
+        .filter(|p| p.ends_with(".json"))
+        .collect();
+    let embedded: BTreeSet<String> = crypto_repo::VECTOR_FILES
+        .iter()
+        .map(|f| f.path.to_string())
+        .collect();
+    assert_eq!(embedded, tracked);
+    for f in crypto_repo::VECTOR_FILES {
+        assert_eq!(
+            std::fs::read_to_string(root().join(f.path)).unwrap(),
+            f.text,
+            "{}",
+            f.path
+        );
+    }
 }
 
 /// The tracked files under an interface root: the IDL files, and the wire
@@ -590,4 +686,60 @@ fn front_end_regressions_keep_their_verdicts() {
             .unwrap_or_else(|| panic!("{path}: no verdict listed"));
         assert_eq!(idl_targets::front_end_kinds(data), kinds, "{path}");
     }
+}
+
+/// The fuzz build's RUSTFLAGS are xtask's `CRYPTO_SOFT_BACKENDS`, the
+/// software backends aspis-crypto's known answers also run under, less
+/// ChaCha20's: `aarch64-unknown-none` builds ChaCha20's NEON backend and
+/// the others' software ones, so the `crypto-` targets fuzz what it
+/// ships.
+#[test]
+fn fuzz_build_uses_the_shipped_backends() {
+    let source = std::fs::read_to_string(root().join("xtask/src/main.rs")).unwrap();
+    let start = source
+        .find("const CRYPTO_SOFT_BACKENDS: &str = \"")
+        .expect("xtask has CRYPTO_SOFT_BACKENDS");
+    let body = &source[start..];
+    let body = &body[body.find('"').unwrap() + 1..];
+    let body = &body[..body.find("\";").expect("the literal's end")];
+    // The literal's escapes: `\"`, and `\` before a line break, which
+    // drops the break and the next line's indentation.
+    let mut text = String::new();
+    let mut chars = body.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (c, chars.peek()) {
+            ('\\', Some('"')) => {
+                text.push('"');
+                chars.next();
+            }
+            ('\\', Some('\n')) => {
+                while chars.peek().is_some_and(|c| c.is_whitespace()) {
+                    chars.next();
+                }
+            }
+            _ => text.push(c),
+        }
+    }
+    let cfgs = |s: &str| -> Vec<String> {
+        let words: Vec<&str> = s.split_whitespace().collect();
+        let (pairs, rest) = words.as_chunks::<2>();
+        assert!(rest.is_empty(), "{s}");
+        pairs
+            .iter()
+            .map(|[flag, cfg]| {
+                assert_eq!(*flag, "--cfg", "{s}");
+                cfg.to_string()
+            })
+            .collect()
+    };
+    let xtask = cfgs(&text);
+    assert!(
+        xtask.contains(&"chacha20_backend=\"soft\"".to_string()),
+        "{xtask:?}"
+    );
+    let want: Vec<String> = xtask
+        .into_iter()
+        .filter(|c| !c.starts_with("chacha20_backend="))
+        .collect();
+    assert_eq!(cfgs(harness::CRYPTO_SHIPPED_BACKENDS), want);
 }

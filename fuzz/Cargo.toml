@@ -139,6 +139,27 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "crypto-decode"
+path = "fuzz_targets/crypto-decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "crypto-aead"
+path = "fuzz_targets/crypto-aead.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "crypto-differential"
+path = "fuzz_targets/crypto-differential.rs"
+test = false
+doc = false
+bench = false
+
 # Not a gate target: `cargo xtask fuzz build` runs it to show that overflow
 # checks and the memory bound fire in the fuzz build.
 [[bin]]

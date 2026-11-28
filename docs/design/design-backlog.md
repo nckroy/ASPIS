@@ -1415,7 +1415,7 @@ Later on 2026-11-25 the project owner accepted 22 more records, [0047](../decisi
 
 ### By ADR 0069, accepted on 2026-11-27
 
-- **[0069](../decisions/0069-cryptography-libraries.md), the cryptography libraries.** Settles D33: RustCrypto and dalek, wrapped by `aspis-crypto`, with libcrux as the differential oracle. L39 and D65 stay open. Gives D65 a crypto-provider seam: a third-party stack that takes a provider, as rustls does, gets one built on `aspis-crypto` (rule 2).
+- **[0069](../decisions/0069-cryptography-libraries.md), the cryptography libraries.** Settles D33: RustCrypto and dalek, wrapped by `aspis-crypto`, with libcrux as the differential oracle. L39 is settled in part (the primitives' crates, by C71's C08 follow-up: none is fuzzed upstream); its other parts and D65 stay open. Gives D65 a crypto-provider seam: a third-party stack that takes a provider, as rustls does, gets one built on `aspis-crypto` (rule 2).
 
 ### By rules already accepted
 

@@ -7,6 +7,17 @@
 
 [graph]
 all-features = false
+# The platforms the fuzz workspace is built on: CI's runners and
+# developers' Macs. Without a list, cargo-deny counts every
+# target-specific dependency, including those under custom cfgs that cargo
+# never builds, such as libcrux-secrets' `crabgrind` (under
+# `cfg(valgrind_ct_test)`, which brings `libloading`, ISC) and libcrux's
+# `hax-lib` (under `cfg(hax)`). The list keeps the check to what is built.
+targets = [
+    "aarch64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-unknown-linux-gnu",
+]
 
 [licenses]
 confidence-threshold = 0.9
@@ -21,6 +32,20 @@ unused-allowed-license = "allow"
 # by path: abnf, kargs, idl, idl-rt, aspis-interfaces, idl-fixtures and
 # aspis-crypto) are unpublished, MPL-2.0 like every ASPIS crate (ADR 0008).
 private = { ignore = true }
+
+# unicode-ident is `(MIT OR Apache-2.0) AND Unicode-3.0`: Unicode's data
+# tables, inside the proc-macro stacks that libcrux-macros brings (the
+# differential oracle's, ADR 0069, rule 8) and, on x86_64,
+# curve25519-dalek-derive (aspis-crypto's ed25519 and x25519 families,
+# through curve25519-dalek's SIMD backend). A proc macro runs only at
+# build time, in CI and on developers' machines; it is never linked into
+# a target and never shipped, so it is outside ADR 0008, rule 4, as NCSA
+# is above. The exception names the one crate, rather than allowing the
+# license for all. The project owner accepted it on 2026-11-27, with no
+# change to ADR 0008.
+[[licenses.exceptions]]
+crate = "unicode-ident"
+allow = ["Unicode-3.0"]
 
 [bans]
 multiple-versions = "warn"

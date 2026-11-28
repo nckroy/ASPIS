@@ -10,12 +10,12 @@ This is ASPIS's fuzzing gate ([0068](../docs/decisions/0068-the-fuzzing-and-diff
 ## Layout
 
 - `fuzz_targets/<target>.rs`: one file per target. Each declares the target's memory bound and calls its entry function.
-- `gate/` (crate `fuzz-gate`): the entry functions and their oracles, the target table (`fuzz_gate::TARGETS`), the generated seeds, and the harness that `cargo xtask fuzz` runs.
+- `gate/` (crate `fuzz-gate`): the entry functions and their oracles, the target table (`fuzz_gate::TARGETS`), the generated seeds, and the harness that `cargo xtask fuzz` runs. It holds `crypto-differential`'s oracle, libcrux (`gate/src/crypto_oracle.rs`), and embeds `crates/crypto/tests/data`'s vectors, from which the `crypto-` targets' seeds are made (`gate/src/crypto_repo.rs`).
 - `alloc/` (crate `fuzz-alloc`): the memory bound, a counting global allocator. Without a sanitizer, libFuzzer's `-malloc_limit_mb` does nothing.
 - `seeds/<target>/`: small hand-made seeds, committed. Every vector line is a seed as well. Those are generated from the embedded vector files, so they can't drift.
 - `regressions/<target>/`: minimized findings, committed.
 - `differential/`: minimized disagreements between the two ABNF checkers, with RFC-correct tags, committed. It exists once a finding needs it.
-- `deny.toml`: cargo-deny's license and source checks for this workspace.
+- `deny.toml`: cargo-deny's license and source checks for this workspace. It lists the targets the workspace builds for, so crates behind libcrux's custom cfgs, which are never built, aren't counted, and has one license exception besides the engine's: `unicode-ident`'s Unicode-3.0, in the build-time proc-macro stacks.
 
 Names under `seeds/` and `regressions/` are lowercase letters, digits, hyphens and dots, with no spaces. The tools list them with `git ls-files`, so iCloud's conflict copies are never read.
 
@@ -41,7 +41,7 @@ Run fuzzing through `cargo xtask fuzz`. Never use `cargo fuzz run`, `tmin` or `c
 
 `cargo xtask test` also replays every target's seeds and regressions through the same entry functions under plain `cargo test`, without libFuzzer (rule 7).
 
-Building the targets needs a C++ compiler, for libFuzzer. The fuzz build always has debug assertions and overflow checks: never pass `-O`.
+Building the targets needs a C++ compiler, for libFuzzer. The fuzz build always has debug assertions and overflow checks: never pass `-O`. `fuzz build` sets its own `RUSTFLAGS`, ignoring yours, so RustCrypto's and dalek's crates run the backends `aarch64-unknown-none` ships, not your CPU's. One exception: on an x86_64 host, ChaCha20 still detects the CPU and runs its AVX2 or SSE2 code, so only an aarch64 host, as CI's are, fuzzes the ChaCha20 that ships. Run cargo over this workspace from the repository: its `.cargo/config.toml` keeps libcrux to its portable code, and `fuzz-gate` refuses to build without that.
 
 ## Under build/fuzz/
 
@@ -77,7 +77,7 @@ C71's first campaigns are recorded in [call-language L36](../docs/design/call-la
 2. **Reproduce it:** `cargo xtask fuzz replay <target> <file> --repeat 10`. A finding that doesn't reproduce in 10 runs is itself a bug, since parsers are deterministic. `cargo xtask fuzz run <target> --time <s> --seed <n>` repeats a run.
 3. **Minimize it:** `cargo xtask fuzz tmin <target> <file>`, which writes `build/fuzz/artifacts/<target>/minimized-<name>`.
 4. **Fix it in the parser.** Fix the oracle in `gate/` only if the oracle is wrong, and then add a case to `gate/tests/oracles.rs` that hands the check a broken subject.
-5. **Commit the minimized input** as `regressions/<target>/<what-it-was>`, and, where it helps, a named unit test in the crate. Regressions replay on every change, under `cargo xtask test` and in CI.
+5. **Commit the minimized input** as `regressions/<target>/<what-it-was>`, and, where it helps, a named unit test in the crate. Regressions replay on every change, under `cargo xtask test` and in CI. A regression that holds octets of a licensed vector, as the `crypto-` targets' inputs may (their seeds come from RFC and ACVP files), needs its own `[[annotations]]` in `REUSE.toml`, with `precedence = "override"` and the source's notice and license, as `crates/crypto/tests/data/` has.
 6. **Fuzz the target for another CPU-hour** before the gate counts again: `report` counts only the CPU time since the last finding.
 
 A disagreement in the ABNF differential is triaged the same way. A Rust bug is fixed in `crates/abnf`, and the minimized case goes in `differential/` with RFC-correct tags. A divergence of the Python library from RFC 5234 is recorded in "The harness", and the generator steers around the construct. Neither is waved through. A Python-limit event, where the Python checker gives no answer in time, isn't a disagreement: under 1 % of a run's cases they are logged with their cases, and above it the run fails and the generator is steered.

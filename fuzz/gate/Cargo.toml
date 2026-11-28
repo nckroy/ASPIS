@@ -26,6 +26,31 @@ idl = { path = "../../crates/idl" }
 idl-rt = { path = "../../crates/idl-rt" }
 aspis-interfaces = { path = "../../crates/interfaces" }
 idl-fixtures = { path = "../../crates/idl-fixtures" }
+# C08's parsers, for the `crypto-` targets, with QUIC's ciphers, so the
+# targets open AES-128-GCM and the differential compares AES-128-GCM and
+# the AES masks (ADR 0069, rule 8). xtask's CRYPTO_QUIC_USERS lists this
+# manifest.
+aspis-crypto = { path = "../../crates/crypto", features = ["quic"] }
+# The differential oracle, libcrux (ADR 0069, rule 8), in fuzz/ only (ADR
+# 0068, rule 3). Pinned exactly: the family pins its own crates to each
+# other with `=`, and libcrux-aes's `acvp` module is unstable API. `acvp`
+# makes public the AES block function the header-protection masks are
+# compared with, and changes nothing else (docs/design/call-language.md,
+# "Engine and tools"). libcrux's build scripts would turn on `simd128` on
+# aarch64 and `simd256` on x86_64; the repository's .cargo/config.toml sets
+# LIBCRUX_DISABLE_SIMD128 and _SIMD256, so AES, ML-KEM, ML-DSA and SHA-3
+# are libcrux's portable code on every machine, and crypto_oracle.rs
+# refuses to build without them.
+libcrux-sha2 = "=0.0.10"
+libcrux-sha3 = "=0.0.12"
+libcrux-hmac = "=0.0.10"
+libcrux-hkdf = "=0.0.10"
+libcrux-chacha20poly1305 = "=0.0.11"
+libcrux-aes = { version = "=0.0.11", features = ["acvp"] }
+libcrux-curve25519 = "=0.0.10"
+libcrux-ed25519 = "=0.0.11"
+libcrux-ml-kem = { version = "=0.0.12", default-features = false, features = ["mlkem768"] }
+libcrux-ml-dsa = { version = "=0.0.12", default-features = false, features = ["mldsa65"] }
 fuzz-alloc = { path = "../alloc" }
 
 [[bin]]
@@ -68,3 +93,7 @@ path = "tests/harness.rs"
 [[test]]
 name = "differential"
 path = "tests/differential.rs"
+
+[[test]]
+name = "crypto"
+path = "tests/crypto.rs"

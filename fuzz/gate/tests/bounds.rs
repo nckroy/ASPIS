@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Nicole Roy
 // SPDX-License-Identifier: MPL-2.0
 
-//! The `idl-` targets' limits hold on their seeds ("The gate for each
-//! target", item 1; fuzz/README.md, "Passing the gate", step 2). This
+//! The `idl-` and `crypto-` targets' limits hold on their seeds ("The
+//! gate for each target", item 1; fuzz/README.md, "Passing the gate",
+//! step 2). This
 //! test build (opt-level 1) is faster than the fuzz build, which adds
 //! debug assertions, overflow checks and coverage instrumentation: on
 //! `idl-front-end`'s costliest seed the fuzz binary took about twice as
@@ -17,6 +18,25 @@
 //! `idl-front-end`'s costliest seed is `dense-minors`
 //! (`idl_targets::dense_minors_file`): the largest file of its kind that
 //! checks, at the most minors C07's entry visits, 19.
+//!
+//! The `crypto-` targets' costliest seeds are ML-DSA-65 and composite
+//! verification in `crypto-decode` (twice inside the entry, and twice
+//! for the target's determinism check), and composite signing on both
+//! sides, with its own verification and the one-bit-flip check, in
+//! `crypto-differential`. In the fuzz binary they took about 12 ms
+//! against 8 to 9 ms here for composite signing
+//! (`composite-rfc10073-hedged-flip-ed25519`), and 1.8 ms against 0.7 ms
+//! for composite verification: up to 2.5 times as long, more than
+//! [`FUZZ_BUILD`] allows for, but under 2% of their 1 s timeouts, and
+//! `fuzz replay` runs them in the fuzz binary under the timeout itself. Both builds run libcrux's portable code (the
+//! `LIBCRUX_DISABLE_SIMD` variables in `.cargo/config.toml`), so the gap
+//! is aspis-crypto's: the fuzz build runs the backends
+//! `aarch64-unknown-none` builds (`harness::CRYPTO_SHIPPED_BACKENDS`),
+//! software SHA-2, SHA-3, AES and POLYVAL, while this build runs the
+//! host's. `aspis-crypto` doesn't allocate, built without its `alloc` feature as the fuzz workspace
+//! builds it. Of the oracle's libcrux calls, only HKDF's expand allocates:
+//! two buffers a call, of about the output's and the info's length, at
+//! most about 12 KiB. So the targets' peaks are near zero.
 //!
 //! It is its own test binary, with one test, so no other test's
 //! allocations reach the peak it measures.
@@ -36,9 +56,11 @@ const FUZZ_BUILD: f64 = 2.0;
 static ALLOC: fuzz_alloc::Bounded = fuzz_alloc::Bounded::unlimited();
 
 #[test]
-fn idl_targets_stay_within_their_bounds() {
+fn targets_stay_within_their_bounds() {
     common::on_big_stack(|| {
-        for t in TARGETS.iter().filter(|t| t.name.starts_with("idl-")) {
+        let measured =
+            |t: &&fuzz_gate::Target| t.name.starts_with("idl-") || t.name.starts_with("crypto-");
+        for t in TARGETS.iter().filter(measured) {
             let seeds = common::all_seeds(t);
             // The first run loads the embedded interfaces and grammars,
             // once a process, as libFuzzer's first input does.

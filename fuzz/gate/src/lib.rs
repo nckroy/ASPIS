@@ -13,7 +13,10 @@
 //!
 //! The crate is a member of the `fuzz/` workspace, not the product one,
 //! so nothing about fuzzing enters the product lock file (ADR 0068,
-//! rule 3). It is `std` and host-only; the parsers it tests stay `no_std`
+//! rule 3): not the engine, and not libcrux, `crypto-differential`'s
+//! oracle ([`crypto_oracle`]). It builds the parsers it wraps, ABNF's,
+//! `kargs`, C07's and `aspis-crypto` (with its `quic` feature), from their
+//! paths. It is `std` and host-only; the parsers it tests stay `no_std`
 //! and `#![forbid(unsafe_code)]` (rule 2), and so does this crate.
 
 #![forbid(unsafe_code)]
@@ -52,6 +55,9 @@ macro_rules! kinds {
 }
 
 pub mod abnf_targets;
+pub mod crypto_oracle;
+pub mod crypto_repo;
+pub mod crypto_targets;
 pub mod dict;
 pub mod generate;
 pub mod harness;
@@ -417,14 +423,16 @@ pub const IDL_FRONT_END: Target = Target {
         "crates/idl/tests/data/interfaces",
     ],
     // The grammars idl.abnf uses, which its oracle loads; idlc, which
-    // regenerates the interfaces' committed files; and aspis-crypto,
-    // whose SHA3-256 hashes each canonical form (ADR 0069, rule 2).
+    // regenerates the interfaces' committed files; aspis-crypto, whose
+    // SHA3-256 hashes each canonical form (ADR 0069, rule 2); and the
+    // root manifest, which pins sha3, as for the crypto- targets.
     extra_paths: &[
         "grammars/core.abnf",
         "grammars/names.abnf",
         "grammars/json.abnf",
         "tools/idlc",
         "crates/crypto",
+        "Cargo.toml",
     ],
     // The front end's source limit (`idl::Limits::default().source`).
     max_len: MIB + KIB,
@@ -532,10 +540,99 @@ pub const IDL_GENERATED: Target = Target {
     dict: dict::idl_frames,
 };
 
+/// C08's six decoding entries (`aspis_crypto::fuzz`): public keys, the
+/// ML-KEM-768 ciphertext, X25519MLKEM768's key shares, signatures,
+/// decoding with verification, and algorithm identifiers. Octet 0 picks
+/// the entry; the rest is the entry's own input
+/// ([`crypto_targets`]).
+pub const CRYPTO_DECODE: Target = Target {
+    name: "crypto-decode",
+    chunk: "C08",
+    adr: "0069, rules 5 and 8; 0068, rule 4",
+    // Code, vectors, the test reader the seeds use, and the manifest.
+    paths: &["crates/crypto"],
+    // The product's root manifest, whose `[workspace.dependencies]` pins
+    // aspis-crypto's primitives: their versions and features. A change
+    // to features alone changes neither lock.
+    extra_paths: &["Cargo.toml"],
+    // The entry's octet and `verify`'s limit, the largest of the six
+    // (aspis_crypto::fuzz's module doc).
+    max_len: crypto_targets::DECODE_MAX,
+    // The slowest seeds, composite verification (twice in the entry and
+    // twice for the target), took about 1.8 ms in the fuzz build (0.7 ms
+    // in the test build). Neither aspis-crypto nor libcrux allocates.
+    timeout_s: TIMEOUT_S,
+    rss_limit_mb: RSS_LIMIT_MB,
+    malloc_limit_mb: MALLOC_LIMIT_MB,
+    grammar: None,
+    run: crypto_targets::decode,
+    kinds: crypto_targets::DECODE_KINDS,
+    kinds_of: crypto_targets::decode_kinds,
+    seeds: crypto_targets::decode_seeds,
+    dict: dict::crypto_decode,
+};
+
+/// C08's AEAD opening (`aspis_crypto::fuzz::aead_open`): TLS records and
+/// QUIC packets, with ChaCha20-Poly1305, AES-256-GCM and, with the
+/// `quic` feature the fuzz workspace builds, AES-128-GCM.
+pub const CRYPTO_AEAD: Target = Target {
+    name: "crypto-aead",
+    chunk: "C08",
+    adr: "0069, rule 5; 0068, rule 4",
+    paths: &["crates/crypto"],
+    // The root manifest, which pins the primitives, as for crypto-decode.
+    extra_paths: &["Cargo.toml"],
+    // TLS 1.3's protected record, after the nonce and an aad of up to 255
+    // octets (aspis_crypto::fuzz's module doc).
+    max_len: crypto_targets::AEAD_MAX,
+    // The slowest seeds, 16 KiB records, took about 0.3 ms in the fuzz
+    // build (0.2 ms in the test build).
+    timeout_s: TIMEOUT_S,
+    rss_limit_mb: RSS_LIMIT_MB,
+    malloc_limit_mb: MALLOC_LIMIT_MB,
+    grammar: None,
+    run: crypto_targets::aead,
+    kinds: crypto_targets::AEAD_KINDS,
+    kinds_of: crypto_targets::aead_kinds,
+    seeds: crypto_targets::aead_seeds,
+    dict: dict::crypto_aead,
+};
+
+/// C08's differential (`aspis_crypto::fuzz::differential`): its 24
+/// primitives against libcrux ([`crypto_oracle::Libcrux`]; ADR 0069,
+/// rule 8).
+pub const CRYPTO_DIFFERENTIAL: Target = Target {
+    name: "crypto-differential",
+    chunk: "C08",
+    adr: "0069, rule 8; 0068, rule 6",
+    paths: &["crates/crypto"],
+    // The root manifest, which pins the primitives, as for crypto-decode.
+    extra_paths: &["Cargo.toml"],
+    // ML-DSA-65 verification's key, signature and context, and 1 KiB of
+    // message (aspis_crypto::fuzz's module doc).
+    max_len: crypto_targets::DIFFERENTIAL_MAX,
+    // The slowest seed, composite signing on both sides with its own
+    // verification and the one-bit-flip check
+    // (composite-rfc10073-hedged-flip-ed25519), took about 12 ms in the
+    // fuzz build (8 to 9 ms in the test build, which also runs libcrux's
+    // portable code). ML-DSA-65 signing took about 4 and 5 ms.
+    timeout_s: TIMEOUT_S,
+    rss_limit_mb: RSS_LIMIT_MB,
+    malloc_limit_mb: MALLOC_LIMIT_MB,
+    grammar: None,
+    run: crypto_targets::differential,
+    kinds: crypto_targets::DIFFERENTIAL_KINDS,
+    kinds_of: crypto_targets::differential_kinds,
+    seeds: crypto_targets::differential_seeds,
+    dict: dict::crypto_differential,
+};
+
 /// Every gate target. A later trust-boundary parser joins with one row
 /// here, one file in `fuzz/fuzz_targets/` and one `[[bin]]`. C07's
 /// parsers are the four `idl-` rows, which wrap C07's own fuzz entry
-/// functions; each kernel interface gets a row of its own with C17,
+/// functions, and C08's are the three `crypto-` rows, which wrap
+/// `aspis_crypto::fuzz`'s (docs/design/call-language.md, "The harness",
+/// for why eight entries are three targets); each kernel interface gets a row of its own with C17,
 /// wrapping [`idl_targets::decode_module`] for its module, and
 /// `crates/initfs` joins with C19. The order matters: the nightly deals
 /// the rows out to its shards in turn ([`harness::in_shard`]), so a row
@@ -554,6 +651,9 @@ pub const TARGETS: &[Target] = &[
     IDL_FRONT_END,
     IDL_DECODE,
     IDL_GENERATED,
+    CRYPTO_DECODE,
+    CRYPTO_AEAD,
+    CRYPTO_DIFFERENTIAL,
 ];
 
 /// The bins in `fuzz/Cargo.toml` that aren't gate targets: `build` runs

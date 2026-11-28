@@ -16,7 +16,8 @@
 //! `Aes128GcmKey` and `AES_128_KEY_LEN` exist only with the `quic`
 //! feature, which isn't a default one. A crate that doesn't name it can't
 //! reach AES-128 when built on its own, and `cargo xtask lint` keeps
-//! `quic` to the QUIC code it lists (ADR 0069, rule 2).
+//! `quic` to the manifests it lists: the fuzz harness, and later C29's
+//! QUIC (ADR 0069, rule 2).
 //!
 //! Each takes a 96-bit nonce and gives a 128-bit tag. Nonces are the
 //! caller's to manage: a nonce must never repeat under one key, which TLS

@@ -413,25 +413,52 @@ pub fn verify(data: &[u8]) -> Result<(), Error> {
 /// ciphertext ‖ tag, cut to [`MAX_CIPHERTEXT`]. QUIC's packets and Retry
 /// tags (RFC 9001) reach the same decoder as TLS records.
 ///
-/// Properties: input shorter than a tag gives `Length`, and one that
-/// doesn't open gives `Verification` with the output zeroed. Input that
-/// opens seals back to itself. Without `quic`, selector 2 returns `Ok`
-/// and opens nothing, so the selectors keep their numbers.
+/// Properties: input shorter than a tag gives `Length`, and only such
+/// input does: any other that doesn't open gives `Verification`, with
+/// the output zeroed. Input that opens seals back to itself. Input of at
+/// least a tag's length is also opened in place, as ciphertext then its
+/// last 16 octets as the tag, and `open_in_place` gives the same
+/// verdict as `open`: the same plaintext when it opens, and a buffer
+/// zeroed when it doesn't. That buffer starts as the ciphertext, and
+/// `aes-gcm` and `chacha20poly1305` check the tag before they decrypt,
+/// so the in-place zero check binds only when the ciphertext isn't all
+/// zeros. Without `quic`,
+/// selector 2 returns `Ok` and opens nothing, so the selectors keep
+/// their numbers.
 #[cfg(feature = "aead")]
 pub fn aead_open(data: &[u8]) -> Result<(), Error> {
     #[cfg(feature = "quic")]
     use crate::aead::Aes128GcmKey;
     use crate::aead::{Aes256GcmKey, ChaCha20Poly1305Key, NONCE_LEN, TAG_LEN};
 
-    /// Opens into a buffer that starts non-zero, then checks the result.
+    /// Opens into a buffer that starts non-zero, and in place, then
+    /// checks the results.
     macro_rules! check {
         ($key:expr, $nonce:expr, $aad:expr, $input:expr) => {{
             let (key, nonce, aad, input) = ($key, $nonce, $aad, $input);
+            // The input is cut to MAX_CIPHERTEXT, far inside every
+            // cipher's limit, so only a missing tag gives `Length`.
+            let short = input.len() < TAG_LEN;
             let n = input.len().saturating_sub(TAG_LEN);
             let mut out = [0xa5; MAX_CIPHERTEXT];
-            match key.open(nonce, aad, input, &mut out[..n]) {
+            let opened = key.open(nonce, aad, input, &mut out[..n]);
+            // The same ciphertext and tag, opened in place.
+            let mut buf = [0; MAX_CIPHERTEXT];
+            let in_place = if short {
+                None
+            } else {
+                let (ct, tag) = input.split_at(n);
+                let tag: &[u8; TAG_LEN] = tag.try_into().expect("a tag's 16 octets");
+                buf[..n].copy_from_slice(ct);
+                Some(key.open_in_place(nonce, aad, &mut buf[..n], tag))
+            };
+            match opened {
                 Ok(len) => {
                     assert!(len == n, "AEAD plaintext length");
+                    assert!(
+                        in_place == Some(Ok(())) && buf[..n] == out[..n],
+                        "AEAD opens differently in place"
+                    );
                     let mut again = [0; MAX_CIPHERTEXT];
                     let sealed = key
                         .seal(nonce, aad, &out[..n], &mut again)
@@ -440,8 +467,20 @@ pub fn aead_open(data: &[u8]) -> Result<(), Error> {
                     Ok(())
                 }
                 Err(e) => {
+                    assert!(
+                        (e == Error::Length) == short,
+                        "AEAD refused for the wrong reason: {e:?}"
+                    );
                     if e == Error::Verification {
                         assert!(out[..n].iter().all(|&b| b == 0), "AEAD output not zeroed");
+                        assert!(
+                            in_place == Some(Err(Error::Verification)),
+                            "AEAD opens differently in place"
+                        );
+                        assert!(
+                            buf[..n].iter().all(|&b| b == 0),
+                            "AEAD buffer not zeroed in place"
+                        );
                     }
                     Err(refused(e, &[Error::Length, Error::Verification]))
                 }
@@ -710,7 +749,7 @@ pub trait Oracle {
 /// | 5, 6, 7 | HMAC-SHA-256, -384, -512 | a one-octet key length, the key, the message |
 /// | 8, 9 | HKDF-SHA-256, -384 | salt, ikm and info, each after a one-octet length; a `u16` output length mod 255 × HashLen + 1 |
 /// | 10, 11 | ChaCha20-Poly1305, AES-256-GCM sealing | key, nonce, a one-octet aad length, the aad, the plaintext (cut to [`MAX_PLAINTEXT`]) |
-/// | 12 | X25519 | k, u |
+/// | 12 | X25519, and the public key of k | k, u |
 /// | 13 | Ed25519 key and signing | seed, the message |
 /// | 14 | Ed25519 verification | public key, signature, the message |
 /// | 15 | ML-KEM-768 key, encapsulation, decapsulation | seed d ‖ z, m |
@@ -718,22 +757,34 @@ pub trait Oracle {
 /// | 17 | ML-KEM-768 decapsulation of any ciphertext | seed d ‖ z, ciphertext |
 /// | 18 | ML-DSA-65 key and signing | ξ, rnd, a one-octet context length, the context, the message |
 /// | 19 | ML-DSA-65 verification | verifying key, signature, a `u16` context length mod 301, the context, the message |
-/// | 20 | The composite's key and signing | the 64-octet private key, rnd, a one-octet context length, the context, the message |
+/// | 20 | The composite's key, signing and verification | the 64-octet private key, rnd, a `u16` context length mod 301, the context, the message |
 /// | 21 | AES-128-GCM sealing (feature `quic`) | a 16-octet key, nonce, a one-octet aad length, the aad, the plaintext (cut to [`MAX_PLAINTEXT`]) |
 /// | 22, 23 | QUIC's AES-128 and AES-256 header-protection masks (feature `quic`) | a 16- or 32-octet key, the 16-octet sample |
 ///
 /// Properties, wherever the oracle returns `Some`:
 ///
 /// - every output is the oracle's: digests, MACs, HKDF output, ciphertext
-///   and tags, public keys, signatures (Ed25519 is deterministic, and
-///   ML-DSA-65 is with its hedge given), ciphertexts and shared secrets;
+///   and tags, public keys (X25519's, from its fixed-base path, against
+///   the oracle's X25519(k, 9)), signatures (Ed25519 is deterministic,
+///   and ML-DSA-65 is with its hedge given), ciphertexts and shared
+///   secrets;
+/// - ML-DSA-65 signing never fails: its context is at most 255 octets,
+///   so the only failure left is rejection sampling running out, which
+///   FIPS 204 bounds away;
 /// - a header-protection mask is the first five octets of the oracle's
 ///   AES block encryption of the sample;
 /// - a composite's public key is the oracle's ML-DSA-65 key then its
 ///   Ed25519 key, and its signature the oracle's ML-DSA-65 signature of M′
 ///   under the label, then its Ed25519 signature of M′, with M′ built
 ///   here, apart from the composite's code (RFC 10073, sections 2.2 and
-///   3.2); an all-zero rnd is refused (rule 3);
+///   3.2). A context over 255 octets gives [`Error::ContextTooLong`],
+///   whatever rnd; otherwise an all-zero rnd gives
+///   [`Error::SigningFailed`] (rule 3), and no other input is refused.
+///   The signature verifies under the composite's own verifier. With
+///   one bit flipped, in the half and at the place rnd's first four
+///   octets pick, the composite's verifier accepts it exactly when the
+///   oracle's ML-DSA-65 and Ed25519 both accept their halves over M′, so
+///   the verifier is never laxer and needs both halves;
 /// - X25519 gives [`Error::NonContributory`] exactly when the oracle's raw
 ///   output is 32 zero octets, and the same octets otherwise;
 /// - an ML-KEM-768 encapsulation key is refused with [`Error::Modulus`]
@@ -987,11 +1038,24 @@ mod diff {
         use crate::x25519::{X25519PublicKey, X25519SecretKey};
         let (k, u): ([u8; 32], [u8; 32]) = (input.array(), input.array());
         let sk = X25519SecretKey::from_seed(&k);
+        // The public key comes from x25519-dalek's fixed-base path, apart
+        // from the ladder below: it is X25519(k, 9) (RFC 7748, section
+        // 6.1).
+        let mut base = [0; 32];
+        base[0] = 9;
+        same(
+            oracle.x25519(&k, &base),
+            &sk.public_key().to_bytes(),
+            "X25519 public key",
+        );
         let pk = X25519PublicKey::from_bytes(&u).expect("every 32 octets are a key");
         let ours = sk.diffie_hellman(&pk);
         if let Some(theirs) = oracle.x25519(&k, &u) {
             match ours {
-                Ok(s) => assert!(s.as_bytes() == &theirs, "X25519 differs from the oracle"),
+                Ok(s) => assert!(
+                    s.as_bytes() == &theirs && theirs != [0; 32],
+                    "X25519 differs from the oracle"
+                ),
                 Err(e) => assert!(
                     e == Error::NonContributory && theirs == [0; 32],
                     "X25519 refused a contributory exchange"
@@ -1108,9 +1172,11 @@ mod diff {
         let key = MlDsa65SigningKey::from_seed(&xi);
         let vk = key.verifying_key();
         same(oracle.ml_dsa_65_public(&xi), &vk.to_bytes(), "ML-DSA key");
-        let Ok(sig) = key.sign(m, ctx, &rnd) else {
-            // Rejection sampling ran out, which FIPS 204 bounds away.
-            return;
+        // ctx is at most 255 octets, so the only failure left is
+        // rejection sampling running out, which FIPS 204 bounds away.
+        let sig = match key.sign(m, ctx, &rnd) {
+            Ok(sig) => sig,
+            Err(e) => panic!("ML-DSA-65 signing failed: {e:?}"),
         };
         same(
             oracle.ml_dsa_65_sign(&xi, m, ctx, &rnd),
@@ -1148,11 +1214,13 @@ mod diff {
 
     #[cfg(feature = "composite")]
     pub(super) fn composite(oracle: &dyn Oracle, mut input: Input<'_>) {
-        use crate::composite::{CompositeSigningKey, LABEL, MAX_CONTEXT, PREFIX};
+        use crate::composite::{
+            CompositeSignature, CompositeSigningKey, LABEL, MAX_CONTEXT, PREFIX,
+        };
         use crate::hash::sha512;
         use crate::ml_dsa::{SIGNATURE_LEN, VERIFYING_KEY_LEN};
         let (seed, rnd): ([u8; 64], [u8; 32]) = (input.array(), input.array());
-        let ctx = input.short();
+        let ctx = input.context();
         let m = input.rest();
         let key = CompositeSigningKey::from_bytes(&seed);
         let vk = key.verifying_key().to_bytes();
@@ -1169,16 +1237,33 @@ mod diff {
             &vk[VERIFYING_KEY_LEN..].try_into().expect("32 octets"),
             "composite Ed25519 key",
         );
-        let sig = match key.sign(m, ctx, &rnd) {
+        let signed = key.sign(m, ctx, &rnd);
+        if ctx.len() > MAX_CONTEXT {
+            assert!(
+                signed == Err(Error::ContextTooLong),
+                "composite signing took a long context"
+            );
+            return;
+        }
+        let sig = match signed {
             Ok(sig) => sig.to_bytes(),
-            // An all-zero hedge (rule 3), or rejection sampling that ran
-            // out, which FIPS 204 bounds away.
+            // An all-zero hedge (rule 3). ctx is at most 255 octets, and
+            // rejection sampling running out is bounded away (FIPS 204),
+            // so nothing else is refused.
             Err(e) => {
-                assert!(e == Error::SigningFailed, "composite signing refused: {e}");
+                assert!(
+                    e == Error::SigningFailed && rnd == [0; 32],
+                    "composite signing refused: {e}"
+                );
                 return;
             }
         };
         assert!(rnd != [0; 32], "an all-zero hedge signed");
+        let ours = key.verifying_key();
+        assert!(
+            CompositeSignature::from_bytes(&sig).and_then(|s| ours.verify(m, ctx, &s)) == Ok(()),
+            "a composite signature doesn't verify"
+        );
         // M′ = Prefix ‖ Label ‖ len(ctx) ‖ ctx ‖ SHA-512(M), built here
         // (RFC 10073, section 2.2). ctx is at most 255 octets.
         let ph = oracle.sha512(m).unwrap_or_else(|| sha512(m));
@@ -1205,5 +1290,44 @@ mod diff {
             &sig[SIGNATURE_LEN..].try_into().expect("64 octets"),
             "composite Ed25519 half",
         );
+        // The verifier isn't laxer: one bit flipped, in the ML-DSA-65
+        // half when rnd's first four octets are even and the Ed25519 half
+        // when odd, at the bit they pick there. The composite's verifier
+        // accepts it exactly when the oracle accepts both halves over M′.
+        let pick = u32::from_be_bytes([rnd[0], rnd[1], rnd[2], rnd[3]]);
+        let (start, len) = if pick & 1 == 0 {
+            (0, SIGNATURE_LEN)
+        } else {
+            (SIGNATURE_LEN, sig.len() - SIGNATURE_LEN)
+        };
+        let bit = usize::try_from(pick >> 1).expect("a u32 fits a usize") % (len * 8);
+        let mut bad = sig;
+        bad[start + bit / 8] ^= 1 << (bit % 8);
+        let (ml, ed) = bad.split_at(SIGNATURE_LEN);
+        if let (Some(ml_ok), Some(ed_ok)) = (
+            oracle.ml_dsa_65_verify(
+                vk[..VERIFYING_KEY_LEN].try_into().expect("1,952 octets"),
+                mp,
+                LABEL,
+                ml.try_into().expect("3,309 octets"),
+            ),
+            oracle.ed25519_verify(
+                vk[VERIFYING_KEY_LEN..].try_into().expect("32 octets"),
+                mp,
+                ed.try_into().expect("64 octets"),
+            ),
+        ) {
+            let r = CompositeSignature::from_bytes(&bad).and_then(|s| ours.verify(m, ctx, &s));
+            assert!(
+                r.is_ok() == (ml_ok && ed_ok),
+                "composite verification differs from the oracle"
+            );
+            if let Err(e) = r {
+                assert!(
+                    e == Error::Encoding || e == Error::Verification,
+                    "undocumented refusal {e:?}"
+                );
+            }
+        }
     }
 }
